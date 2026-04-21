@@ -4,6 +4,20 @@ A web terminal interface for [Claude Code](https://claude.com/claude-code) tmux 
 
 Primary use case: control a Claude Code session running on your dev box from a phone over the LAN.
 
+## Prerequisites
+
+Before installing, make sure you have:
+
+- **Python 3.11+** (required)
+- **tmux** (required — Assist routes input into tmux sessions)
+- **npx** or **claude** binary (required — launches Claude Code in sessions; default mode is `npx`)
+
+Optional (but recommended):
+- **xclip** — `sudo apt install xclip` (clipboard copy/paste)
+- **xdotool** — `sudo apt install xdotool` (X11 key-send)
+- **docker** — container spawn/build features
+- **curl** — CLI falls back to Python without it
+
 ## Quick install
 
 ```bash
@@ -22,18 +36,6 @@ assist doctor                 # verify prerequisites
 ```
 
 Open `http://localhost:8089` (or `http://<host-ip>:8089` from your phone).
-
-## Requirements
-
-- **Python 3.11+** (required)
-- **tmux** (required — Assist routes input into tmux sessions)
-- **npx** or **claude** binary (required — launches Claude Code in sessions; default mode is `npx`)
-- **xclip** (optional — clipboard copy/paste; `sudo apt install xclip`)
-- **xdotool** (optional — X11 key-send fallback; `sudo apt install xdotool`)
-- **docker** (optional — container spawn / build features)
-- **curl** (optional — the CLI falls back to Python for HTTP calls)
-
-Run `assist doctor` after install to verify all prerequisites.
 
 ## CLI
 
