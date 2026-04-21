@@ -1,0 +1,403 @@
+#!/usr/bin/env bash
+#
+# assist — CLI for Claude Assist (server control + container ops).
+#
+# Installed by install.sh as a symlink at ~/.local/bin/assist.
+# Resolves the install location from ~/.config/claude-assist/config.env,
+# or falls back to the parent of this script when invoked via symlink.
+#
+set -euo pipefail
+
+# ---- resolve ASSIST_HOME ---------------------------------------------------
+CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/claude-assist/config.env"
+if [[ -f "$CONFIG_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$CONFIG_FILE"
+fi
+
+if [[ -z "${ASSIST_HOME:-}" ]]; then
+    self="${BASH_SOURCE[0]}"
+    while [[ -L "$self" ]]; do
+        self="$(readlink "$self")"
+    done
+    ASSIST_HOME="$(cd "$(dirname "$self")/.." && pwd)"
+fi
+
+[[ -d "$ASSIST_HOME" ]] || { echo "assist: ASSIST_HOME not found: $ASSIST_HOME" >&2; exit 1; }
+
+# ---- load .env (if present) ------------------------------------------------
+if [[ -f "$ASSIST_HOME/.env" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$ASSIST_HOME/.env"
+    set +a
+fi
+
+PORT="${ASSIST_PORT:-8089}"
+API="http://127.0.0.1:$PORT"
+PY="$ASSIST_HOME/.venv/bin/python"
+[[ -x "$PY" ]] || PY="python3"
+
+# ---- helpers ---------------------------------------------------------------
+say()  { printf '\033[36m==>\033[0m %s\n' "$*"; }
+warn() { printf '\033[33mWARN:\033[0m %s\n' "$*" >&2; }
+err()  { printf '\033[31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
+
+pretty_json() { "$PY" -m json.tool 2>/dev/null || cat; }
+
+# HTTP helpers — always report failures loudly instead of exiting silently
+# under `set -euo pipefail`. curl alone with -f swallows the body, which is
+# useless for diagnosing 4xx/5xx responses.
+api_get() {
+    local path="$1"
+    if command -v curl >/dev/null; then
+        local resp status body
+        resp="$(curl -sS --max-time 10 -w $'\n__STATUS__%{http_code}' "$API$path" 2>&1)" || {
+            err "Request to $API$path failed: $resp"
+        }
+        status="${resp##*__STATUS__}"
+        body="${resp%$'\n'__STATUS__*}"
+        if [[ ! "$status" =~ ^2 ]]; then
+            err "GET $path → HTTP $status: $(printf '%s' "$body" | head -c 300)"
+        fi
+        printf '%s\n' "$body"
+    else
+        ASSIST_URL="$API$path" "$PY" - <<'PY'
+import os, sys, urllib.request, urllib.error
+try:
+    with urllib.request.urlopen(os.environ["ASSIST_URL"], timeout=10) as r:
+        sys.stdout.write(r.read().decode())
+except urllib.error.HTTPError as e:
+    sys.stderr.write(f"GET {e.url} → HTTP {e.code}: {e.read().decode()[:300]}\n")
+    sys.exit(1)
+except Exception as e:
+    sys.stderr.write(f"Request failed: {e}\n")
+    sys.exit(1)
+PY
+    fi
+}
+
+api_post() {
+    local path="$1" data="${2:-{}}"
+    if command -v curl >/dev/null; then
+        local resp status body
+        resp="$(curl -sS --max-time 30 -X POST -H 'Content-Type: application/json' \
+                -d "$data" -w $'\n__STATUS__%{http_code}' "$API$path" 2>&1)" || {
+            err "Request to $API$path failed: $resp"
+        }
+        status="${resp##*__STATUS__}"
+        body="${resp%$'\n'__STATUS__*}"
+        if [[ ! "$status" =~ ^2 ]]; then
+            err "POST $path → HTTP $status: $(printf '%s' "$body" | head -c 300)"
+        fi
+        printf '%s\n' "$body"
+    else
+        ASSIST_API="$API$path" ASSIST_DATA="$data" "$PY" - <<'PY'
+import json, os, sys, urllib.request, urllib.error
+req = urllib.request.Request(os.environ["ASSIST_API"], method="POST")
+req.add_header("Content-Type", "application/json")
+body = os.environ["ASSIST_DATA"].encode()
+try:
+    with urllib.request.urlopen(req, body, timeout=30) as r:
+        sys.stdout.write(r.read().decode())
+except urllib.error.HTTPError as e:
+    sys.stderr.write(f"POST {e.url} → HTTP {e.code}: {e.read().decode()[:300]}\n")
+    sys.exit(1)
+except Exception as e:
+    sys.stderr.write(f"Request failed: {e}\n")
+    sys.exit(1)
+PY
+    fi
+}
+
+require_server() {
+    if ! api_get /health >/dev/null 2>&1; then
+        err "Server not running on $API. Start it with: assist start"
+    fi
+}
+
+# ---- process commands (delegate to assist-ctl) -----------------------------
+cmd_start()   { "$ASSIST_HOME/assist-ctl" start; }
+cmd_stop()    { "$ASSIST_HOME/assist-ctl" stop; }
+cmd_restart() { "$ASSIST_HOME/assist-ctl" restart; }
+cmd_status()  { "$ASSIST_HOME/assist-ctl" status; }
+
+cmd_logs() {
+    local log="/tmp/assist-server.log"
+    [[ -f "$log" ]] || err "Log file not found: $log"
+    case "${1:-}" in
+        -f|--follow) tail -f "$log" ;;
+        *)           tail -n "${1:-100}" "$log" ;;
+    esac
+}
+
+# ---- config / diagnostics --------------------------------------------------
+cmd_config() {
+    cat <<EOF
+ASSIST_HOME        $ASSIST_HOME
+Port               $PORT
+Python             $PY
+Venv               $ASSIST_HOME/.venv
+User config file   $CONFIG_FILE
+Env file           $ASSIST_HOME/.env
+Projects dir       ${ASSIST_PROJECTS_DIR:-$HOME/projects}
+Skills dir         ${ASSIST_SKILLS_DIR:-$HOME/.claude/skills}
+Session init cmd   ${ASSIST_SESSION_INIT_CMD:-(none)}
+API base           $API
+EOF
+}
+
+cmd_doctor() {
+    local ok_all=1
+    local mark_ok=$'\033[32m\xe2\x9c\x93\033[0m'
+    local mark_fail=$'\033[31m\xe2\x9c\x97\033[0m'
+    local mark_warn=$'\033[33m\xe2\x97\x8b\033[0m'
+
+    check() {
+        local name="$1" cmd="$2" required="${3:-no}"
+        if command -v "$cmd" >/dev/null 2>&1; then
+            printf "  %s %s (%s)\n" "$mark_ok" "$name" "$(command -v "$cmd")"
+        else
+            if [[ "$required" == "yes" ]]; then
+                printf "  %s %s (required)\n" "$mark_fail" "$name"
+                ok_all=0
+            else
+                printf "  %s %s (optional)\n" "$mark_warn" "$name"
+            fi
+        fi
+    }
+
+    echo "Environment:"
+    check "python3"  python3  yes
+    check "tmux"     tmux     yes
+    check "xclip"    xclip
+    check "xdotool"  xdotool
+    check "docker"   docker
+    check "curl"     curl
+    check "nginx"    nginx
+
+    # npx or claude binary
+    if command -v npx >/dev/null 2>&1; then
+        printf "  %s npx (%s)\n" "$mark_ok" "$(command -v npx)"
+    elif command -v claude >/dev/null 2>&1; then
+        printf "  %s claude (%s) — set claude_mode to 'claude'\n" "$mark_ok" "$(command -v claude)"
+    else
+        printf "  %s npx/claude (neither found — Claude Code launch will fail)\n" "$mark_warn"
+    fi
+
+    # Docker daemon reachable?
+    if command -v docker >/dev/null; then
+        if docker ps >/dev/null 2>&1; then
+            printf "  %s docker daemon reachable\n" "$mark_ok"
+        else
+            printf "  %s docker installed but user lacks permission\n" "$mark_warn"
+        fi
+    fi
+
+    echo
+    echo "Install:"
+    if [[ -x "$PY" ]]; then
+        printf "  %s venv (%s)\n" "$mark_ok" "$PY"
+    else
+        printf "  %s venv missing — run install.sh\n" "$mark_fail"
+        ok_all=0
+    fi
+    if [[ -f "$ASSIST_HOME/.env" ]]; then
+        printf "  %s .env present\n" "$mark_ok"
+    else
+        printf "  %s .env missing — run install.sh\n" "$mark_warn"
+    fi
+    if [[ -f "$CONFIG_FILE" ]]; then
+        printf "  %s user config (%s)\n" "$mark_ok" "$CONFIG_FILE"
+    else
+        printf "  %s user config missing\n" "$mark_warn"
+    fi
+    if [[ -w "$ASSIST_HOME" ]]; then
+        printf "  %s data directory writable\n" "$mark_ok"
+    else
+        printf "  %s data directory NOT writable (%s)\n" "$mark_fail" "$ASSIST_HOME"
+        ok_all=0
+    fi
+
+    echo
+    echo "Server:"
+    if api_get /health >/dev/null 2>&1; then
+        printf "  %s responding on :%s\n" "$mark_ok" "$PORT"
+    else
+        printf "  %s not running on :%s\n" "$mark_warn" "$PORT"
+    fi
+
+    echo
+    if [[ "$ok_all" == "1" ]]; then
+        echo "OK"
+    else
+        echo "Problems found — see above"
+        exit 1
+    fi
+}
+
+# ---- container commands ----------------------------------------------------
+cmd_container() {
+    local sub="${1:-status}"
+    shift || true
+    case "$sub" in
+        status)      container_status ;;
+        build)       container_build ;;
+        config)      container_config_show ;;
+        extensions)  container_extensions_list ;;
+        kill)        container_kill "${1:-}" ;;
+        help|-h|--help) container_help ;;
+        *)           err "Unknown container subcommand: $sub (try: $(container_subs))" ;;
+    esac
+}
+
+container_subs() { echo "status | build | config | extensions | kill <name>"; }
+
+container_help() {
+    cat <<EOF
+Usage: assist container <subcommand>
+
+Subcommands:
+  status                 Show image info + running claude-session-* containers
+  build                  Trigger a container image build and stream the log
+  config                 Print the current container build config
+  extensions             List registered extensions (SDK/tool bundles)
+  kill <name>            Kill a running claude-session-* container
+
+EOF
+}
+
+container_status() {
+    require_server
+    api_get /api/container/status | pretty_json
+}
+
+container_config_show() {
+    require_server
+    api_get /api/container/config | pretty_json
+}
+
+container_extensions_list() {
+    require_server
+    api_get /api/container/extensions | pretty_json
+}
+
+container_kill() {
+    local name="$1"
+    [[ -n "$name" ]] || err "Usage: assist container kill <container-name>"
+    require_server
+    api_post "/api/container/kill/$name" | pretty_json
+}
+
+container_build() {
+    require_server
+    ASSIST_API="$API" "$PY" - <<'PY'
+import json, os, sys, time, urllib.request
+
+API = os.environ["ASSIST_API"]
+
+def fetch(path, method="GET", data=None):
+    req = urllib.request.Request(API + path, method=method)
+    body = None
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+        body = json.dumps(data).encode()
+    with urllib.request.urlopen(req, body, timeout=30) as r:
+        return json.loads(r.read())
+
+try:
+    resp = fetch("/api/container/build/status")
+except Exception as e:
+    print(f"Could not reach build status API: {e}", file=sys.stderr)
+    sys.exit(2)
+
+if resp.get("active"):
+    print("==> Build already in progress — attaching to live log")
+else:
+    print("==> Triggering container build")
+    try:
+        r = fetch("/api/container/build", method="POST", data={})
+    except Exception as e:
+        print(f"Failed to start build: {e}", file=sys.stderr)
+        sys.exit(2)
+    if not r.get("ok"):
+        print(f"Failed to start build: {r.get('error')}", file=sys.stderr)
+        sys.exit(2)
+
+last = 0
+while True:
+    try:
+        resp = fetch("/api/container/build/status")
+    except Exception as e:
+        print(f"(poll error: {e})", file=sys.stderr)
+        time.sleep(2)
+        continue
+    log = resp.get("log") or []
+    for line in log[last:]:
+        print(line, flush=True)
+    last = len(log)
+    if not resp.get("active"):
+        success = resp.get("success")
+        print()
+        if success is True:
+            print("\033[32m✓ build succeeded\033[0m")
+            sys.exit(0)
+        elif success is False:
+            print("\033[31m✗ build failed\033[0m")
+            sys.exit(1)
+        else:
+            print("(build finished with unknown status)")
+            sys.exit(0)
+    time.sleep(1)
+PY
+}
+
+# ---- help ------------------------------------------------------------------
+cmd_help() {
+    cat <<EOF
+assist — control the Claude Assist web terminal
+
+Usage: assist <command> [args]
+
+Server:
+  start                  Start the server (background, PID in /tmp)
+  stop                   Stop the server
+  restart                Restart the server
+  status                 Show server status
+  logs [N | -f]          Tail last N lines (default 100), or follow with -f
+
+Config & diagnostics:
+  config                 Print resolved paths, ports, and env
+  doctor                 Check prerequisites + server health
+
+Container:
+  container status       Image info + running claude-session-* containers
+  container build        Build the container image (streams log)
+  container config       Print current container build config
+  container extensions   List registered extensions
+  container kill <name>  Kill a running claude-session-* container
+
+Misc:
+  help                   Show this message
+
+Install / reinstall:
+  cd \$ASSIST_HOME && ./install.sh
+
+EOF
+}
+
+# ---- dispatch --------------------------------------------------------------
+cmd="${1:-help}"
+shift || true
+case "$cmd" in
+    start)       cmd_start "$@" ;;
+    stop)        cmd_stop "$@" ;;
+    restart)     cmd_restart "$@" ;;
+    status)      cmd_status "$@" ;;
+    logs)        cmd_logs "$@" ;;
+    config)      cmd_config "$@" ;;
+    doctor)      cmd_doctor "$@" ;;
+    container)   cmd_container "$@" ;;
+    help|-h|--help) cmd_help ;;
+    *)           err "Unknown command: $cmd (try: assist help)" ;;
+esac

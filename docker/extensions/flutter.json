@@ -1,0 +1,13 @@
+{
+  "id": "flutter",
+  "name": "Flutter SDK",
+  "builtin": true,
+  "archive": "/opt/flutter.tar.xz",
+  "install": [
+    "if [ -f /tmp/ext-archive ]; then tar -xf /tmp/ext-archive -C /opt; fi",
+    "/opt/flutter/bin/flutter precache --web 2>/dev/null || true"
+  ],
+  "env": {"FLUTTER_ROOT": "/opt/flutter"},
+  "path_add": "/opt/flutter/bin:/opt/flutter/bin/cache/dart-sdk/bin",
+  "enabled": false
+}

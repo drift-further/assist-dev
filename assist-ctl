@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+#
+# assist-ctl — Start/stop/restart/status for Claude Assist server.
+# Start/stop/restart/status for the Claude Assist server.
+#
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PORT="${ASSIST_PORT:-8089}"
+PID_FILE="/tmp/assist-server.pid"
+LOG_FILE="/tmp/assist-server.log"
+SERVE_SCRIPT="$SCRIPT_DIR/serve.py"
+
+# Use project-local venv if it exists, otherwise system python3
+if [[ -x "$SCRIPT_DIR/.venv/bin/python" ]]; then
+    PYTHON="$SCRIPT_DIR/.venv/bin/python"
+else
+    PYTHON="python3"
+fi
+
+# Load .env if present
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
+    set -a
+    source "$SCRIPT_DIR/.env"
+    set +a
+fi
+
+read_pid() {
+    [[ -f "$PID_FILE" ]] && cat "$PID_FILE" 2>/dev/null || echo ""
+}
+
+is_alive() {
+    local pid="$1"
+    [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+health_check() {
+    curl -sf --max-time 3 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1
+}
+
+do_start() {
+    local pid
+    pid="$(read_pid)"
+    if is_alive "$pid"; then
+        echo "Assist server already running (PID $pid)"
+        return 0
+    fi
+
+    echo "Starting Assist server..."
+    nohup "$PYTHON" "$SERVE_SCRIPT" --port "$PORT" >> "$LOG_FILE" 2>&1 &
+    local new_pid=$!
+    echo "$new_pid" > "$PID_FILE"
+
+    # Wait for server to become healthy (up to 10 seconds)
+    local tries=0
+    while [[ $tries -lt 20 ]]; do
+        if health_check; then
+            echo "Started (PID $new_pid) on port $PORT"
+            echo "  Log: $LOG_FILE"
+            return 0
+        fi
+        if ! is_alive "$new_pid"; then
+            echo "Server process exited unexpectedly. Check log: $LOG_FILE"
+            tail -5 "$LOG_FILE" 2>/dev/null
+            return 1
+        fi
+        sleep 0.5
+        tries=$((tries + 1))
+    done
+    echo "Started (PID $new_pid) but not yet healthy on port $PORT"
+    echo "  Log: $LOG_FILE"
+}
+
+do_stop() {
+    local pid
+    pid="$(read_pid)"
+
+    if [[ -z "$pid" ]] || ! is_alive "$pid"; then
+        # Check if something is on the port anyway
+        if health_check; then
+            echo "No PID file but server responding on port $PORT — find and kill manually"
+            return 1
+        fi
+        echo "Assist server is not running."
+        rm -f "$PID_FILE"
+        return 0
+    fi
+
+    kill "$pid" 2>/dev/null || true
+    rm -f "$PID_FILE"
+    echo "Stopped (PID $pid)"
+}
+
+do_restart() {
+    do_stop
+    sleep 1
+    do_start
+}
+
+do_status() {
+    local pid
+    pid="$(read_pid)"
+
+    if [[ -n "$pid" ]] && is_alive "$pid"; then
+        if health_check; then
+            echo "Assist server is running (PID $pid) — healthy"
+        else
+            echo "Assist server process alive (PID $pid) — NOT responding on /health"
+        fi
+        echo "  Port: $PORT"
+        echo "  Log:  $LOG_FILE"
+    else
+        if health_check; then
+            echo "Assist server responding on port $PORT but PID file stale/missing"
+        else
+            echo "Assist server is not running."
+        fi
+    fi
+}
+
+case "${1:-help}" in
+    start)   do_start ;;
+    stop)    do_stop ;;
+    restart) do_restart ;;
+    status)  do_status ;;
+    *)
+        echo "Usage: assist-ctl {start|stop|restart|status}"
+        echo ""
+        echo "Environment variables (or set in .env):"
+        echo "  ASSIST_PORT           Port (default: 8089)"
+        echo "  ASSIST_PROJECTS_DIR   Projects root directory"
+        echo "  ASSIST_CLI_BIN        Path to CLI binary for proxy"
+        echo "  ASSIST_CLI_DIR        CLI working directory"
+        echo "  ASSIST_MOUNT_SCRIPT   Path to claude-direct-mount.sh"
+        exit 1
+        ;;
+esac

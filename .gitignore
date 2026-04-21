@@ -1,0 +1,39 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Runtime data (created at startup, not source)
+history.json
+favorites.json
+idle_state.json
+claude_mode.txt
+automate_state.json
+settings.json
+project_settings.json
+container_config.json
+extensions.json
+sudo_pw.dat
+
+# Environment
+.env
+
+# Logs
+*.log
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local dev tooling state
+.claude/
+.superpowers/
+.playwright-mcp/
+sessions/
+docs/superpowers/

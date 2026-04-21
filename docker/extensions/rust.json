@@ -1,0 +1,12 @@
+{
+  "id": "rust",
+  "name": "Rust Toolchain",
+  "builtin": true,
+  "archive": null,
+  "install": [
+    "su developer -c 'curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y'"
+  ],
+  "env": {},
+  "path_add": "/home/developer/.cargo/bin",
+  "enabled": false
+}

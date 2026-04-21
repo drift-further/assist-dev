@@ -1,0 +1,68 @@
+/* status-bar.css — Top status bar */
+
+.status-bar {
+    position: relative;
+    background: linear-gradient(180deg, #0a1210 0%, #060e0a 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 6px 12px;
+    padding-top: calc(6px + env(safe-area-inset-top, 0px));
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    z-index: 10;
+    flex-shrink: 0;
+}
+.status-bar::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent 0%, var(--green) 30%, var(--green) 70%, transparent 100%);
+    opacity: 0.4;
+}
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex-shrink: 0;
+    transition: all 0.3s;
+}
+.status-dot.ok {
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green), 0 0 16px rgba(0, 255, 65, 0.3);
+}
+.status-dot.err {
+    background: var(--red);
+    box-shadow: 0 0 8px var(--red);
+}
+.status-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--green);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    flex: 1;
+    text-shadow: 0 0 10px rgba(0, 255, 65, 0.3);
+}
+.status-title span { color: var(--text-dim); font-weight: 400; }
+.tmux-indicator {
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--cyan);
+    letter-spacing: 1px;
+    opacity: 0;
+    transition: opacity 0.3s;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 120px;
+}
+.tmux-indicator.active { opacity: 1; }
+.status-time {
+    font-size: 9px;
+    color: var(--text-muted);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}

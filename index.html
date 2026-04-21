@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Assist // Claude Code</title>
+    <link rel="stylesheet" href="/css/fonts.css">
+    <link rel="stylesheet" href="/css/base.css">
+    <link rel="stylesheet" href="/css/status-bar.css">
+    <link rel="stylesheet" href="/css/input.css">
+    <link rel="stylesheet" href="/css/terminal.css">
+    <link rel="stylesheet" href="/css/drawers.css">
+    <link rel="stylesheet" href="/css/widgets.css">
+    <link rel="stylesheet" href="/css/commands.css">
+    <link rel="stylesheet" href="/css/container.css">
+    <link rel="stylesheet" href="/css/notifications.css">
+</head>
+<body>
+
+    <div class="status-bar">
+        <div id="status-dot" class="status-dot"></div>
+        <div class="status-title">Assist <span>// Claude Code</span></div>
+        <div id="tmux-ind" class="tmux-indicator"></div>
+        <div id="status-time" class="status-time"></div>
+    </div>
+
+    <!-- Edge tab: left drawer trigger (extended keys) -->
+    <button class="edge-tab-left" id="edge-tab-left" onclick="toggleLeftDrawer()">More</button>
+
+    <!-- Drawer overlay -->
+    <div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawers()"></div>
+
+    <!-- Right drawer: Controls + Navigation (quick access) -->
+
+    <!-- Left drawer: Claude Code + Terminal + Modes -->
+    <div class="drawer-left" id="drawer-left">
+        <div class="drawer-header">
+            <span>More Keys</span>
+            <button class="drawer-close" onclick="closeLeftDrawer()">&times;</button>
+        </div>
+        <div class="hk-group-label">Claude Code</div>
+        <div class="hk-grid">
+            <button class="hk-btn hk-cyan" onclick="typeCmd('/compact')"><span class="hk-label">/compact</span></button>
+            <button class="hk-btn hk-cyan" onclick="typeCmd('/clear')"><span class="hk-label">/clear</span></button>
+            <button class="hk-btn hk-cyan" onclick="typeCmd('/help')"><span class="hk-label">/help</span></button>
+            <button class="hk-btn hk-cyan" onclick="typeCmd('/context')"><span class="hk-label">/context</span></button>
+            <button class="hk-btn hk-cyan" onclick="typeCmd('/cost')"><span class="hk-label">/cost</span></button>
+            <button class="hk-btn hk-cyan" onclick="typeCmd('/status')"><span class="hk-label">/status</span></button>
+            <button class="hk-btn hk-cyan" onclick="typeCmd('/model')"><span class="hk-label">/model</span></button>
+            <button class="hk-btn hk-cyan" onclick="typeCmd('/config')"><span class="hk-label">/config</span></button>
+        </div>
+        <div class="hk-group-label">Terminal</div>
+        <div class="hk-grid">
+            <button class="hk-btn hk-dim" onclick="sendKey('ctrl+l')"><span class="hk-label">Ctrl+L</span><span class="hk-sub">clear</span></button>
+            <button class="hk-btn hk-dim" onclick="sendKey('ctrl+r')"><span class="hk-label">Ctrl+R</span><span class="hk-sub">search</span></button>
+            <button class="hk-btn hk-dim" onclick="sendKey('Tab')"><span class="hk-label">Tab</span><span class="hk-sub">complete</span></button>
+            <button class="hk-btn hk-dim" onclick="sendKey('ctrl+d')"><span class="hk-label">Ctrl+D</span><span class="hk-sub">exit</span></button>
+            <button class="hk-btn hk-dim" onclick="sendKey('ctrl+u')"><span class="hk-label">Ctrl+U</span><span class="hk-sub">del line</span></button>
+            <button class="hk-btn hk-dim" onclick="sendKey('ctrl+a')"><span class="hk-label">Ctrl+A</span><span class="hk-sub">home</span></button>
+            <button class="hk-btn hk-dim" onclick="sendKey('ctrl+e')"><span class="hk-label">Ctrl+E</span><span class="hk-sub">end</span></button>
+            <button class="hk-btn hk-dim" onclick="sendKey('ctrl+k')"><span class="hk-label">Ctrl+K</span><span class="hk-sub">del fwd</span></button>
+        </div>
+        <div class="hk-group-label">Modes</div>
+        <div class="hk-grid">
+            <button class="hk-btn hk-amber" onclick="sendKey('shift+Tab')"><span class="hk-label">Shift+Tab</span><span class="hk-sub">perm mode</span></button>
+            <button class="hk-btn hk-amber" onclick="sendKey('ctrl+o')"><span class="hk-label">Ctrl+O</span><span class="hk-sub">verbose</span></button>
+            <button class="hk-btn hk-amber" onclick="sendKey('ctrl+t')"><span class="hk-label">Ctrl+T</span><span class="hk-sub">tasks</span></button>
+            <button class="hk-btn hk-amber" onclick="sendKey('ctrl+g')"><span class="hk-label">Ctrl+G</span><span class="hk-sub">editor</span></button>
+        </div>
+        <div class="hk-group-label">Session</div>
+        <div class="hk-grid">
+            <button class="hk-btn hk-red" id="term-kill-btn" onclick="killSession(); closeLeftDrawer();"><span class="hk-label">End</span><span class="hk-sub">kill tmux</span></button>
+        </div>
+    </div>
+
+    <!-- Bottom drawer: history -->
+    <div class="drawer-bottom" id="drawer-bottom">
+        <div class="drawer-header">
+            <div class="drawer-tabs">
+                <button class="drawer-tab active" data-tab="history" onclick="switchHistTab('history')">History</button>
+                <button class="drawer-tab" data-tab="favs" onclick="switchHistTab('favs')">Favs</button>
+            </div>
+            <button class="drawer-close" onclick="closeBottomDrawer()">&times;</button>
+        </div>
+        <div class="list-area" id="list-area"></div>
+        <button class="clear-btn" id="clear-btn" onclick="clearHistory()">Clear History</button>
+    </div>
+
+    <div class="content">
+        <!-- Terminal header (always visible) -->
+        <div class="term-toggle" id="term-toggle">
+            <span class="term-toggle-label">Terminal</span>
+            <span class="term-toggle-status" id="term-toggle-status"></span>
+            <span class="conn-indicator" id="conn-indicator"></span>
+            <button class="term-font-btn" onclick="termFontSmaller()">A-</button>
+            <button class="term-font-btn" onclick="termFontLarger()">A+</button>
+            <button class="term-font-btn" onclick="termFitToScreen()" title="Fit terminal to screen">Fit</button>
+            <button class="term-search-toggle" onclick="toggleTermSearch()" title="Search">&#128269;</button>
+        </div>
+        <div class="term-panel" id="term-panel">
+            <div class="term-bar">
+                <div class="session-tabs" id="session-tabs">
+                    <span class="session-tabs-empty">No sessions</span>
+                </div>
+                <button class="btn-info" id="btn-info" onclick="toggleClaudeInfo()" title="Claude session info">i</button>
+                <button class="btn-sudo" id="btn-sudo" onclick="toggleSudoPassword()" title="Sudo password">&#128274;</button>
+                <button class="btn-insert" id="btn-insert" onclick="sendInsertMode()" title="Send 'i' to enter insert mode">I</button>
+                <button class="btn-plus" id="btn-plus" onclick="togglePlusMenu()" title="More actions">+</button>
+            </div>
+
+            <div class="term-search hidden" id="term-search">
+                <input type="text" class="term-search-input" id="term-search-input" placeholder="Search..." oninput="onTermSearch()">
+                <span class="term-search-count" id="term-search-count"></span>
+                <button class="term-search-nav" onclick="termSearchPrev()">&#9650;</button>
+                <button class="term-search-nav" onclick="termSearchNext()">&#9660;</button>
+                <button class="term-search-close" onclick="closeTermSearch()">&#x2715;</button>
+            </div>
+
+            <div class="plus-menu" id="plus-menu">
+                <button class="plus-item plus-proj" onclick="toggleProjects(); togglePlusMenu();">Projects</button>
+                <button class="plus-item plus-git" id="btn-git" onclick="toggleGitPanel(); togglePlusMenu();">Git</button>
+                <button class="plus-item plus-container" onclick="toggleContainerPanel(); togglePlusMenu();">Container</button>
+                <button class="plus-item plus-skills" onclick="toggleSkillsPanel(); togglePlusMenu();">/Skills</button>
+                <button class="plus-item plus-autoyes" id="btn-autoyes" onclick="toggleAutoYes(); togglePlusMenu();">Auto-Yes</button>
+                <button class="plus-item plus-auto" id="btn-auto" onclick="toggleAutoPanel(); togglePlusMenu();">Automate</button>
+                <button class="plus-item plus-settings" onclick="toggleSettingsPanel(); togglePlusMenu();">Settings</button>
+            </div>
+
+            <div class="claude-info-bar" id="claude-info-bar">
+                <div class="ci-row">
+                    <span class="ci-context" id="ci-context"></span>
+                    <span class="ci-sep">·</span>
+                    <span class="ci-duration" id="ci-duration"></span>
+                    <span class="ci-cost" id="ci-cost"></span>
+                    <span class="ci-block" id="ci-block"></span>
+                </div>
+                <div class="ci-row">
+                    <span class="ci-task" id="ci-task"></span>
+                    <span class="ci-sep">·</span>
+                    <span class="ci-files" id="ci-files"></span>
+                    <span class="ci-tasks-count" id="ci-tasks-count"></span>
+                    <span class="ci-sep">·</span>
+                    <span class="ci-branch" id="ci-branch"></span>
+                    <span class="ci-model" id="ci-model"></span>
+                </div>
+            </div>
+
+            <div class="session-info-toast" id="session-info-toast">
+                <div class="info-label">connect with</div>
+                <span id="session-info-text"></span>
+            </div>
+
+            <div class="git-panel" id="git-panel">
+                <div class="git-row">
+                    <button class="git-btn git-status" onclick="gitStatus()">Status</button>
+                    <button class="git-btn git-push" onclick="gitPush()">Push</button>
+                    <button class="git-btn git-venv" onclick="createVenv()">.venv</button>
+                    <button class="git-btn git-close" onclick="toggleGitPanel()">&#x2715;</button>
+                </div>
+                <div class="git-row">
+                    <input type="text" class="git-commit-input" id="git-commit-msg" placeholder="Commit message..." enterkeyhint="send">
+                    <button class="git-btn git-commit" onclick="gitCommitPush()">C&amp;P</button>
+                </div>
+            </div>
+
+            <div class="cmd-panel" id="cmd-panel">
+                <div class="cmd-panel-header">
+                    <span class="cmd-panel-title">Saved Commands</span>
+                    <button class="cmd-panel-close" onclick="toggleCmdPanel()">&#x2715;</button>
+                </div>
+                <div class="cmd-list" id="cmd-list"></div>
+            </div>
+
+            <div class="auto-panel" id="auto-panel">
+                <div class="auto-panel-header">
+                    <span class="auto-panel-title">Automate Run</span>
+                    <button class="auto-panel-close" onclick="toggleAutoPanel()">&#x2715;</button>
+                </div>
+                <div class="auto-panel-body">
+                    <textarea class="auto-prompt" id="auto-prompt" rows="3" placeholder="What should Claude do?"></textarea>
+                    <div class="auto-controls">
+                        <label class="auto-check-label">
+                            <input type="checkbox" class="auto-check" id="auto-continuous" checked>
+                            <span>Continuous</span>
+                        </label>
+                        <label class="auto-timeout-label" id="auto-iter-label">
+                            Runs
+                            <input type="number" class="auto-timeout" id="auto-iterations" value="1" min="1" max="999" disabled>
+                        </label>
+                        <label class="auto-timeout-label">
+                            Idle
+                            <input type="number" class="auto-timeout" id="auto-timeout" value="10" min="1" max="120">
+                            <span class="auto-timeout-unit">min</span>
+                        </label>
+                        <label class="auto-timeout-label">
+                            Stop@
+                            <input type="time" class="auto-timeout auto-stop-after" id="auto-stop-after" value="">
+                        </label>
+                        <label class="auto-timeout-label">
+                            Cmd
+                            <select class="auto-timeout auto-claude-cmd" id="auto-claude-cmd">
+                                <option value="">default</option>
+                                <option value="claude">claude</option>
+                                <option value="npx @anthropic-ai/claude-code">npx</option>
+                            </select>
+                        </label>
+                        <button class="auto-run-btn" id="auto-run-btn" onclick="automateRun()">Run</button>
+                        <button class="auto-stop-btn hidden" id="auto-stop-btn" onclick="automateStop()">Stop</button>
+                    </div>
+                    <div class="auto-status hidden" id="auto-status"></div>
+                    <div class="auto-proj-settings" id="auto-proj-settings">
+                        <button class="auto-proj-toggle" onclick="toggleProjectSettings()">
+                            <span class="auto-proj-arrow" id="auto-proj-arrow">&#9654;</span>
+                            <span>Project Settings</span>
+                            <span class="auto-proj-name" id="auto-proj-name"></span>
+                        </button>
+                        <div class="auto-proj-body hidden" id="auto-proj-body"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="container-panel" id="container-panel">
+                <div class="container-panel-header">
+                    <span class="container-panel-title">Container</span>
+                    <button class="container-panel-close" onclick="toggleContainerPanel()">&#x2715;</button>
+                </div>
+                <div class="container-panel-body">
+                    <div class="ctr-section" id="ctr-status">
+                        <div class="ctr-status-loading">Loading...</div>
+                    </div>
+                    <button class="ctr-section-toggle" onclick="toggleCtrSection('packages')">
+                        <span class="ctr-arrow" id="ctr-arrow-packages">&#9654;</span>
+                        <span>Packages</span>
+                    </button>
+                    <div class="ctr-section-body hidden" id="ctr-body-packages"></div>
+                    <button class="ctr-section-toggle" onclick="toggleCtrSection('extensions')">
+                        <span class="ctr-arrow" id="ctr-arrow-extensions">&#9654;</span>
+                        <span>Extensions</span>
+                    </button>
+                    <div class="ctr-section-body hidden" id="ctr-body-extensions"></div>
+                    <button class="ctr-section-toggle" onclick="toggleCtrSection('build')">
+                        <span class="ctr-arrow" id="ctr-arrow-build">&#9654;</span>
+                        <span>Build</span>
+                    </button>
+                    <div class="ctr-section-body hidden" id="ctr-body-build"></div>
+                </div>
+            </div>
+
+            <div class="settings-panel" id="settings-panel">
+                <div class="settings-header">
+                    <div class="settings-server-info">
+                        <div class="settings-server-label">Server</div>
+                        <div class="settings-server-detail" id="settings-server-detail">--</div>
+                    </div>
+                    <button class="settings-restart-btn" id="settings-restart-btn" onclick="restartServer()">RESTART</button>
+                    <button class="cmd-panel-close" onclick="toggleSettingsPanel()">&#x2715;</button>
+                </div>
+                <div class="settings-body" id="settings-body">
+                    <!-- Rendered by js/settings.js -->
+                </div>
+                <div class="settings-footer">
+                    <span class="settings-reset" onclick="resetAllSettings()">Reset All to Defaults</span>
+                </div>
+            </div>
+
+            <div class="skills-panel" id="skills-panel">
+                <div class="skills-panel-header">
+                    <span class="skills-panel-title">/ Skills</span>
+                    <button class="skills-panel-close" onclick="toggleSkillsPanel()">&#x2715;</button>
+                </div>
+                <div class="skills-list" id="skills-list"></div>
+            </div>
+
+            <div class="term-projects hidden" id="term-projects">
+                <input type="text" class="term-filter" id="term-filter" placeholder="Filter projects..." oninput="filterProjects()">
+                <div class="term-project-grid" id="term-project-grid"></div>
+            </div>
+
+            <div class="term-display hidden" id="term-display">
+                <div class="term-info" id="term-info">
+                    <span class="term-info-cmd" id="term-info-cmd"></span>
+                    <span class="term-info-dim" id="term-info-dim"></span>
+                </div>
+                <div class="term-load-more" id="term-load-more" onclick="loadMore()">Load more &#8593;</div>
+                <pre class="term-content" id="term-content"></pre>
+                <div class="term-new-output" id="term-new-output" onclick="resumeTerminal()">New output &#8595;</div>
+            </div>
+
+            <div class="cmd-output" id="cmd-output">
+                <div class="cmd-output-header">
+                    <span class="cmd-output-dot" id="cmd-output-dot"></span>
+                    <span class="cmd-output-label" id="cmd-output-label">Command</span>
+                    <button class="cmd-input-toggle" id="cmd-input-toggle" onclick="toggleInputTarget()" title="Toggle keyboard target">&#9650;</button>
+                    <button class="cmd-output-close" onclick="closeCmdOutput()">&#x2715;</button>
+                </div>
+                <div class="cmd-output-content" id="cmd-output-content">
+                    <pre class="cmd-output-pre" id="cmd-output-pre"></pre>
+                </div>
+            </div>
+
+            <div class="smart-actions" id="smart-actions">
+                <div class="smart-actions-header">
+                    <div class="smart-actions-label" id="smart-actions-label">Action required</div>
+                    <button class="smart-actions-close" onclick="dismissSmartActions()">&#x2715;</button>
+                </div>
+                <div class="smart-actions-grid" id="smart-actions-grid"></div>
+            </div>
+            <div class="autoyes-picker" id="autoyes-picker">
+                <span class="ay-pick-label">Auto-Yes delay</span>
+                <button class="ay-pick-btn" onclick="ayPickAdjust(-1)">&minus;</button>
+                <span class="ay-pick-val" id="ay-pick-val">5</span>
+                <button class="ay-pick-btn" onclick="ayPickAdjust(1)">+</button>
+                <span class="ay-pick-unit">sec</span>
+                <button class="ay-pick-go" onclick="ayPickConfirm()">Start</button>
+                <button class="ay-pick-x" onclick="ayPickCancel()">&times;</button>
+            </div>
+            <div class="autoyes-countdown" id="autoyes-countdown">
+                <span class="ay-label">5</span>
+                <span class="ay-summary"></span>
+                <div class="ay-track"><div class="ay-progress"></div></div>
+                <button class="ay-cancel" onclick="cancelAutoYesCountdown()">STOP</button>
+            </div>
+        </div>
+
+        <input type="file" id="file-input" style="display:none" onchange="onFileSelected(this)">
+        <div class="input-wrap">
+            <textarea id="text-input" placeholder="Speak or type..." enterkeyhint="send"></textarea>
+            <div id="flash" class="flash-overlay"></div>
+        </div>
+        <div class="attach-bar" id="attach-bar">
+            <span style="font-size:14px;flex-shrink:0">&#128206;</span>
+            <span class="attach-name" id="attach-name"></span>
+            <span class="attach-size" id="attach-size"></span>
+            <button class="attach-remove" onclick="removeAttachment()">&times;</button>
+        </div>
+
+        <div class="keys-panel" id="keys-panel">
+            <div class="keys-split">
+                <div class="keys-left">
+                    <div class="hk-group-label">Controls</div>
+                    <div class="hk-grid hk-grid-2col">
+                        <button class="hk-btn hk-amber" onclick="sendKey('Escape')"><span class="hk-label">Esc</span><span class="hk-sub">dismiss</span></button>
+                        <button class="hk-btn hk-amber" onclick="sendKey('Escape Escape')"><span class="hk-label">Esc x2</span><span class="hk-sub">rewind</span></button>
+                        <button class="hk-btn hk-red" onclick="sendKey('ctrl+c')"><span class="hk-label">Ctrl+C</span><span class="hk-sub">cancel</span></button>
+                        <button class="hk-btn hk-red" onclick="sendKey('ctrl+c ctrl+c')"><span class="hk-label">Ctrl+C x2</span><span class="hk-sub">exit</span></button>
+                        <button class="hk-btn hk-green hk-wide" onclick="sendKey('Return')"><span class="hk-label">Enter</span><span class="hk-sub">submit</span></button>
+                    </div>
+                </div>
+                <div class="keys-right">
+                    <div class="hk-group-label">Nav</div>
+                    <div class="dpad">
+                        <button class="hk-btn hk-dim dpad-up" onclick="sendKey('Up')"><span class="hk-label">&#9650;</span></button>
+                        <button class="hk-btn hk-dim dpad-left" onclick="sendKey('Left')"><span class="hk-label">&#9664;</span></button>
+                        <button class="hk-btn hk-dim dpad-down" onclick="sendKey('Down')"><span class="hk-label">&#9660;</span></button>
+                        <button class="hk-btn hk-dim dpad-right" onclick="sendKey('Right')"><span class="hk-label">&#9654;</span></button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="btn-row">
+            <button class="action-btn btn-hist" onclick="toggleBottomDrawer()">Hist</button>
+            <button class="action-btn btn-upload" onclick="triggerUpload()">File</button>
+            <button class="action-btn btn-paste" onclick="doPaste()">Send</button>
+            <button class="action-btn btn-keys" id="btn-keys" onclick="toggleKeysPanel()">Keys</button>
+            <button class="action-btn btn-sudo-send" id="btn-sudo-send" onclick="doSudoSend()">Sudo<span class="sudo-prog" id="sudo-prog"></span></button>
+        </div>
+        <div class="route-indicator" id="route-ind">
+            <span class="route-dot" id="route-dot"></span>
+            <span class="route-label" id="route-label">Desktop (xdotool)</span>
+            <span class="route-attach" id="route-attach"></span>
+        </div>
+    </div>
+
+    <div id="sel-bar" class="sel-bar">
+        <button id="sel-cancel-btn" class="sel-cancel-btn" onclick="clearSelection()">&times;</button>
+        <button id="sel-copy-btn" class="sel-copy-btn">Copy</button>
+    </div>
+    <div class="restart-overlay" id="restart-overlay">
+        <div class="restart-overlay-content">
+            <div class="restart-spinner"></div>
+            <div class="restart-text">Restarting...</div>
+        </div>
+    </div>
+
+    <script src="/js/state.js"></script>
+    <script src="/js/ui.js"></script>
+    <script src="/js/input.js"></script>
+    <script src="/js/terminal.js?v=3"></script>
+    <script src="/js/actions.js?v=2"></script>
+    <script src="/js/commands.js?v=2"></script>
+    <script src="/js/container.js"></script>
+    <script src="/js/monitor.js?v=2"></script>
+    <script src="/js/notifications.js"></script>
+    <script src="/js/tabs.js"></script>
+    <script src="/js/settings.js"></script>
+    <script src="/js/app.js"></script>
+    <script src="/js/selection.js"></script>
+    <script>
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
+    </script>
+</body>
+</html>

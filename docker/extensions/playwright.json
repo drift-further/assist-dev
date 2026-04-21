@@ -1,0 +1,15 @@
+{
+  "id": "playwright",
+  "name": "Playwright Browsers",
+  "builtin": true,
+  "archive": null,
+  "install": [
+    "npm install -g playwright",
+    "mkdir -p /opt/mcp-workspace && cd /opt/mcp-workspace && npm init -y && npm install playwright",
+    "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright npx playwright install chromium firefox",
+    "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright npx playwright install-deps"
+  ],
+  "env": {"PLAYWRIGHT_BROWSERS_PATH": "/ms-playwright", "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "true"},
+  "path_add": null,
+  "enabled": false
+}

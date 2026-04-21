@@ -1,0 +1,73 @@
+/* base.css — Variables, reset, body, background effects */
+
+:root {
+    --bg: #080c10;
+    --bg-card: rgba(10, 22, 14, 0.6);
+    --bg-term: #030806;
+    --border: #0d3b1a;
+    --green: #00ff41;
+    --green-dim: #00802080;
+    --cyan: #00d4ff;
+    --cyan-dim: #006880;
+    --amber: #ff9500;
+    --red: #ff0040;
+    --purple: #bf5af2;
+    --text: #c0e0c8;
+    --text-dim: #4a6a50;
+    --text-muted: #2a3e2e;
+    --font: 'JetBrains Mono', 'Fira Code', 'SF Mono', monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* Grid background */
+body::before {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-image:
+        linear-gradient(rgba(0, 255, 65, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 255, 65, 0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* Scanline overlay removed — repeating-linear-gradient at 4px intervals
+   forced a compositor layer repaint on every scroll/layout shift.
+   Negligible visual effect, measurable GPU cost on mobile. */
+
+/* Shake animation */
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-6px); }
+    40% { transform: translateX(6px); }
+    60% { transform: translateX(-4px); }
+    80% { transform: translateX(4px); }
+}
+.shake { animation: shake 0.4s ease-out; }
+
+@keyframes fadeSlide {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulseGlow {
+    0%, 100% { box-shadow: 0 -4px 12px rgba(0, 212, 255, 0.1); }
+    50% { box-shadow: 0 -4px 20px rgba(0, 212, 255, 0.25); }
+}
+
+/* Scrollbar — vertical */
+::-webkit-scrollbar { width: 4px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }

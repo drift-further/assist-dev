@@ -1,0 +1,167 @@
+/* input.css — Content area, textarea, flash overlay, action buttons, file attach, route indicator */
+
+.content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 8px;
+    gap: 6px;
+    overflow: hidden;
+    position: relative;
+    z-index: 1;
+}
+
+/* Textarea */
+.input-wrap {
+    position: relative;
+    flex: 0 0 auto;
+    min-height: 80px;
+    max-height: 35dvh;
+}
+#text-input {
+    width: 100%;
+    height: 100%;
+    min-height: 80px;
+    max-height: 35dvh;
+    padding: 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--green);
+    font-family: var(--font);
+    font-size: 15px;
+    line-height: 1.5;
+    resize: none;
+    outline: none;
+    caret-color: var(--green);
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+#text-input::placeholder { color: var(--text-muted); }
+#text-input:focus {
+    border-color: rgba(0, 255, 65, 0.4);
+    box-shadow: 0 0 12px rgba(0, 255, 65, 0.1);
+}
+
+/* Flash overlay on textarea */
+.flash-overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s;
+    z-index: 2;
+}
+.flash-overlay.sent {
+    background: rgba(0, 255, 65, 0.1);
+    color: var(--green);
+    border: 1px solid var(--green);
+    text-shadow: 0 0 12px rgba(0, 255, 65, 0.5);
+}
+.flash-overlay.copied {
+    background: rgba(0, 212, 255, 0.1);
+    color: var(--cyan);
+    border: 1px solid var(--cyan);
+    text-shadow: 0 0 12px rgba(0, 212, 255, 0.5);
+}
+.flash-overlay.error {
+    background: rgba(255, 0, 64, 0.1);
+    color: var(--red);
+    border: 1px solid var(--red);
+}
+.flash-overlay.uploading { background: rgba(255, 149, 0, 0.1); color: var(--amber); border: 1px solid var(--amber); }
+.flash-overlay.show { opacity: 1; }
+
+/* Action buttons */
+.btn-row {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.action-btn {
+    flex: 1;
+    height: 44px;
+    border: 1px solid;
+    background: transparent;
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.15s;
+    -webkit-tap-highlight-color: transparent;
+}
+.action-btn:active { transform: scale(0.96); }
+.btn-paste { color: var(--green); border-color: rgba(0, 255, 65, 0.4); }
+.btn-paste:active { background: rgba(0, 255, 65, 0.15); box-shadow: 0 0 16px rgba(0, 255, 65, 0.3); }
+.btn-sudo-send {
+    color: var(--red); border-color: rgba(255, 0, 64, 0.4);
+    position: relative; overflow: hidden;
+}
+.btn-sudo-send:active { background: rgba(255, 0, 64, 0.15); box-shadow: 0 0 16px rgba(255, 0, 64, 0.3); }
+.btn-sudo-send.sudo-detected {
+    color: var(--green); border-color: rgba(0, 255, 65, 0.5);
+    animation: sudo-detect-pulse 1.5s ease-in-out infinite;
+}
+.btn-sudo-send.sudo-tapping-1 { color: var(--amber); border-color: rgba(255, 149, 0, 0.6); }
+.btn-sudo-send.sudo-tapping-2 { color: #ff7700; border-color: rgba(255, 119, 0, 0.6); }
+.sudo-prog {
+    display: block; position: absolute; bottom: 0; left: 0;
+    height: 3px; background: currentColor; width: 0%;
+    transition: width 0.1s ease; opacity: 0.8;
+}
+.btn-sudo-send.sudo-tapping-1 .sudo-prog { width: 33%; }
+.btn-sudo-send.sudo-tapping-2 .sudo-prog { width: 67%; }
+@keyframes sudo-detect-pulse {
+    0%, 100% { box-shadow: 0 0 4px rgba(0, 255, 65, 0.2); }
+    50% { box-shadow: 0 0 14px rgba(0, 255, 65, 0.7); }
+}
+.btn-upload { color: var(--amber); border-color: rgba(255, 149, 0, 0.4); }
+.btn-upload:active { background: rgba(255, 149, 0, 0.15); box-shadow: 0 0 16px rgba(255, 149, 0, 0.3); }
+
+/* File attach bar */
+.attach-bar {
+    display: none; align-items: center; gap: 8px; padding: 8px 12px;
+    background: rgba(255, 149, 0, 0.06); border: 1px solid rgba(255, 149, 0, 0.25);
+    flex-shrink: 0; animation: fadeSlide 0.2s ease-out;
+}
+.attach-bar.visible { display: flex; }
+.attach-bar.uploading {
+    border-color: rgba(255, 149, 0, 0.6);
+    animation: upload-pulse 1s ease-in-out infinite;
+}
+.attach-bar.uploading .attach-name { color: var(--amber); }
+@keyframes upload-pulse {
+    0%, 100% { background: rgba(255, 149, 0, 0.06); }
+    50% { background: rgba(255, 149, 0, 0.15); }
+}
+.attach-name { flex: 1; font-size: 11px; font-weight: 600; color: var(--amber); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: 0.3px; }
+.attach-size { font-size: 9px; color: var(--text-dim); flex-shrink: 0; letter-spacing: 0.5px; }
+.attach-remove {
+    width: 28px; height: 28px; border: 1px solid rgba(255, 0, 64, 0.3); background: transparent;
+    color: var(--red); font-size: 16px; font-family: var(--font); cursor: pointer;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    -webkit-tap-highlight-color: transparent;
+}
+.attach-remove:active { background: rgba(255, 0, 64, 0.15); transform: scale(0.9); }
+
+/* Route indicator */
+.route-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0;
+    flex-shrink: 0;
+}
+.route-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.route-dot.tmux { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
+.route-dot.desktop { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+.route-label { font-size: 9px; font-weight: 500; letter-spacing: 1px; color: var(--text-dim); }
+.route-attach { font-size: 8px; color: var(--text-dim); opacity: 0.5; margin-left: auto; }
