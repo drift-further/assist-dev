@@ -816,6 +816,13 @@ def terminal_explore():
         return jsonify({"ok": False, "error": f"Invalid path: {e}"}), 400
 
 
+@terminal_bp.route("/terminal/explore/home")
+def terminal_explore_home():
+    """Return the server home directory as the default start path for the folder picker."""
+    home = str(Path.home())
+    return jsonify({"ok": True, "home": home})
+
+
 @terminal_bp.route("/terminal/explore/ls", methods=["POST"])
 def terminal_explore_ls():
     """List directories (and files) inside a given path."""

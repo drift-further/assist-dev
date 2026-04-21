@@ -274,21 +274,31 @@
             <div class="term-projects hidden" id="term-projects">
                 <div class="proj-header-row">
                     <input type="text" class="term-filter" id="term-filter" placeholder="Filter projects..." oninput="filterProjects()">
-                    <button class="explore-btn" id="explore-btn" onclick="toggleExplore()">Explore</button>
-                </div>
-                <div class="explore-panel hidden" id="explore-panel">
-                    <div class="explore-path-row">
-                        <input type="text" id="explore-input" class="explore-input" placeholder="/path/to/folder"
-                               oninput="onExploreInput()" autocomplete="off" autocorrect="off" spellcheck="false">
-                    </div>
-                    <div class="explore-browser" id="explore-browser">
-                        <div class="explore-browser-empty">Type a path or tap a folder to browse</div>
-                    </div>
-                    <div class="explore-status" id="explore-status"></div>
-                    <div class="explore-recent" id="explore-recent"></div>
-                    <button id="explore-launch-btn" class="explore-launch-btn" onclick="launchFromExplore()" disabled>Launch Session</button>
+                    <button class="explore-btn" id="explore-btn" onclick="openFolderPicker()">Browse</button>
                 </div>
                 <div class="term-project-grid" id="term-project-grid"></div>
+            </div>
+
+            <!-- Folder picker modal -->
+            <div class="folder-modal-backdrop hidden" id="folder-modal-backdrop" onclick="closeFolderPicker()"></div>
+            <div class="folder-modal hidden" id="folder-modal">
+                <div class="folder-modal-header">
+                    <span class="folder-modal-title">Browse Folders</span>
+                    <button class="folder-modal-close" onclick="closeFolderPicker()">&#x2715;</button>
+                </div>
+                <div class="folder-breadcrumb" id="folder-breadcrumb"></div>
+                <div class="folder-modal-toolbar">
+                    <button class="folder-up-btn" id="folder-up-btn" onclick="folderPickerUp()" disabled>&#8593; Up</button>
+                    <div class="folder-current-path" id="folder-current-path"></div>
+                </div>
+                <div class="folder-entries" id="folder-entries">
+                    <div class="folder-entries-loading">Loading...</div>
+                </div>
+                <div class="folder-modal-recent" id="folder-modal-recent"></div>
+                <div class="folder-modal-footer">
+                    <div class="folder-selected-label" id="folder-selected-label"></div>
+                    <button class="folder-select-btn" id="folder-select-btn" onclick="launchFromFolderPicker()" disabled>Launch Session</button>
+                </div>
             </div>
 
             <div class="term-display hidden" id="term-display">

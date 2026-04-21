@@ -244,45 +244,50 @@ function _timeAgo(date) {
     return Math.floor(secs / 86400) + 'd ago';
 }
 
-// -- Explore panel --
-let _exploreOpen = false;
-let _exploreValidPath = null;
-let _exploreFolderName = null;
-let _exploreBrowsePath = null;   // path currently shown in browser
-let _exploreInputTimer = null;   // debounce timer for input → browse
+// -- Folder picker modal --
+let _fpCurrentPath = null;   // path currently displayed in modal
+let _fpSelectedPath = null;  // selected (confirmed) path
+let _fpSelectedName = null;  // folder name for selected path
+let _fpHomeDir = null;       // cached server home directory
 
-function toggleExplore() {
-    _exploreOpen = !_exploreOpen;
-    document.getElementById('explore-panel').classList.toggle('hidden', !_exploreOpen);
-    document.getElementById('explore-btn').classList.toggle('active', _exploreOpen);
-    if (_exploreOpen) {
-        document.getElementById('explore-input').focus();
-        _renderExploreRecent();
-    }
+async function _fpGetHome() {
+    if (_fpHomeDir) return _fpHomeDir;
+    try {
+        const resp = await fetch('/terminal/explore/home');
+        const data = await resp.json();
+        if (data.ok) _fpHomeDir = data.home;
+    } catch(e) {}
+    return _fpHomeDir || '/home';
 }
 
-function onExploreInput() {
-    clearTimeout(_exploreInputTimer);
-    const path = document.getElementById('explore-input').value.trim();
-    // Reset validation state immediately
-    _exploreValidPath = null;
-    _exploreFolderName = null;
-    document.getElementById('explore-launch-btn').disabled = true;
-    document.getElementById('explore-status').innerHTML = '';
+async function openFolderPicker() {
+    const modal = document.getElementById('folder-modal');
+    const backdrop = document.getElementById('folder-modal-backdrop');
+    modal.classList.remove('hidden');
+    backdrop.classList.remove('hidden');
+    document.getElementById('explore-btn').classList.add('active');
 
-    if (!path) {
-        _renderExploreBrowser(null);
-        _renderExploreRecent();
-        return;
-    }
+    // If we have a recent selection, start there; otherwise go home
+    const recents = _getRecentExplores();
+    const startPath = recents.length > 0 ? recents[0].path : await _fpGetHome();
 
-    // Debounce: wait 400ms after typing stops before hitting backend
-    _exploreInputTimer = setTimeout(() => _exploreNavigate(path), 400);
+    _renderFpRecent();
+    await _fpNavigate(startPath);
 }
 
-async function _exploreNavigate(path) {
-    const statusEl = document.getElementById('explore-status');
-    statusEl.innerHTML = '<span style="color:var(--text-muted)">Checking...</span>';
+function closeFolderPicker() {
+    document.getElementById('folder-modal').classList.add('hidden');
+    document.getElementById('folder-modal-backdrop').classList.add('hidden');
+    document.getElementById('explore-btn').classList.remove('active');
+}
+
+async function _fpNavigate(path) {
+    const entriesEl = document.getElementById('folder-entries');
+    entriesEl.innerHTML = '<div class="folder-entries-loading">Loading...</div>';
+    _fpSelectedPath = null;
+    _fpSelectedName = null;
+    _updateFpFooter();
+
     try {
         const resp = await fetch('/terminal/explore/ls', {
             method: 'POST',
@@ -290,73 +295,102 @@ async function _exploreNavigate(path) {
             body: JSON.stringify({path}),
         });
         const data = await resp.json();
-        if (data.ok) {
-            _exploreBrowsePath = data.current_path;
-            _exploreValidPath = data.current_path;
-            _exploreFolderName = data.current_path.split('/').filter(Boolean).pop() || '/';
-            statusEl.innerHTML = `<span style="color:var(--green)">&#10003; ${escHtml(_exploreFolderName)}</span>`;
-            document.getElementById('explore-launch-btn').disabled = false;
-            _renderExploreBrowser(data);
-        } else {
-            _exploreBrowsePath = null;
-            statusEl.innerHTML = `<span style="color:var(--red)">&#10007; ${escHtml(data.error || 'Invalid path')}</span>`;
-            _renderExploreBrowser(null);
+        if (!data.ok) {
+            entriesEl.innerHTML = `<div class="folder-entries-empty">&#10007; ${escHtml(data.error || 'Cannot open folder')}</div>`;
+            return;
         }
+        _fpCurrentPath = data.current_path;
+        _fpSelectedPath = data.current_path;
+        _fpSelectedName = data.current_path.split('/').filter(Boolean).pop() || '/';
+        _updateFpHeader(data);
+        _updateFpFooter();
+        _renderFpEntries(data);
     } catch(e) {
-        statusEl.innerHTML = '<span style="color:var(--red)">&#10007; Error</span>';
+        entriesEl.innerHTML = '<div class="folder-entries-empty">&#10007; Error loading folder</div>';
     }
 }
 
-async function _exploreBrowseInto(dirPath) {
-    document.getElementById('explore-input').value = dirPath;
-    await _exploreNavigate(dirPath);
+function _updateFpHeader(data) {
+    // Breadcrumb
+    const breadcrumb = document.getElementById('folder-breadcrumb');
+    const parts = (data.current_path || '/').split('/').filter(Boolean);
+    let html = `<button class="fp-crumb" onclick="_fpNavigate('/')">/</button>`;
+    let built = '';
+    for (let i = 0; i < parts.length; i++) {
+        built += '/' + parts[i];
+        const isLast = i === parts.length - 1;
+        const p = built;
+        if (isLast) {
+            html += `<span class="fp-crumb-sep">›</span><span class="fp-crumb fp-crumb-active">${escHtml(parts[i])}</span>`;
+        } else {
+            html += `<span class="fp-crumb-sep">›</span><button class="fp-crumb" onclick="_fpNavigate(${JSON.stringify(p)})">${escHtml(parts[i])}</button>`;
+        }
+    }
+    breadcrumb.innerHTML = html;
+
+    // Current path display + up button
+    document.getElementById('folder-current-path').textContent = data.current_path;
+    const upBtn = document.getElementById('folder-up-btn');
+    upBtn.disabled = !data.parent;
+    if (data.parent) {
+        upBtn.onclick = () => _fpNavigate(data.parent);
+    }
 }
 
-function _renderExploreBrowser(data) {
-    const browser = document.getElementById('explore-browser');
-    if (!data) {
-        browser.innerHTML = '<div class="explore-browser-empty">Type a path or tap a folder to browse</div>';
-        return;
-    }
-
+function _renderFpEntries(data) {
+    const entriesEl = document.getElementById('folder-entries');
     const entries = data.entries || [];
     const dirs = entries.filter(e => e.type === 'dir');
     const files = entries.filter(e => e.type === 'file');
 
-    let html = '<div class="explore-browser-header">';
-    if (data.parent) {
-        html += `<button class="explore-parent-btn" onclick="_exploreBrowseInto(${JSON.stringify(data.parent)})">&#8593; ../</button>`;
-    }
-    html += `<span class="explore-current-path">${escHtml(data.current_path)}</span>`;
-    html += '</div>';
-
     if (dirs.length === 0 && files.length === 0) {
-        html += '<div class="explore-browser-empty">Empty directory</div>';
-    } else {
-        for (const d of dirs) {
-            const fullPath = data.current_path.replace(/\/$/, '') + '/' + d.name;
-            html += `<button class="explore-dir-btn" onclick="_exploreBrowseInto(${JSON.stringify(fullPath)})">
-                <span class="explore-dir-icon">&#128193;</span>
-                <span class="explore-dir-name">${escHtml(d.name)}</span>
-                <span style="color:var(--text-muted);font-size:9px">&#9654;</span>
-            </button>`;
-        }
-        // Show files (non-interactive, just informational)
-        for (const f of files.slice(0, 8)) {
-            html += `<div class="explore-file-row">
-                <span class="explore-file-icon">&#128196;</span>
-                <span class="explore-file-name">${escHtml(f.name)}</span>
+        entriesEl.innerHTML = '<div class="folder-entries-empty">Empty directory</div>';
+        return;
+    }
+
+    let html = '';
+    for (const d of dirs) {
+        const fullPath = data.current_path.replace(/\/$/, '') + '/' + d.name;
+        html += `<button class="fp-dir-item" onclick="_fpNavigate(${JSON.stringify(fullPath)})">
+            <span class="fp-dir-icon">&#128193;</span>
+            <span class="fp-dir-name">${escHtml(d.name)}</span>
+            <span class="fp-dir-arrow">&#9654;</span>
+        </button>`;
+    }
+    if (files.length > 0) {
+        html += `<div class="fp-files-section">`;
+        for (const f of files.slice(0, 10)) {
+            html += `<div class="fp-file-item">
+                <span class="fp-file-icon">&#128196;</span>
+                <span class="fp-file-name">${escHtml(f.name)}</span>
             </div>`;
         }
-        if (files.length > 8) {
-            html += `<div class="explore-file-row" style="font-style:italic">+ ${files.length - 8} more files</div>`;
+        if (files.length > 10) {
+            html += `<div class="fp-file-item fp-more-files">+${files.length - 10} more files</div>`;
         }
+        html += `</div>`;
     }
 
-    browser.innerHTML = html;
+    entriesEl.innerHTML = html;
 }
 
-// Recent explore tracking
+function _updateFpFooter() {
+    const label = document.getElementById('folder-selected-label');
+    const btn = document.getElementById('folder-select-btn');
+    if (_fpSelectedPath && _fpSelectedName) {
+        label.innerHTML = `<span class="fp-sel-icon">&#128193;</span> <span class="fp-sel-name">${escHtml(_fpSelectedName)}</span>`;
+        btn.disabled = false;
+    } else {
+        label.textContent = 'Navigate to a folder';
+        btn.disabled = true;
+    }
+}
+
+function folderPickerUp() {
+    // Triggered by the Up button (onclick set dynamically in _updateFpHeader)
+}
+
+// Recent explore tracking (preserved from old implementation)
 function _trackRecentExplore(path, folderName) {
     try {
         const raw = localStorage.getItem('assist_recent_explores');
@@ -378,51 +412,46 @@ function _getRecentExplores() {
     } catch(e) { return []; }
 }
 
-function _renderExploreRecent() {
+function _renderFpRecent() {
+    const container = document.getElementById('folder-modal-recent');
     const recent = _getRecentExplores();
-    const container = document.getElementById('explore-recent');
     if (recent.length === 0) { container.innerHTML = ''; return; }
-    let html = '<div class="explore-recent-label">Recent</div>';
-    for (const entry of recent) {
+    let html = '<div class="fp-recent-label">Recent</div><div class="fp-recent-list">';
+    for (const entry of recent.slice(0, 8)) {
         const safePath = JSON.stringify(entry.path);
-        html += `<button class="explore-recent-btn" onclick="_selectExplorePath(${safePath})">
-            <span>${escHtml(entry.folderName)}</span>
-            <span class="explore-path-hint">${escHtml(entry.path)}</span>
+        html += `<button class="fp-recent-item" onclick="_fpNavigate(${safePath})">
+            <span class="fp-recent-icon">&#128193;</span>
+            <span class="fp-recent-name">${escHtml(entry.folderName)}</span>
+            <span class="fp-recent-path">${escHtml(entry.path)}</span>
         </button>`;
     }
+    html += '</div>';
     container.innerHTML = html;
 }
 
-function _selectExplorePath(path) {
-    document.getElementById('explore-input').value = path;
-    _exploreNavigate(path);
-}
-
-async function launchFromExplore() {
-    if (!_exploreValidPath || !_exploreFolderName) return;
-    const btn = document.getElementById('explore-launch-btn');
+async function launchFromFolderPicker() {
+    if (!_fpSelectedPath || !_fpSelectedName) return;
+    const btn = document.getElementById('folder-select-btn');
     btn.disabled = true;
+    btn.textContent = 'Launching...';
     try {
         const { cols, rows } = _calcTermSize();
         const resp = await fetch('/terminal/launch', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
-                project: _exploreFolderName,
-                cwd: _exploreValidPath,
+                project: _fpSelectedName,
+                cwd: _fpSelectedPath,
                 cols, rows,
             }),
         });
         const data = await resp.json();
         if (data.ok) {
-            _trackRecentExplore(_exploreValidPath, _exploreFolderName);
+            _trackRecentExplore(_fpSelectedPath, _fpSelectedName);
             _termTarget = data.target;
             updateTmuxIndicator();
             try { localStorage.setItem('term_target', _termTarget); } catch(e) {}
-            // Hide explore + projects panels, show terminal
-            _exploreOpen = false;
-            document.getElementById('explore-panel').classList.add('hidden');
-            document.getElementById('explore-btn').classList.remove('active');
+            closeFolderPicker();
             _termShowProjects = false;
             document.getElementById('term-projects').classList.add('hidden');
             document.getElementById('term-display').classList.remove('hidden');
@@ -434,14 +463,16 @@ async function launchFromExplore() {
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({target: _termTarget}),
             });
-            showFlash('sent', `Launched: ${_exploreFolderName}`);
+            showFlash('sent', `Launched: ${_fpSelectedName}`);
         } else {
             showFlash('error', data.error || 'Launch failed');
             btn.disabled = false;
+            btn.textContent = 'Launch Session';
         }
     } catch(e) {
         showFlash('error', 'Offline');
         btn.disabled = false;
+        btn.textContent = 'Launch Session';
     }
 }
 
