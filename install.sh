@@ -39,21 +39,37 @@ ok "python3 $PY_VER"
 
 # tmux is required — every core feature (terminal streaming, auto-yes,
 # session management, automate) calls tmux directly at startup.
-command -v tmux >/dev/null || err "tmux not found (install with: sudo apt install tmux)"
+OS="$(uname -s)"
+
+if [[ "$OS" == "Darwin" ]]; then
+    command -v tmux >/dev/null || err "tmux not found (install with: brew install tmux)"
+else
+    command -v tmux >/dev/null || err "tmux not found (install with: sudo apt install tmux)"
+fi
 ok "tmux $(tmux -V | awk '{print $2}')"
 
-# X11 tools — needed for clipboard and key-send fallback paths.
-# Not hard errors since the tmux path works without them, but clipboard
-# operations (copy/paste) and ctrl+shift+v will fail without these.
-if command -v xclip >/dev/null; then
-    ok "xclip"
+# Clipboard / key-send tools — fallback paths only (tmux path is always preferred).
+if [[ "$OS" == "Darwin" ]]; then
+    # macOS: pbcopy/pbpaste are built-in; osascript handles folder picker and key-send.
+    ok "pbcopy/pbpaste (built-in)"
+    command -v osascript >/dev/null && ok "osascript (built-in)" || warn "osascript not found — folder picker and paste fallback disabled"
 else
-    warn "xclip not found — clipboard features disabled (install: sudo apt install xclip)"
-fi
-if command -v xdotool >/dev/null; then
-    ok "xdotool"
-else
-    warn "xdotool not found — X11 key-send disabled (install: sudo apt install xdotool)"
+    # Linux: xclip for clipboard, xdotool for X11 key-send, zenity for folder picker.
+    if command -v xclip >/dev/null; then
+        ok "xclip"
+    else
+        warn "xclip not found — clipboard copy disabled (install: sudo apt install xclip)"
+    fi
+    if command -v xdotool >/dev/null; then
+        ok "xdotool"
+    else
+        warn "xdotool not found — X11 key-send disabled (install: sudo apt install xdotool)"
+    fi
+    if command -v zenity >/dev/null; then
+        ok "zenity"
+    else
+        warn "zenity not found — native folder picker disabled (install: sudo apt install zenity)"
+    fi
 fi
 
 # claude CLI — primary Claude Code launch mode (default)

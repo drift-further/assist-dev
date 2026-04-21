@@ -33,9 +33,9 @@ sudo apt install xclip xdotool curl docker.io zenity
 
 **macOS:**
 ```bash
-brew install xclip xdotool curl docker
+brew install curl docker
 ```
-> macOS: `osascript` (built-in) handles the native folder picker — no extra install needed.
+> macOS uses `pbcopy`/`pbpaste` (clipboard) and `osascript` (folder picker, paste fallback) — both built-in. `xclip` and `xdotool` are Linux-only and not needed on macOS.
 
 For **docker**, you may need additional setup:
 - **Linux**: `sudo usermod -aG docker $USER && newgrp docker`

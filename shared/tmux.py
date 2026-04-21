@@ -1,9 +1,12 @@
-"""shared/tmux.py — tmux and X11 interaction helpers."""
+"""shared/tmux.py — tmux and X11/macOS interaction helpers."""
 
+import platform
 import subprocess
 import uuid
 
 from shared.state import WS_SEND_TIMEOUT
+
+_IS_MAC = platform.system() == "Darwin"
 
 # tmux `send-keys -l` has an internal command buffer limit around 16 KB
 # (fails with "command too long"). Above this threshold we fall back to
@@ -40,27 +43,57 @@ TMUX_KEY_MAP = {
 
 
 def set_clipboard(text):
-    """Set the X11 clipboard via xclip."""
-    proc = subprocess.run(
-        ["xclip", "-selection", "clipboard"],
-        input=text,
-        text=True,
-        timeout=5,
-    )
+    """Set the system clipboard (pbcopy on macOS, xclip on Linux)."""
+    if _IS_MAC:
+        cmd = ["pbcopy"]
+    else:
+        cmd = ["xclip", "-selection", "clipboard"]
+    proc = subprocess.run(cmd, input=text, text=True, timeout=5)
     return proc.returncode == 0
 
 
+def get_clipboard():
+    """Read the system clipboard (pbpaste on macOS, xclip -o on Linux). Returns text or None."""
+    try:
+        if _IS_MAC:
+            cmd = ["pbpaste"]
+        else:
+            cmd = ["xclip", "-selection", "clipboard", "-o"]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        return proc.stdout if proc.returncode == 0 else None
+    except Exception:
+        return None
+
+
 def paste_to_terminal():
-    """Paste clipboard into the focused terminal via xdotool Ctrl+Shift+V."""
-    proc = subprocess.run(
-        ["xdotool", "key", "--clearmodifiers", "ctrl+shift+v"],
-        timeout=5,
-    )
+    """Paste clipboard into the focused terminal.
+
+    macOS: osascript Command+V (requires Accessibility permissions).
+    Linux: xdotool Ctrl+Shift+V.
+    Fallback-only — prefer tmux path when a target is available.
+    """
+    if _IS_MAC:
+        proc = subprocess.run(
+            ["osascript", "-e",
+             'tell application "System Events" to keystroke "v" using command down'],
+            timeout=5,
+        )
+    else:
+        proc = subprocess.run(
+            ["xdotool", "key", "--clearmodifiers", "ctrl+shift+v"],
+            timeout=5,
+        )
     return proc.returncode == 0
 
 
 def send_keys(keys):
-    """Send one or more key combos via xdotool. keys is a space-separated string."""
+    """Send key combos via xdotool (Linux). Fallback-only — always prefer tmux path.
+
+    On macOS this is a no-op (returns False) because xdotool is not available
+    and the tmux path handles every key combo in TMUX_KEY_MAP already.
+    """
+    if _IS_MAC:
+        return False
     proc = subprocess.run(
         ["xdotool", "key", "--clearmodifiers"] + keys.split(),
         timeout=5,

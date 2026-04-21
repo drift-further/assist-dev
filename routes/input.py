@@ -12,12 +12,14 @@ from flask import Blueprint, jsonify, request
 import shared.state as state
 from shared.tmux import (
     TMUX_KEY_MAP,
+    get_clipboard,
     set_clipboard,
     paste_to_terminal,
     send_keys,
     tmux_send_keys,
     tmux_send_text,
     tmux_target_exists,
+    _IS_MAC,
 )
 from shared.utils import (
     add_to_history,
@@ -55,14 +57,17 @@ def paste():
         return jsonify({"ok": True, "via": "tmux"})
 
     if not set_clipboard(text):
-        return jsonify({"ok": False, "error": "xclip failed"}), 500
+        return jsonify({"ok": False, "error": "clipboard write failed"}), 500
     if not paste_to_terminal():
-        return jsonify({"ok": False, "error": "xdotool failed"}), 500
+        return jsonify({"ok": False, "error": "paste to terminal failed"}), 500
     if send_enter:
         time.sleep(0.05)
-        subprocess.run(["xdotool", "key", "Return"], timeout=5)
+        if _IS_MAC:
+            subprocess.run(["osascript", "-e", "tell application \"System Events\" to key code 36"], timeout=5)
+        else:
+            subprocess.run(["xdotool", "key", "Return"], timeout=5)
     add_to_history(text)
-    return jsonify({"ok": True, "via": "xdotool"})
+    return jsonify({"ok": True, "via": "clipboard"})
 
 
 @input_bp.route("/copy", methods=["POST"])
@@ -72,7 +77,7 @@ def copy():
     if not text:
         return jsonify({"ok": False, "error": "No text provided"}), 400
     if not set_clipboard(text):
-        return jsonify({"ok": False, "error": "xclip failed"}), 500
+        return jsonify({"ok": False, "error": "clipboard write failed"}), 500
     add_to_history(text)
     return jsonify({"ok": True})
 
@@ -131,14 +136,9 @@ def send_key():
         state.touch_activity(target)
         if keys == "ctrl+shift+v":
             try:
-                clip = subprocess.run(
-                    ["xclip", "-selection", "clipboard", "-o"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-                if clip.returncode == 0 and clip.stdout:
-                    tmux_send_text(target, clip.stdout)
+                content = get_clipboard()
+                if content:
+                    tmux_send_text(target, content)
                     return jsonify({"ok": True, "via": "tmux"})
             except Exception:
                 pass
@@ -188,6 +188,9 @@ def type_text():
         if text:
             add_to_history(text)
         return jsonify({"ok": True, "via": "tmux"})
+
+    if _IS_MAC:
+        return jsonify({"ok": False, "error": "No active tmux target — open a session first"}), 500
 
     proc = subprocess.run(
         ["xdotool", "type", "--clearmodifiers", "--delay", "12", text],
