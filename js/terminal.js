@@ -323,7 +323,7 @@ function _updateFpHeader(data) {
         if (isLast) {
             html += `<span class="fp-crumb-sep">›</span><span class="fp-crumb fp-crumb-active">${escHtml(parts[i])}</span>`;
         } else {
-            html += `<span class="fp-crumb-sep">›</span><button class="fp-crumb" onclick="_fpNavigate(${JSON.stringify(p)})">${escHtml(parts[i])}</button>`;
+            html += `<span class="fp-crumb-sep">›</span><button class="fp-crumb" onclick="_fpNavigate(${escHtml(JSON.stringify(p))})">${escHtml(parts[i])}</button>`;
         }
     }
     breadcrumb.innerHTML = html;
@@ -351,7 +351,7 @@ function _renderFpEntries(data) {
     let html = '';
     for (const d of dirs) {
         const fullPath = data.current_path.replace(/\/$/, '') + '/' + d.name;
-        html += `<button class="fp-dir-item" onclick="_fpNavigate(${JSON.stringify(fullPath)})">
+        html += `<button class="fp-dir-item" onclick="_fpNavigate(${escHtml(JSON.stringify(fullPath))})">
             <span class="fp-dir-icon">&#128193;</span>
             <span class="fp-dir-name">${escHtml(d.name)}</span>
             <span class="fp-dir-arrow">&#9654;</span>
@@ -418,8 +418,7 @@ function _renderFpRecent() {
     if (recent.length === 0) { container.innerHTML = ''; return; }
     let html = '<div class="fp-recent-label">Recent</div><div class="fp-recent-list">';
     for (const entry of recent.slice(0, 8)) {
-        const safePath = JSON.stringify(entry.path);
-        html += `<button class="fp-recent-item" onclick="_fpNavigate(${safePath})">
+        html += `<button class="fp-recent-item" onclick="_fpNavigate(${escHtml(JSON.stringify(entry.path))})">
             <span class="fp-recent-icon">&#128193;</span>
             <span class="fp-recent-name">${escHtml(entry.folderName)}</span>
             <span class="fp-recent-path">${escHtml(entry.path)}</span>
@@ -1114,9 +1113,10 @@ function _calcTermSize() {
     const container = el.parentElement; // .term-display
     const charW = _measureCharWidth();
     const lineH = _termFontSize * 1.35;
-    // Use container width (full available), subtract padding (8px each side)
-    const availW = (container ? container.clientWidth : window.innerWidth) - 16;
-    const availH = (container ? container.clientHeight : window.innerHeight * 0.6) - 16;
+    // Use container width (full available), subtract padding (8px each side).
+    // Fall back to window size when container is hidden (clientWidth/Height = 0).
+    const availW = (container && container.clientWidth > 0 ? container.clientWidth : window.innerWidth) - 16;
+    const availH = (container && container.clientHeight > 0 ? container.clientHeight : window.innerHeight * 0.6) - 16;
     const cols = Math.max(40, Math.floor(availW / charW));
     const rows = Math.max(10, Math.floor(availH / lineH));
     return { cols, rows };
