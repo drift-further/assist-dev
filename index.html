@@ -274,31 +274,9 @@
             <div class="term-projects hidden" id="term-projects">
                 <div class="proj-header-row">
                     <input type="text" class="term-filter" id="term-filter" placeholder="Filter projects..." oninput="filterProjects()">
-                    <button class="explore-btn" id="explore-btn" onclick="openFolderPicker()">Browse</button>
+                    <button class="explore-btn" id="explore-btn" onclick="pickFolderNative()">Browse</button>
                 </div>
                 <div class="term-project-grid" id="term-project-grid"></div>
-            </div>
-
-            <!-- Folder picker modal -->
-            <div class="folder-modal-backdrop hidden" id="folder-modal-backdrop" onclick="closeFolderPicker()"></div>
-            <div class="folder-modal hidden" id="folder-modal">
-                <div class="folder-modal-header">
-                    <span class="folder-modal-title">Browse Folders</span>
-                    <button class="folder-modal-close" onclick="closeFolderPicker()">&#x2715;</button>
-                </div>
-                <div class="folder-breadcrumb" id="folder-breadcrumb"></div>
-                <div class="folder-modal-toolbar">
-                    <button class="folder-up-btn" id="folder-up-btn" onclick="folderPickerUp()" disabled>&#8593; Up</button>
-                    <div class="folder-current-path" id="folder-current-path"></div>
-                </div>
-                <div class="folder-entries" id="folder-entries">
-                    <div class="folder-entries-loading">Loading...</div>
-                </div>
-                <div class="folder-modal-recent" id="folder-modal-recent"></div>
-                <div class="folder-modal-footer">
-                    <div class="folder-selected-label" id="folder-selected-label"></div>
-                    <button class="folder-select-btn" id="folder-select-btn" onclick="launchFromFolderPicker()" disabled>Launch Session</button>
-                </div>
             </div>
 
             <div class="term-display hidden" id="term-display">

@@ -823,6 +823,40 @@ def terminal_explore_home():
     return jsonify({"ok": True, "home": home})
 
 
+@terminal_bp.route("/terminal/explore/pick", methods=["POST"])
+def terminal_explore_pick():
+    """Open a native OS folder picker dialog and return the selected path."""
+    import shutil
+
+    data = request.get_json(silent=True) or {}
+    start = (data.get("start") or str(Path.home())).strip()
+
+    if shutil.which("zenity"):
+        proc = subprocess.run(
+            ["zenity", "--file-selection", "--directory",
+             "--title=Select Project Folder", f"--filename={start}/"],
+            capture_output=True, text=True, timeout=120,
+        )
+        if proc.returncode == 0:
+            path = proc.stdout.strip()
+            if path:
+                return jsonify({"ok": True, "path": path, "name": Path(path).name})
+        return jsonify({"ok": False, "cancelled": proc.returncode == 1, "error": "No folder selected"})
+
+    if shutil.which("kdialog"):
+        proc = subprocess.run(
+            ["kdialog", "--getexistingdirectory", start, "--title", "Select Project Folder"],
+            capture_output=True, text=True, timeout=120,
+        )
+        if proc.returncode == 0:
+            path = proc.stdout.strip()
+            if path:
+                return jsonify({"ok": True, "path": path, "name": Path(path).name})
+        return jsonify({"ok": False, "cancelled": True, "error": "No folder selected"})
+
+    return jsonify({"ok": False, "error": "No native dialog tool found (zenity or kdialog required)"}), 501
+
+
 @terminal_bp.route("/terminal/explore/ls", methods=["POST"])
 def terminal_explore_ls():
     """List directories (and files) inside a given path."""

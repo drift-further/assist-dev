@@ -244,213 +244,40 @@ function _timeAgo(date) {
     return Math.floor(secs / 86400) + 'd ago';
 }
 
-// -- Folder picker modal --
-let _fpCurrentPath = null;   // path currently displayed in modal
-let _fpSelectedPath = null;  // selected (confirmed) path
-let _fpSelectedName = null;  // folder name for selected path
-let _fpHomeDir = null;       // cached server home directory
-
-async function _fpGetHome() {
-    if (_fpHomeDir) return _fpHomeDir;
+// -- Native folder picker --
+async function pickFolderNative() {
+    const btn = document.getElementById('explore-btn');
+    btn.disabled = true;
+    btn.textContent = 'Picking...';
     try {
-        const resp = await fetch('/terminal/explore/home');
-        const data = await resp.json();
-        if (data.ok) _fpHomeDir = data.home;
-    } catch(e) {}
-    return _fpHomeDir || '/home';
-}
-
-async function openFolderPicker() {
-    const modal = document.getElementById('folder-modal');
-    const backdrop = document.getElementById('folder-modal-backdrop');
-    modal.classList.remove('hidden');
-    backdrop.classList.remove('hidden');
-    document.getElementById('explore-btn').classList.add('active');
-
-    // If we have a recent selection, start there; otherwise go home
-    const recents = _getRecentExplores();
-    const startPath = recents.length > 0 ? recents[0].path : await _fpGetHome();
-
-    _renderFpRecent();
-    await _fpNavigate(startPath);
-}
-
-function closeFolderPicker() {
-    document.getElementById('folder-modal').classList.add('hidden');
-    document.getElementById('folder-modal-backdrop').classList.add('hidden');
-    document.getElementById('explore-btn').classList.remove('active');
-}
-
-async function _fpNavigate(path) {
-    const entriesEl = document.getElementById('folder-entries');
-    entriesEl.innerHTML = '<div class="folder-entries-loading">Loading...</div>';
-    _fpSelectedPath = null;
-    _fpSelectedName = null;
-    _updateFpFooter();
-
-    try {
-        const resp = await fetch('/terminal/explore/ls', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({path}),
-        });
+        const resp = await fetch('/terminal/explore/pick', {method: 'POST'});
         const data = await resp.json();
         if (!data.ok) {
-            entriesEl.innerHTML = `<div class="folder-entries-empty">&#10007; ${escHtml(data.error || 'Cannot open folder')}</div>`;
+            if (!data.cancelled) showFlash('error', data.error || 'Picker unavailable');
             return;
         }
-        _fpCurrentPath = data.current_path;
-        _fpSelectedPath = data.current_path;
-        _fpSelectedName = data.current_path.split('/').filter(Boolean).pop() || '/';
-        _updateFpHeader(data);
-        _updateFpFooter();
-        _renderFpEntries(data);
+        await _launchFromPath(data.path, data.name);
     } catch(e) {
-        entriesEl.innerHTML = '<div class="folder-entries-empty">&#10007; Error loading folder</div>';
-    }
-}
-
-function _updateFpHeader(data) {
-    // Breadcrumb
-    const breadcrumb = document.getElementById('folder-breadcrumb');
-    const parts = (data.current_path || '/').split('/').filter(Boolean);
-    let html = `<button class="fp-crumb" onclick="_fpNavigate('/')">/</button>`;
-    let built = '';
-    for (let i = 0; i < parts.length; i++) {
-        built += '/' + parts[i];
-        const isLast = i === parts.length - 1;
-        const p = built;
-        if (isLast) {
-            html += `<span class="fp-crumb-sep">›</span><span class="fp-crumb fp-crumb-active">${escHtml(parts[i])}</span>`;
-        } else {
-            html += `<span class="fp-crumb-sep">›</span><button class="fp-crumb" onclick="_fpNavigate(${escHtml(JSON.stringify(p))})">${escHtml(parts[i])}</button>`;
-        }
-    }
-    breadcrumb.innerHTML = html;
-
-    // Current path display + up button
-    document.getElementById('folder-current-path').textContent = data.current_path;
-    const upBtn = document.getElementById('folder-up-btn');
-    upBtn.disabled = !data.parent;
-    if (data.parent) {
-        upBtn.onclick = () => _fpNavigate(data.parent);
-    }
-}
-
-function _renderFpEntries(data) {
-    const entriesEl = document.getElementById('folder-entries');
-    const entries = data.entries || [];
-    const dirs = entries.filter(e => e.type === 'dir');
-    const files = entries.filter(e => e.type === 'file');
-
-    if (dirs.length === 0 && files.length === 0) {
-        entriesEl.innerHTML = '<div class="folder-entries-empty">Empty directory</div>';
-        return;
-    }
-
-    let html = '';
-    for (const d of dirs) {
-        const fullPath = data.current_path.replace(/\/$/, '') + '/' + d.name;
-        html += `<button class="fp-dir-item" onclick="_fpNavigate(${escHtml(JSON.stringify(fullPath))})">
-            <span class="fp-dir-icon">&#128193;</span>
-            <span class="fp-dir-name">${escHtml(d.name)}</span>
-            <span class="fp-dir-arrow">&#9654;</span>
-        </button>`;
-    }
-    if (files.length > 0) {
-        html += `<div class="fp-files-section">`;
-        for (const f of files.slice(0, 10)) {
-            html += `<div class="fp-file-item">
-                <span class="fp-file-icon">&#128196;</span>
-                <span class="fp-file-name">${escHtml(f.name)}</span>
-            </div>`;
-        }
-        if (files.length > 10) {
-            html += `<div class="fp-file-item fp-more-files">+${files.length - 10} more files</div>`;
-        }
-        html += `</div>`;
-    }
-
-    entriesEl.innerHTML = html;
-}
-
-function _updateFpFooter() {
-    const label = document.getElementById('folder-selected-label');
-    const btn = document.getElementById('folder-select-btn');
-    if (_fpSelectedPath && _fpSelectedName) {
-        label.innerHTML = `<span class="fp-sel-icon">&#128193;</span> <span class="fp-sel-name">${escHtml(_fpSelectedName)}</span>`;
+        showFlash('error', 'Offline');
+    } finally {
         btn.disabled = false;
-    } else {
-        label.textContent = 'Navigate to a folder';
-        btn.disabled = true;
+        btn.textContent = 'Browse';
     }
 }
 
-function folderPickerUp() {
-    // Triggered by the Up button (onclick set dynamically in _updateFpHeader)
-}
-
-// Recent explore tracking (preserved from old implementation)
-function _trackRecentExplore(path, folderName) {
-    try {
-        const raw = localStorage.getItem('assist_recent_explores');
-        let entries = raw ? JSON.parse(raw) : [];
-        entries = entries.filter(e => e.path !== path);
-        entries.push({path, folderName, ts: Date.now()});
-        if (entries.length > 15) entries = entries.slice(-15);
-        localStorage.setItem('assist_recent_explores', JSON.stringify(entries));
-    } catch(e) {}
-}
-
-function _getRecentExplores() {
-    try {
-        const raw = localStorage.getItem('assist_recent_explores');
-        if (!raw) return [];
-        const entries = JSON.parse(raw);
-        const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-        return entries.filter(e => e.ts > weekAgo).sort((a, b) => b.ts - a.ts);
-    } catch(e) { return []; }
-}
-
-function _renderFpRecent() {
-    const container = document.getElementById('folder-modal-recent');
-    const recent = _getRecentExplores();
-    if (recent.length === 0) { container.innerHTML = ''; return; }
-    let html = '<div class="fp-recent-label">Recent</div><div class="fp-recent-list">';
-    for (const entry of recent.slice(0, 8)) {
-        html += `<button class="fp-recent-item" onclick="_fpNavigate(${escHtml(JSON.stringify(entry.path))})">
-            <span class="fp-recent-icon">&#128193;</span>
-            <span class="fp-recent-name">${escHtml(entry.folderName)}</span>
-            <span class="fp-recent-path">${escHtml(entry.path)}</span>
-        </button>`;
-    }
-    html += '</div>';
-    container.innerHTML = html;
-}
-
-async function launchFromFolderPicker() {
-    if (!_fpSelectedPath || !_fpSelectedName) return;
-    const btn = document.getElementById('folder-select-btn');
-    btn.disabled = true;
-    btn.textContent = 'Launching...';
+async function _launchFromPath(path, name) {
     try {
         const { cols, rows } = _calcTermSize();
         const resp = await fetch('/terminal/launch', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                project: _fpSelectedName,
-                cwd: _fpSelectedPath,
-                cols, rows,
-            }),
+            body: JSON.stringify({project: name, cwd: path, cols, rows}),
         });
         const data = await resp.json();
         if (data.ok) {
-            _trackRecentExplore(_fpSelectedPath, _fpSelectedName);
             _termTarget = data.target;
             updateTmuxIndicator();
             try { localStorage.setItem('term_target', _termTarget); } catch(e) {}
-            closeFolderPicker();
             _termShowProjects = false;
             document.getElementById('term-projects').classList.add('hidden');
             document.getElementById('term-display').classList.remove('hidden');
@@ -462,16 +289,12 @@ async function launchFromFolderPicker() {
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({target: _termTarget}),
             });
-            showFlash('sent', `Launched: ${_fpSelectedName}`);
+            showFlash('sent', `Launched: ${name}`);
         } else {
             showFlash('error', data.error || 'Launch failed');
-            btn.disabled = false;
-            btn.textContent = 'Launch Session';
         }
     } catch(e) {
         showFlash('error', 'Offline');
-        btn.disabled = false;
-        btn.textContent = 'Launch Session';
     }
 }
 
