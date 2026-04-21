@@ -27,8 +27,8 @@ BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
 BIN_TARGET="$BIN_DIR/assist"
 SRC_BIN="$SCRIPT_DIR/bin/assist"
 
-# ---- [1/6] check prerequisites --------------------------------------------
-say "[1/6] Checking prerequisites"
+# ---- [1/7] check prerequisites --------------------------------------------
+say "[1/7] Checking prerequisites"
 
 command -v python3 >/dev/null || err "python3 not found"
 
@@ -100,8 +100,8 @@ command -v curl >/dev/null && ok "curl" || warn "curl not found — assist CLI w
 [[ -w "$SCRIPT_DIR" ]] || err "Repo directory is not writable: $SCRIPT_DIR"
 ok "repo directory writable"
 
-# ---- [2/6] create venv + install deps --------------------------------------
-say "[2/6] Creating Python venv and installing dependencies"
+# ---- [2/7] create venv + install deps --------------------------------------
+say "[2/7] Creating Python venv and installing dependencies"
 
 # On Debian/Ubuntu, python3-venv may not be installed
 python3 -m venv --help &>/dev/null || err "python3-venv not found (install with: sudo apt install python3-venv)"
@@ -117,8 +117,8 @@ fi
 "$SCRIPT_DIR/.venv/bin/pip" install --quiet -r "$SCRIPT_DIR/requirements.txt"
 ok "installed: $(grep -v '^$' "$SCRIPT_DIR/requirements.txt" | tr '\n' ' ')"
 
-# ---- [3/6] seed .env -------------------------------------------------------
-say "[3/6] Seeding .env"
+# ---- [3/7] seed .env -------------------------------------------------------
+say "[3/7] Seeding .env"
 
 if [[ ! -f "$SCRIPT_DIR/.env" ]]; then
     cp "$SCRIPT_DIR/env.example" "$SCRIPT_DIR/.env"
@@ -127,8 +127,8 @@ else
     ok ".env already exists (not overwritten)"
 fi
 
-# ---- [4/6] record install location -----------------------------------------
-say "[4/6] Recording install location"
+# ---- [4/7] record install location -----------------------------------------
+say "[4/7] Recording install location"
 
 mkdir -p "$CONFIG_DIR"
 cat > "$CONFIG_FILE" <<EOF
@@ -138,8 +138,8 @@ ASSIST_HOME="$SCRIPT_DIR"
 EOF
 ok "wrote $CONFIG_FILE"
 
-# ---- [5/6] install CLI command ---------------------------------------------
-say "[5/6] Installing 'assist' CLI command"
+# ---- [5/7] install CLI command ---------------------------------------------
+say "[5/7] Installing 'assist' CLI command"
 
 [[ -f "$SRC_BIN" ]] || err "Missing $SRC_BIN — repo is incomplete"
 
@@ -173,8 +173,44 @@ case ":$PATH:" in
         ;;
 esac
 
-# ---- [6/6] done ------------------------------------------------------------
-say "[6/6] Install complete"
+# ---- [6/7] Claude Code statusline integration (optional) -------------------
+say "[6/7] Claude Code statusline integration"
+
+STATUSLINE_BIN="$SCRIPT_DIR/bin/statusline.sh"
+CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+
+chmod +x "$STATUSLINE_BIN" 2>/dev/null || true
+mkdir -p "$HOME/.claude/state" 2>/dev/null && ok "ensured ~/.claude/state/"
+
+if [[ -f "$CLAUDE_SETTINGS" ]]; then
+    has_statusline="$(python3 -c "import json; d=json.load(open('$CLAUDE_SETTINGS')); print('yes' if 'statusLine' in d else 'no')" 2>/dev/null || echo 'err')"
+    if [[ "$has_statusline" == "yes" ]]; then
+        ok "Claude Code statusLine already configured — 'i' button will use existing script"
+        warn "  ensure your statusLine writes context-usage.json (see bin/statusline.sh for reference)"
+    elif [[ "$has_statusline" == "no" ]]; then
+        python3 - "$CLAUDE_SETTINGS" "$STATUSLINE_BIN" <<'PYEOF'
+import json, sys
+path, cmd = sys.argv[1], sys.argv[2]
+with open(path) as f:
+    d = json.load(f)
+d['statusLine'] = {'type': 'command', 'command': cmd, 'padding': 0}
+with open(path, 'w') as f:
+    json.dump(d, f, indent=2)
+PYEOF
+        ok "added statusLine to $CLAUDE_SETTINGS"
+        ok "  using $STATUSLINE_BIN"
+    else
+        warn "could not parse $CLAUDE_SETTINGS — add statusLine manually:"
+        warn "  \"statusLine\": {\"type\": \"command\", \"command\": \"$STATUSLINE_BIN\"}"
+    fi
+else
+    warn "~/.claude/settings.json not found — Claude Code may not be installed yet"
+    warn "  after installing Claude Code, add statusLine to get 'i' button context data:"
+    warn "  \"statusLine\": {\"type\": \"command\", \"command\": \"$STATUSLINE_BIN\"}"
+fi
+
+# ---- [7/7] done ------------------------------------------------------------
+say "[7/7] Install complete"
 cat <<EOF
 
 Next steps:

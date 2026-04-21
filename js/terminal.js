@@ -23,9 +23,10 @@ function _ansi256(n) {
 }
 
 function _stripOsc(text) {
-    // Strip OSC 8 hyperlinks: \x1b]8;;URL\x1b\ → keep display text between open/close
-    // Also strip any other OSC sequences: \x1b]...\x1b\ or \x1b]...\x07
-    return text.replace(/\x1b\]8;;[^\x1b\x07]*(?:\x1b\\|\x07)/g, '');
+    // Strip all OSC sequences: \x1b]...\x1b\ or \x1b]...\x07
+    // Covers OSC 8 hyperlinks (tmux 3.4 emits id= params: \x1b]8;id=abc;<url>\x1b\)
+    // and window title (OSC 0/1/2) and any other OSC sequences.
+    return text.replace(/\x1b\][^\x1b\x07]*(?:\x1b\\|\x07)/g, '');
 }
 
 function stripAnsi(text) {
