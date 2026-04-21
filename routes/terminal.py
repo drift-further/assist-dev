@@ -784,6 +784,71 @@ def terminal_capture():
     )
 
 
+def _validate_path(path_str):
+    """Validate a filesystem path and return (path, folder_name) or raise ValueError."""
+    if not path_str:
+        raise ValueError("Path required")
+    path = Path(path_str).expanduser().resolve()
+    if not path.exists():
+        raise ValueError("Path does not exist")
+    if not path.is_dir():
+        raise ValueError("Not a directory")
+    return path, path.name
+
+
+@terminal_bp.route("/terminal/explore", methods=["POST"])
+def terminal_explore():
+    """Validate and return folder name for a given path."""
+    data = request.get_json(silent=True) or {}
+    path_str = (data.get("path") or "").strip()
+
+    try:
+        path, folder_name = _validate_path(path_str)
+        # Verify readability
+        try:
+            list(path.iterdir())
+        except (PermissionError, OSError) as e:
+            return jsonify({"ok": False, "error": f"Permission denied: {e}"}), 403
+        return jsonify({"ok": True, "path": str(path), "folder_name": folder_name})
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Invalid path: {e}"}), 400
+
+
+@terminal_bp.route("/terminal/explore/ls", methods=["POST"])
+def terminal_explore_ls():
+    """List directories (and files) inside a given path."""
+    data = request.get_json(silent=True) or {}
+    path_str = (data.get("path") or "").strip()
+
+    try:
+        path, _ = _validate_path(path_str)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Invalid path: {e}"}), 400
+
+    try:
+        entries = []
+        for entry in sorted(path.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())):
+            if entry.name.startswith('.'):
+                continue
+            entries.append({
+                "name": entry.name,
+                "type": "dir" if entry.is_dir() else "file",
+            })
+        parent = str(path.parent) if path.parent != path else None
+        return jsonify({
+            "ok": True,
+            "entries": entries,
+            "current_path": str(path),
+            "parent": parent,
+        })
+    except (PermissionError, OSError) as e:
+        return jsonify({"ok": False, "error": f"Permission denied: {e}"}), 403
+
+
 @terminal_bp.route("/terminal/sessions/history/<project>")
 def session_history(project):
     """Return prior Claude Code sessions for a project from claude_archives DB."""

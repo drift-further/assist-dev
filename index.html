@@ -272,7 +272,22 @@
             </div>
 
             <div class="term-projects hidden" id="term-projects">
-                <input type="text" class="term-filter" id="term-filter" placeholder="Filter projects..." oninput="filterProjects()">
+                <div class="proj-header-row">
+                    <input type="text" class="term-filter" id="term-filter" placeholder="Filter projects..." oninput="filterProjects()">
+                    <button class="explore-btn" id="explore-btn" onclick="toggleExplore()">Explore</button>
+                </div>
+                <div class="explore-panel hidden" id="explore-panel">
+                    <div class="explore-path-row">
+                        <input type="text" id="explore-input" class="explore-input" placeholder="/path/to/folder"
+                               oninput="onExploreInput()" autocomplete="off" autocorrect="off" spellcheck="false">
+                    </div>
+                    <div class="explore-browser" id="explore-browser">
+                        <div class="explore-browser-empty">Type a path or tap a folder to browse</div>
+                    </div>
+                    <div class="explore-status" id="explore-status"></div>
+                    <div class="explore-recent" id="explore-recent"></div>
+                    <button id="explore-launch-btn" class="explore-launch-btn" onclick="launchFromExplore()" disabled>Launch Session</button>
+                </div>
                 <div class="term-project-grid" id="term-project-grid"></div>
             </div>
 
