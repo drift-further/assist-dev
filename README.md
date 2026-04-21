@@ -6,17 +6,36 @@ Primary use case: control a Claude Code session running on your dev box from a p
 
 ## Prerequisites
 
-Before installing, make sure you have:
+Before installing, make sure you have the required tools:
 
-- **Python 3.11+** (required)
-- **tmux** (required — Assist routes input into tmux sessions)
-- **npx** or **claude** binary (required — launches Claude Code in sessions; default mode is `npx`)
+**Required:**
 
-Optional (but recommended):
-- **xclip** — `sudo apt install xclip` (clipboard copy/paste)
-- **xdotool** — `sudo apt install xdotool` (X11 key-send)
-- **docker** — container spawn/build features
-- **curl** — CLI falls back to Python without it
+```bash
+# Python 3.11+
+python3 --version
+
+# tmux (Assist routes input into tmux sessions)
+sudo apt install tmux
+
+# claude CLI (launches Claude Code in sessions; default mode)
+# Install from: https://claude.com/claude-code
+```
+
+**Optional (but recommended):**
+
+```bash
+# xclip — clipboard copy/paste operations
+sudo apt install xclip
+
+# xdotool — X11 key-send fallback
+sudo apt install xdotool
+
+# docker — container spawn/build features
+# Install from: https://docs.docker.com/engine/install/
+
+# curl — HTTP calls (CLI falls back to Python without it)
+sudo apt install curl
+```
 
 ## Quick install
 

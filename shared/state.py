@@ -15,7 +15,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 DEFAULT_SETTINGS = {
     "server": {
-        "claude_mode": "npx",
+        "claude_mode": "claude",
         "session_init_cmd": os.environ.get("ASSIST_SESSION_INIT_CMD", ""),
         "projects_dir": str(
             Path(

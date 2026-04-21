@@ -56,14 +56,15 @@ else
     warn "xdotool not found — X11 key-send disabled (install: sudo apt install xdotool)"
 fi
 
-# Node/npx — needed for default Claude Code launch mode (npx)
-if command -v npx >/dev/null; then
-    ok "npx ($(npx --version 2>/dev/null || echo '?'))"
-elif command -v claude >/dev/null; then
-    ok "claude binary found (set claude_mode to 'claude' in Settings)"
+# claude CLI — primary Claude Code launch mode (default)
+if command -v claude >/dev/null; then
+    ok "claude binary ($(claude --version 2>/dev/null || echo '?'))"
+elif command -v npx >/dev/null; then
+    warn "npx found (set claude_mode to 'npx' in Settings if claude CLI not available)"
 else
-    warn "npx and claude not found — Claude Code launch will fail"
-    warn "  install Node.js: https://nodejs.org/ or install Claude CLI"
+    warn "claude CLI and npx not found — Claude Code launch will fail"
+    warn "  install Claude CLI: https://claude.com/claude-code"
+    warn "  or Node.js: https://nodejs.org/"
 fi
 
 if command -v docker >/dev/null; then
