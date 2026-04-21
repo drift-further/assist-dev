@@ -28,21 +28,22 @@ brew install tmux
 
 **Linux (Debian/Ubuntu):**
 ```bash
-sudo apt install xclip xdotool curl docker.io
+sudo apt install xclip xdotool curl docker.io zenity
 ```
 
 **macOS:**
 ```bash
 brew install xclip xdotool curl docker
 ```
+> macOS: `osascript` (built-in) handles the native folder picker — no extra install needed.
 
 For **docker**, you may need additional setup:
 - **Linux**: `sudo usermod -aG docker $USER && newgrp docker`
 - **macOS**: Install [Docker Desktop](https://www.docker.com/products/docker-desktop)
 
 **Other Linux distributions:**
-- **Fedora/RHEL**: `sudo dnf install tmux xclip xdotool curl docker`
-- **Arch**: `sudo pacman -S tmux xclip xdotool curl docker`
+- **Fedora/RHEL**: `sudo dnf install tmux xclip xdotool curl docker zenity`
+- **Arch**: `sudo pacman -S tmux xclip xdotool curl docker zenity`
 
 ## Quick install
 

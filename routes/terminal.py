@@ -831,6 +831,22 @@ def terminal_explore_pick():
     data = request.get_json(silent=True) or {}
     start = (data.get("start") or str(Path.home())).strip()
 
+    import platform
+    system = platform.system()
+
+    if system == "Darwin":
+        # macOS: osascript is built-in, no install required
+        script = f'POSIX path of (choose folder with prompt "Select Project Folder" default location POSIX file "{start}")'
+        proc = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True, text=True, timeout=120,
+        )
+        if proc.returncode == 0:
+            path = proc.stdout.strip().rstrip("/")
+            if path:
+                return jsonify({"ok": True, "path": path, "name": Path(path).name})
+        return jsonify({"ok": False, "cancelled": True, "error": "No folder selected"})
+
     if shutil.which("zenity"):
         proc = subprocess.run(
             ["zenity", "--file-selection", "--directory",
@@ -854,7 +870,7 @@ def terminal_explore_pick():
                 return jsonify({"ok": True, "path": path, "name": Path(path).name})
         return jsonify({"ok": False, "cancelled": True, "error": "No folder selected"})
 
-    return jsonify({"ok": False, "error": "No native dialog tool found (zenity or kdialog required)"}), 501
+    return jsonify({"ok": False, "error": "No native dialog tool found — install zenity: sudo apt install zenity"}), 501
 
 
 @terminal_bp.route("/terminal/explore/ls", methods=["POST"])
