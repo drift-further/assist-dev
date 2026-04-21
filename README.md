@@ -15,7 +15,10 @@ Before installing, make sure you have the required tools:
 python3 --version
 
 # tmux (Assist routes input into tmux sessions)
+# Linux (Debian/Ubuntu)
 sudo apt install tmux
+# or macOS
+brew install tmux
 
 # claude CLI (launches Claude Code in sessions; default mode)
 # Install from: https://claude.com/claude-code
@@ -23,19 +26,23 @@ sudo apt install tmux
 
 **Optional (but recommended):**
 
+**Linux (Debian/Ubuntu):**
 ```bash
-# xclip — clipboard copy/paste operations
-sudo apt install xclip
-
-# xdotool — X11 key-send fallback
-sudo apt install xdotool
-
-# docker — container spawn/build features
-# Install from: https://docs.docker.com/engine/install/
-
-# curl — HTTP calls (CLI falls back to Python without it)
-sudo apt install curl
+sudo apt install xclip xdotool curl docker.io
 ```
+
+**macOS:**
+```bash
+brew install xclip xdotool curl docker
+```
+
+For **docker**, you may need additional setup:
+- **Linux**: `sudo usermod -aG docker $USER && newgrp docker`
+- **macOS**: Install [Docker Desktop](https://www.docker.com/products/docker-desktop)
+
+**Other Linux distributions:**
+- **Fedora/RHEL**: `sudo dnf install tmux xclip xdotool curl docker`
+- **Arch**: `sudo pacman -S tmux xclip xdotool curl docker`
 
 ## Quick install
 
