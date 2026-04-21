@@ -183,7 +183,22 @@ function renderProjects() {
         for (const p of otherProjects) html += _projButton(p);
         html += '</div>';
     }
-    if (!html) html = '<div class="term-empty">No projects found</div>';
+    if (!html) {
+        const recents = _getRecentExplores();
+        if (recents.length > 0) {
+            html += '<div class="proj-section-label">Recent Folders</div><div class="proj-section-grid">';
+            for (const r of recents.slice(0, 12)) {
+                const p = escHtml(r.path), n = escHtml(r.folderName || r.path.split('/').pop());
+                html += `<button class="proj-btn" onclick="_launchFromPath(${escHtml(JSON.stringify(r.path))}, ${escHtml(JSON.stringify(r.folderName || r.path.split('/').pop()))})">
+                    <span class="proj-name">${n}</span>
+                    <span class="proj-badges"><span class="proj-badge" style="color:var(--text-muted);border-color:rgba(255,255,255,0.1)">${escHtml(r.path.replace(/\/[^/]+$/, '') || '/')}</span></span>
+                </button>`;
+            }
+            html += '</div>';
+        } else {
+            html = '<div class="term-empty">No projects found</div>';
+        }
+    }
     grid.innerHTML = html;
 
     // Load session history for visible projects (non-blocking)
@@ -244,6 +259,27 @@ function _timeAgo(date) {
     return Math.floor(secs / 86400) + 'd ago';
 }
 
+// -- Recent folder tracking (for native picker) --
+function _trackRecentExplore(path, name) {
+    try {
+        const raw = localStorage.getItem('assist_recent_explores');
+        let entries = raw ? JSON.parse(raw) : [];
+        entries = entries.filter(e => e.path !== path);
+        entries.push({path, folderName: name, ts: Date.now()});
+        if (entries.length > 15) entries = entries.slice(-15);
+        localStorage.setItem('assist_recent_explores', JSON.stringify(entries));
+    } catch(e) {}
+}
+
+function _getRecentExplores() {
+    try {
+        const raw = localStorage.getItem('assist_recent_explores');
+        if (!raw) return [];
+        const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+        return JSON.parse(raw).filter(e => e.ts > weekAgo).sort((a, b) => b.ts - a.ts);
+    } catch(e) { return []; }
+}
+
 // -- Native folder picker --
 async function pickFolderNative() {
     const btn = document.getElementById('explore-btn');
@@ -275,6 +311,7 @@ async function _launchFromPath(path, name) {
         });
         const data = await resp.json();
         if (data.ok) {
+            _trackRecentExplore(path, name);
             _termTarget = data.target;
             updateTmuxIndicator();
             try { localStorage.setItem('term_target', _termTarget); } catch(e) {}
