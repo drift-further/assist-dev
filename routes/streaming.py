@@ -1,6 +1,9 @@
 """routes/streaming.py — WebSocket terminal streaming."""
 
 import json
+import os
+import signal
+import subprocess
 import threading
 import time
 
@@ -11,6 +14,32 @@ from shared.tmux import capture_pane, set_ws_send_timeout
 # We cannot use a Blueprint for @sock.route — flask-sock requires the app-level Sock instance.
 
 _sock = None  # Set by register_streaming()
+
+
+def _force_repaint(target):
+    """Send SIGWINCH to target's pane process to force a TUI repaint.
+
+    Why: tmux pane cells outside a TUI's current redraw region can hold stale
+    content from earlier output. capture-pane returns the full grid verbatim,
+    so the browser sees the staleness as artifacts. A real tmux client attach
+    fixes this only because it triggers a SIGWINCH (size-changed) repaint as
+    a side-effect. We replicate just that signal — no stdin contamination,
+    no behavior change for non-TUI processes (which ignore SIGWINCH).
+
+    Best-effort: failure is silent.
+    """
+    try:
+        proc = subprocess.run(
+            ["tmux", "list-panes", "-t", target, "-F", "#{pane_pid}"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        pid = proc.stdout.strip().split("\n")[0]
+        if pid.isdigit():
+            os.kill(int(pid), signal.SIGWINCH)
+    except Exception:
+        pass
 
 
 def register_streaming(sock_instance):
@@ -63,7 +92,12 @@ def register_streaming(sock_instance):
         set_ws_send_timeout(ws)
 
         with state.ws_lock:
+            is_first = not any(t == target for _w, t, _l in state.ws_clients)
+            cache_key = f"{target}:{lines}"
+            state.ws_last_content.pop(cache_key, None)
             state.ws_clients.append((ws, target, lines))
+        if is_first:
+            _force_repaint(target)
         _ensure_streamer()
 
         try:
@@ -83,12 +117,17 @@ def register_streaming(sock_instance):
                             state.ws_clients[:] = [
                                 (w, t, l) for w, t, l in state.ws_clients if w is not ws
                             ]
+                            is_first = not any(
+                                t == new_target for _w, t, _l in state.ws_clients
+                            )
+                            cache_key = f"{new_target}:{new_lines}"
+                            state.ws_last_content.pop(cache_key, None)
                             state.ws_clients.append((ws, new_target, new_lines))
+                        if is_first:
+                            _force_repaint(new_target)
                         target = new_target
                         lines = new_lines
                         _ensure_streamer()
-                        cache_key = f"{target}:{lines}"
-                        state.ws_last_content.pop(cache_key, None)
                         content, info = capture_pane(target, lines)
                         if content is not None:
                             ws.send(
