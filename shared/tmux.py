@@ -185,16 +185,14 @@ def detect_venv(project_path):
 
 
 def capture_pane(target, lines=2000):
-    """Capture tmux pane content and info. Returns (content, info) or (None, None)."""
-    proc = subprocess.run(
-        ["tmux", "capture-pane", "-e", "-p", "-t", target, "-S", f"-{lines}"],
-        capture_output=True,
-        text=True,
-        timeout=5,
-    )
-    if proc.returncode != 0:
-        return None, None
+    """Capture tmux pane content and info. Returns (content, info) or (None, None).
 
+    When the pane is on the alternate screen (a TUI like Claude Code is
+    running), capture only the current screen — alt-screen content does not
+    flow into scrollback, and historical main-screen scrollback (e.g. prior
+    Claude launch banners) would just be noise. When on the main screen,
+    capture up to `lines` of scrollback so shell history is preserved.
+    """
     info_proc = subprocess.run(
         [
             "tmux",
@@ -202,13 +200,14 @@ def capture_pane(target, lines=2000):
             "-t",
             target,
             "-p",
-            "#{pane_current_command}\t#{pane_width}\t#{pane_height}\t#{cursor_y}",
+            "#{pane_current_command}\t#{pane_width}\t#{pane_height}\t#{cursor_y}\t#{alternate_on}",
         ],
         capture_output=True,
         text=True,
         timeout=5,
     )
     info = {}
+    alternate_on = False
     if info_proc.returncode == 0 and info_proc.stdout.strip():
         parts = info_proc.stdout.strip().split("\t")
         if len(parts) >= 3:
@@ -219,6 +218,23 @@ def capture_pane(target, lines=2000):
             }
             if len(parts) >= 4:
                 info["cursor_y"] = int(parts[3])
+            if len(parts) >= 5:
+                alternate_on = parts[4] == "1"
+
+    capture_args = ["tmux", "capture-pane", "-e", "-p", "-t", target]
+    if alternate_on:
+        capture_args += ["-S", "0"]  # current screen only (no scrollback)
+    else:
+        capture_args += ["-S", f"-{lines}"]
+
+    proc = subprocess.run(
+        capture_args,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    if proc.returncode != 0:
+        return None, None
 
     content = proc.stdout
     lines_list = content.split("\n")
