@@ -49,11 +49,16 @@ CPU_LIMIT=$(_cfg '.resources.cpus' '4')
 PIDS_LIMIT=$(_cfg '.resources.pids_limit' '512')
 BIND_ADDRESS=$(_cfg '.network.bind_address' '127.0.0.1')
 GATEWAY_HOST=$(_cfg '.network.gateway_host' '10.0.0.101')
+CLI_PROXY_ENABLED=$(_cfg '.cli_proxy.enabled' 'false')
+CLI_PROXY_NAME=$(_cfg '.cli_proxy.container_command' '')
+[ "$CLI_PROXY_ENABLED" != "true" ] && CLI_PROXY_NAME=""
 
 # Handle image rebuild
 if [ "$REBUILD_IMAGE" = true ]; then
     echo "Rebuilding $IMAGE_NAME image..."
-    if docker build --no-cache -t "$IMAGE_NAME" "$SCRIPT_DIR"; then
+    if docker build --no-cache \
+        --build-arg "CLI_PROXY_NAME=$CLI_PROXY_NAME" \
+        -t "$IMAGE_NAME" "$SCRIPT_DIR"; then
         echo "Image rebuilt successfully"
     else
         echo "Image build failed"
@@ -85,7 +90,7 @@ ensure_network() {
         sudo iptables -I DOCKER-USER -s "$CLAUDE_SUBNET" -d "$CLAUDE_SUBNET" -j ACCEPT
         # Allow PostgreSQL access to host (for project databases)
         sudo iptables -I DOCKER-USER -s "$CLAUDE_SUBNET" -d 10.0.0.101 -p tcp --dport 5432 -j ACCEPT
-        # Allow Assist access (karen CLI proxy on port 8089)
+        # Allow Assist access (host CLI proxy on port 8089 — see /api/cli-proxy)
         sudo iptables -I DOCKER-USER -s "$CLAUDE_SUBNET" -d 10.0.0.101 -p tcp --dport 8089 -j ACCEPT
         # Block all RFC1918 private networks and link-local
         sudo iptables -A DOCKER-USER -s "$CLAUDE_SUBNET" -d 10.0.0.0/8 -j DROP
@@ -278,6 +283,8 @@ fi
 # Database host override: inside the container, "localhost" is the container itself.
 # Point to the host machine so project .env files with MP_DB_HOST=localhost still work.
 DOCKER_CMD="$DOCKER_CMD -e MP_DB_HOST=$GATEWAY_HOST"
+# CLI proxy points at the host Assist server
+DOCKER_CMD="$DOCKER_CMD -e ASSIST_PROXY_HOST=$GATEWAY_HOST"
 # Don't hardcode Flutter path - let entrypoint.sh handle it based on what's actually mounted
 # Include Claude's install dir so the native binary and its runtime are on PATH
 DOCKER_CMD="$DOCKER_CMD -e PATH=\"/home/developer/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\""

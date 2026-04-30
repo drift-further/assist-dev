@@ -219,7 +219,7 @@ def consolidated_poll():
         target = pane["target"]
         live_targets.add(target)
         cap = subprocess.run(
-            ["tmux", "capture-pane", "-p", "-t", target, "-S", "-60"],
+            ["tmux", "capture-pane", "-e", "-p", "-t", target, "-S", "-60"],
             capture_output=True,
             text=True,
             timeout=5,

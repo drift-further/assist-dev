@@ -277,12 +277,19 @@ def _run_build():
         _generate_extensions_script()
 
         # Build args from config
+        cli_proxy_cfg = cfg.get("cli_proxy", {}) or {}
+        cli_proxy_name = (
+            cli_proxy_cfg.get("container_command", "")
+            if cli_proxy_cfg.get("enabled")
+            else ""
+        )
         build_args = {
             "NODE_VERSION": cfg["base"]["node_version"],
             "PYTHON_VERSION": cfg["base"]["python_version"],
             "CACHEBUST_CLAUDE": str(int(time.time())),
             "PIP_PACKAGES": " ".join(cfg["packages"].get("pip", [])),
             "SYSTEM_PACKAGES": " ".join(cfg["packages"].get("system", [])),
+            "CLI_PROXY_NAME": cli_proxy_name,
         }
 
         cmd = ["docker", "build", "-t", image_name]

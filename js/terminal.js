@@ -583,13 +583,28 @@ function _doRender(content, info, target) {
 
     // Content-based activity detection for background tabs
     if (target && content !== _termLastContent && _termLastContent !== '') {
-        const tab = document.querySelector(`.session-tab[data-target="${CSS.escape(target)}"]`);
+        let tab = document.querySelector(`.session-tab[data-target="${CSS.escape(target)}"]`);
+        // Tab may currently live in the stale sheet (no longer in DOM as a
+        // .session-tab in the strip). If a stale row corresponds to this
+        // target, re-evaluate the stale group so the tab is promoted back
+        // into the strip immediately on activity.
+        const staleRow = document.querySelector(`.stale-sheet-row[data-target="${CSS.escape(target)}"]`);
+        if (!tab && staleRow && typeof _applyStaleGroup === 'function') {
+            // Mark the underlying tab data so _applyStaleGroup will see it as running.
+            // The next render cycle from server will recreate the tab DOM with
+            // `running` set; here we just kick the re-evaluation.
+            _applyStaleGroup();
+            tab = document.querySelector(`.session-tab[data-target="${CSS.escape(target)}"]`);
+        }
         if (tab && !tab.classList.contains('active')) {
+            const wasRunning = tab.classList.contains('running');
             tab.classList.add('running');
+            if (!wasRunning && typeof _applyStaleGroup === 'function') _applyStaleGroup();
             if (_activityDecayTimers[target]) clearTimeout(_activityDecayTimers[target]);
             _activityDecayTimers[target] = setTimeout(() => {
                 tab.classList.remove('running');
                 delete _activityDecayTimers[target];
+                if (typeof _applyStaleGroup === 'function') _applyStaleGroup();
             }, 5000);
         }
     }

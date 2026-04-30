@@ -7,6 +7,7 @@ ARG HOST_UID=1000
 ARG HOST_GID=1000
 ARG PIP_PACKAGES=""
 ARG SYSTEM_PACKAGES=""
+ARG CLI_PROXY_NAME=""
 
 # Core system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -45,7 +46,11 @@ WORKDIR /workspace
 COPY entrypoint.sh /entrypoint.sh
 COPY scripts/link-agents.sh /link-agents.sh
 COPY scripts/claude-statusline.sh /usr/local/bin/claude-statusline
-RUN chmod +x /entrypoint.sh /link-agents.sh /usr/local/bin/claude-statusline
+COPY scripts/cli-proxy.sh /usr/local/share/assist/cli-proxy.sh
+RUN chmod +x /entrypoint.sh /link-agents.sh /usr/local/bin/claude-statusline /usr/local/share/assist/cli-proxy.sh && \
+    if [ -n "$CLI_PROXY_NAME" ]; then \
+        ln -sf /usr/local/share/assist/cli-proxy.sh "/usr/local/bin/${CLI_PROXY_NAME}"; \
+    fi
 
 # Developer user (matches host UID/GID — remove existing UID 1000 if taken by base image)
 RUN id -u ${HOST_UID} &>/dev/null && userdel -r $(id -nu ${HOST_UID}) || true && \

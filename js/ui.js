@@ -146,6 +146,7 @@ function closeDrawers() {
     document.getElementById('drawer-left').classList.remove('open');
     document.getElementById('drawer-bottom').classList.remove('open');
     document.getElementById('drawer-overlay').classList.remove('visible');
+    if (typeof closeStaleSheet === 'function') closeStaleSheet();
 }
 
 function togglePlusMenu() {

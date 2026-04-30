@@ -259,6 +259,10 @@ DEFAULT_CONTAINER_CONFIG = {
         "built_at": None,
         "build_hash": None,
     },
+    "cli_proxy": {
+        "enabled": False,
+        "container_command": "",
+    },
 }
 
 

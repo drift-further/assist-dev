@@ -97,10 +97,42 @@ All configuration is environment-variable based, via `.env` in the repo. See `en
 | `ASSIST_SKILLS_DIR` | Claude skills directory | `~/.claude/skills` |
 | `ASSIST_SESSION_INIT_CMD` | Command run in new tmux sessions | (none) |
 | `ASSIST_MOUNT_SCRIPT` | Path to `claude-direct-mount.sh` for Automate | (none — required for Automate) |
+| `ASSIST_CLI_BIN` | Host CLI exposed to containers via `/api/cli-proxy` | (none — proxy disabled) |
+| `ASSIST_CLI_DIR` | Working directory used when invoking `ASSIST_CLI_BIN` | `~` |
+| `ASSIST_CLI_ALLOWED` | Comma-separated allowlist of subcommands (empty = allow all) | (empty) |
 | `ASSIST_DB_NAME` | PostgreSQL DB for session history | `claude_archives` |
 | `DISPLAY` | X11 display for clipboard/key-send | `:1` |
 
 Changes to `.env` require `assist restart` to take effect.
+
+## Host CLI proxy
+
+Containers launched by Assist run on an isolated network with no LAN access, but they can reach the host on port 8089. This is used to expose a single host-side CLI tool inside the container without copying its dependencies in.
+
+Two pieces:
+
+1. **Host-side** (`.env`) — `ASSIST_CLI_BIN`, `ASSIST_CLI_DIR`, `ASSIST_CLI_ALLOWED`. The Flask server's `/api/cli-proxy` endpoint runs `ASSIST_CLI_BIN <args>` on the host and returns stdout/stderr/exit code. `ASSIST_CLI_ALLOWED` (comma-separated) restricts which first-arg subcommands are accepted; leave empty to allow all.
+2. **Container-side** (`container_config.json` → `cli_proxy`) — set `enabled: true` and `container_command: "<name>"`. The image build installs a thin bash wrapper at `/usr/local/bin/<name>` that POSTs to the proxy.
+
+Example — exposing a host CLI called `mycli`:
+
+```bash
+# .env
+ASSIST_CLI_BIN=/home/me/bin/mycli
+ASSIST_CLI_DIR=/home/me/source/mycli
+ASSIST_CLI_ALLOWED=status,build,deploy
+```
+
+```json
+// container_config.json
+{
+  "cli_proxy": { "enabled": true, "container_command": "mycli" }
+}
+```
+
+Then `assist restart` and rebuild the image (`assist container build` or the Container panel). Inside any newly-launched container, `mycli status` runs against the host binary.
+
+The wrapper accepts `-f <path>` to base64-upload a file from the container — the host writes it to a temp dir and replaces the arg with the resolved path before invoking the CLI.
 
 ## Optional: nginx reverse proxy
 

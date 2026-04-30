@@ -86,6 +86,15 @@
         <button class="clear-btn" id="clear-btn" onclick="clearHistory()">Clear History</button>
     </div>
 
+    <!-- Idle sessions sheet (slides up when stale-pill is tapped) -->
+    <div class="stale-sheet" id="stale-sheet" aria-hidden="true">
+        <div class="stale-sheet-header">
+            <span class="stale-sheet-title">Idle sessions <span class="stale-sheet-count" id="stale-sheet-count">0</span></span>
+            <button class="drawer-close" onclick="closeStaleSheet()">&times;</button>
+        </div>
+        <div class="stale-sheet-body" id="stale-sheet-body"></div>
+    </div>
+
     <div class="content">
         <!-- Terminal header (always visible) -->
         <div class="term-toggle" id="term-toggle">

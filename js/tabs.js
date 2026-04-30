@@ -8,12 +8,47 @@ let _tabContextTarget = null;
 let _pinnedTabs = JSON.parse(localStorage.getItem('assist_pinned_tabs') || '[]');
 let _tabOrder = JSON.parse(localStorage.getItem('assist_tab_order') || '[]');
 
-let _staleGroupCollapsed = (() => {
-    try { return localStorage.getItem('assist_stale_collapsed') !== 'false'; }
-    catch(e) { return true; }
-})();
-function _saveStaleCollapsed() {
-    try { localStorage.setItem('assist_stale_collapsed', String(_staleGroupCollapsed)); } catch(e) {}
+let _staleSheetOpen = false;
+let _lastStaleCount = 0;  // for new-stale flash detection
+
+function openStaleSheet() {
+    const sheet = document.getElementById('stale-sheet');
+    const overlay = document.getElementById('drawer-overlay');
+    if (!sheet) return;
+    _staleSheetOpen = true;
+    sheet.classList.add('open');
+    sheet.setAttribute('aria-hidden', 'false');
+    if (overlay) {
+        overlay.classList.add('visible');
+        overlay.dataset.closesStaleSheet = '1';
+    }
+}
+
+function closeStaleSheet() {
+    const sheet = document.getElementById('stale-sheet');
+    const overlay = document.getElementById('drawer-overlay');
+    if (!sheet) return;
+    _staleSheetOpen = false;
+    sheet.classList.remove('open');
+    sheet.setAttribute('aria-hidden', 'true');
+    if (overlay && overlay.dataset.closesStaleSheet === '1') {
+        overlay.classList.remove('visible');
+        delete overlay.dataset.closesStaleSheet;
+    }
+}
+
+function _staleRowDotClass(tab) {
+    if (tab.classList.contains('has-prompt')) return 'amber';
+    if (tab.classList.contains('done')) return 'green';
+    if (tab.classList.contains('running')) return 'cyan';
+    return '';
+}
+
+function _onStaleRowTap(target) {
+    closeStaleSheet();
+    if (typeof selectTab === 'function') selectTab(target);
+    // _applyStaleGroup will re-evaluate on the next poll and the freshly
+    // active tab will leave the sheet automatically (active tabs are excluded).
 }
 
 function _savePinnedTabs() {
@@ -355,7 +390,7 @@ function _buildDropZones(container, sourceTab) {
     // Remove old zones
     container.querySelectorAll('.reorder-drop-zone').forEach(z => z.remove());
 
-    // Get all non-stale tabs in main area (stale tabs are inside .stale-tab-body)
+    // Get all non-stale tabs in main area (stale tabs are now in the bottom sheet)
     const tabs = Array.from(container.querySelectorAll(':scope > .session-tab, :scope > .pin-divider'));
     const sourceTarget = sourceTab.dataset.target;
 
@@ -381,40 +416,12 @@ function _buildDropZones(container, sourceTab) {
         if (i < allTabs.length) {
             container.insertBefore(zone, allTabs[i]);
         } else {
-            // After last tab but before stale group
-            const staleGroup = container.querySelector('.stale-tab-group');
-            if (staleGroup) {
-                container.insertBefore(zone, staleGroup);
+            // After last tab but before stale pill (if present)
+            const stalePill = container.querySelector('.stale-pill-wrap');
+            if (stalePill) {
+                container.insertBefore(zone, stalePill);
             } else {
                 container.appendChild(zone);
-            }
-        }
-    }
-
-    // Also add zones inside stale group if source is stale or stale group is expanded
-    const staleBody = container.querySelector('.stale-tab-body:not(.collapsed)');
-    if (staleBody) {
-        const staleTabs = Array.from(staleBody.querySelectorAll('.session-tab'));
-        for (let i = 0; i <= staleTabs.length; i++) {
-            const zone = document.createElement('div');
-            zone.className = 'reorder-drop-zone reorder-zone-stale';
-            zone.dataset.insertIndex = i;
-            zone.dataset.stale = 'true';
-
-            const sourceIdx = staleTabs.indexOf(sourceTab);
-            if (i === sourceIdx || i === sourceIdx + 1) {
-                zone.classList.add('reorder-zone-hidden');
-            }
-
-            zone.onclick = (e) => {
-                e.stopPropagation();
-                _placeTabAtIndex(staleBody, sourceTab, parseInt(zone.dataset.insertIndex, 10), staleTabs);
-            };
-
-            if (i < staleTabs.length) {
-                staleBody.insertBefore(zone, staleTabs[i]);
-            } else {
-                staleBody.appendChild(zone);
             }
         }
     }
@@ -513,42 +520,121 @@ function _getStaleThreshold() { return SETTINGS ? SETTINGS.ui.stale_tab_threshol
 
 function _applyStaleGroup() {
     const container = document.getElementById('session-tabs');
-    if (!container) return;
+    const sheetBody = document.getElementById('stale-sheet-body');
+    const sheetCount = document.getElementById('stale-sheet-count');
+    if (!container || !sheetBody) return;
 
-    // Remove existing stale group
-    const existing = container.querySelector('.stale-tab-group');
-    if (existing) existing.remove();
+    // Remove existing pill (we re-render it each pass)
+    const existingPill = container.querySelector('.stale-pill-wrap');
+    if (existingPill) existingPill.remove();
 
-    // Find stale tabs (idle >= 1hr and not the active tab)
-    const staleTabs = Array.from(container.querySelectorAll('.session-tab')).filter(t => {
-        const idle = parseInt(t.dataset.idleSeconds || '0', 10);
-        return idle >= _getStaleThreshold() && !t.classList.contains('active');
+    // Find stale tabs in the strip:
+    //   idle >= threshold AND not active AND not pinned AND not currently running
+    // Team-lead grouping: if a team-lead is stale and any agent child is
+    // running, the lead and ALL its children stay in the strip.
+    const threshold = _getStaleThreshold();
+    const allTabs = Array.from(container.querySelectorAll('.session-tab'));
+
+    // Build a session -> [tabs] map so we can check "any child running"
+    const bySession = {};
+    allTabs.forEach(t => {
+        const session = (t.dataset.target || '').split(':')[0];
+        if (!bySession[session]) bySession[session] = [];
+        bySession[session].push(t);
+    });
+    const sessionHasRunning = {};
+    Object.keys(bySession).forEach(s => {
+        sessionHasRunning[s] = bySession[s].some(t => t.classList.contains('running'));
     });
 
-    if (staleTabs.length === 0) return;
+    const staleTabs = allTabs.filter(t => {
+        if (t.classList.contains('active')) return false;
+        if (t.classList.contains('running')) return false;
+        if (_pinnedTabs.includes(t.dataset.target)) return false;
+        const idle = parseInt(t.dataset.idleSeconds || '0', 10);
+        if (idle < threshold) return false;
+        // Team-lead/agent unit: if the session has any running child, keep
+        // the whole group in the strip.
+        const session = (t.dataset.target || '').split(':')[0];
+        if (sessionHasRunning[session]) return false;
+        return true;
+    });
 
-    // Build collapsible group
-    const group = document.createElement('div');
-    group.className = 'stale-tab-group';
+    // Sort by idle-time descending (most-recently-stale first)
+    staleTabs.sort((a, b) => {
+        const ai = parseInt(a.dataset.idleSeconds || '0', 10);
+        const bi = parseInt(b.dataset.idleSeconds || '0', 10);
+        return ai - bi;  // smaller idle = more recent
+    });
 
-    const header = document.createElement('button');
-    header.className = 'stale-tab-header';
-    header.innerHTML = '<span class="stale-chevron">' + (_staleGroupCollapsed ? '\u203a' : '\u2039') + '</span>' +
-        '<span class="stale-label">Stale</span>' +
-        '<span class="stale-count">' + staleTabs.length + '</span>';
-    header.onclick = () => {
-        _staleGroupCollapsed = !_staleGroupCollapsed;
-        _saveStaleCollapsed();
-        _applyStaleGroup();  // re-render
+    // Move stale tabs out of strip into sheet body
+    sheetBody.innerHTML = '';
+    staleTabs.forEach(tab => {
+        const target = tab.dataset.target || '';
+        const session = target.split(':')[0];
+        const row = document.createElement('div');
+        row.className = 'stale-sheet-row';
+        row.dataset.target = target;
+
+        const dotClass = _staleRowDotClass(tab);
+        if (dotClass) {
+            const dot = document.createElement('span');
+            dot.className = 'row-dot ' + dotClass;
+            row.appendChild(dot);
+        }
+
+        const name = document.createElement('span');
+        name.className = 'row-name';
+        // Reuse the tab's label text (first text node), strip badges/idle-time spans.
+        const label = tab.cloneNode(true);
+        Array.from(label.querySelectorAll('.tab-badge, .tab-idle-time, .tab-dot')).forEach(n => n.remove());
+        name.textContent = label.textContent.trim() || session;
+        row.appendChild(name);
+
+        const idleSec = parseInt(tab.dataset.idleSeconds || '0', 10);
+        const idle = document.createElement('span');
+        idle.className = 'row-idle';
+        idle.textContent = (typeof _formatIdleTime === 'function')
+            ? _formatIdleTime(idleSec)
+            : Math.floor(idleSec / 60) + 'm';
+        row.appendChild(idle);
+
+        row.onclick = () => _onStaleRowTap(target);
+        sheetBody.appendChild(row);
+
+        // Remove the tab from the strip
+        tab.remove();
+    });
+
+    if (sheetCount) sheetCount.textContent = String(staleTabs.length);
+
+    // If the sheet is open and no stale tabs remain, close it.
+    if (_staleSheetOpen && staleTabs.length === 0) closeStaleSheet();
+
+    if (staleTabs.length === 0) {
+        _lastStaleCount = 0;
+        return;
+    }
+
+    // Render pill
+    const wrap = document.createElement('div');
+    wrap.className = 'stale-pill-wrap';
+    wrap.onclick = () => {
+        if (_staleSheetOpen) closeStaleSheet(); else openStaleSheet();
     };
+    const pill = document.createElement('span');
+    pill.className = 'stale-pill';
+    if (staleTabs.length > _lastStaleCount) pill.classList.add('flash');
+    pill.innerHTML = '<span class="stale-pill-glyph">zZ</span>' +
+        '<span class="stale-pill-count">' + staleTabs.length + '</span>';
+    wrap.appendChild(pill);
+    container.appendChild(wrap);
 
-    const body = document.createElement('div');
-    body.className = 'stale-tab-body' + (_staleGroupCollapsed ? ' collapsed' : '');
-
-    staleTabs.forEach(tab => body.appendChild(tab));
-    group.appendChild(header);
-    group.appendChild(body);
-    container.appendChild(group);
+    // Clear flash after 250ms so it only fires on count increase
+    if (pill.classList.contains('flash')) {
+        setTimeout(() => pill.classList.remove('flash'), 260);
+    }
+    _lastStaleCount = staleTabs.length;
 }
 
 // Call reorder after session data is applied

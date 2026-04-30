@@ -291,11 +291,14 @@ function _applyScanData(scanPanes) {
         const prev = _lastScanContent[pane.target];
         _lastScanContent[pane.target] = pane.tail;
         if (tab && !tab.classList.contains('active') && prev !== undefined && prev !== pane.tail && !detected) {
+            const wasRunning = tab.classList.contains('running');
             tab.classList.add('running');
+            if (!wasRunning && typeof _applyStaleGroup === 'function') _applyStaleGroup();
             if (_activityDecayTimers[pane.target]) clearTimeout(_activityDecayTimers[pane.target]);
             _activityDecayTimers[pane.target] = setTimeout(() => {
                 tab.classList.remove('running');
                 delete _activityDecayTimers[pane.target];
+                if (typeof _applyStaleGroup === 'function') _applyStaleGroup();
             }, 10000);
         }
     }
