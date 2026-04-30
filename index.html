@@ -94,7 +94,7 @@
             <span class="conn-indicator" id="conn-indicator"></span>
             <button class="term-font-btn" onclick="termFontSmaller()">A-</button>
             <button class="term-font-btn" onclick="termFontLarger()">A+</button>
-            <button class="term-font-btn" onclick="termFitToScreen()" title="Fit terminal to screen">Fit</button>
+            <button class="term-font-btn" id="btn-fit" onclick="toggleFitMenu()" title="Fit terminal to screen">Fit</button>
             <button class="term-search-toggle" onclick="toggleTermSearch()" title="Search">&#128269;</button>
         </div>
         <div class="term-panel" id="term-panel">
@@ -114,6 +114,18 @@
                 <button class="term-search-nav" onclick="termSearchPrev()">&#9650;</button>
                 <button class="term-search-nav" onclick="termSearchNext()">&#9660;</button>
                 <button class="term-search-close" onclick="closeTermSearch()">&#x2715;</button>
+            </div>
+
+            <div class="fit-menu" id="fit-menu">
+                <button class="fit-item" data-cols="auto" onclick="fitMenuPick('auto')" title="Fit to viewport">Auto</button>
+                <button class="fit-item" data-cols="58" onclick="fitMenuPick(58)">Phone 58</button>
+                <button class="fit-item" data-cols="100" onclick="fitMenuPick(100)">Compact 100</button>
+                <button class="fit-item" data-cols="160" onclick="fitMenuPick(160)">Wide 160</button>
+                <button class="fit-item" data-cols="200" onclick="fitMenuPick(200)">Desktop 200</button>
+                <div class="fit-custom">
+                    <input type="number" class="fit-custom-input" id="fit-custom-input" min="40" max="400" placeholder="cols" inputmode="numeric">
+                    <button class="fit-item fit-apply" onclick="fitMenuApplyCustom()">Apply</button>
+                </div>
             </div>
 
             <div class="plus-menu" id="plus-menu">
@@ -389,7 +401,7 @@
     <script src="/js/state.js"></script>
     <script src="/js/ui.js"></script>
     <script src="/js/input.js"></script>
-    <script src="/js/terminal.js?v=3"></script>
+    <script src="/js/terminal.js?v=4"></script>
     <script src="/js/actions.js?v=2"></script>
     <script src="/js/commands.js?v=2"></script>
     <script src="/js/container.js"></script>

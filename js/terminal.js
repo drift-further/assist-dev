@@ -484,6 +484,10 @@ function selectTab(target) {
     _termLineBuffer = [];  // reset delta buffer on tab switch
     _termHasNew = false;
     _smartDismissed = null; // Reset dismiss so smart actions reappear on return
+    // Drop any throttled render queued for the old target so it cannot fire
+    // after the switch and paint stale content into term-content.
+    if (_renderTimer) { clearTimeout(_renderTimer); _renderTimer = null; }
+    _pendingRender = null;
     if (typeof clearSelection === 'function') clearSelection();
     document.getElementById('term-new-output').classList.remove('visible');
     updateTmuxIndicator();
@@ -555,6 +559,10 @@ function _scheduleRender(content, info, target) {
 }
 
 function _doRender(content, info, target) {
+    // Guard: a queued render may carry the previous target if the user
+    // switched tabs during the throttle window. selectTab clears the timer,
+    // but defense-in-depth here keeps stale content out of term-content.
+    if (target && _termTarget && target !== _termTarget) return;
     _lastRenderTime = Date.now();
 
     // Update info bar
@@ -983,22 +991,67 @@ function _calcTermSize() {
     return { cols, rows };
 }
 
-/** Resize the current tmux session to fit the viewport. */
-async function termFitToScreen() {
+/** Resize the current tmux session.
+ *  cols=null → fit to viewport (Auto). cols=number → use that width, height from viewport. */
+async function termFitToScreen(cols = null) {
     if (!_termTarget) return;
     const session = _termTarget.split(':')[0];
-    const { cols, rows } = _calcTermSize();
+    const calc = _calcTermSize();
+    const targetCols = cols == null ? calc.cols : Math.max(40, Math.min(parseInt(cols), 400));
+    const targetRows = calc.rows;
     try {
         const resp = await fetch('/terminal/resize', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ session, cols, rows }),
+            body: JSON.stringify({ session, cols: targetCols, rows: targetRows }),
         });
         const data = await resp.json();
         if (data.ok) {
-            showFlash('ok', `Resized to ${cols}×${rows}`);
+            showFlash('ok', `Resized to ${targetCols}×${targetRows}`);
         }
     } catch(e) {}
+}
+
+/** Toggle the Fit preset menu. */
+function toggleFitMenu() {
+    const menu = document.getElementById('fit-menu');
+    const btn = document.getElementById('btn-fit');
+    const visible = menu.classList.contains('visible');
+    menu.classList.toggle('visible', !visible);
+    btn.classList.toggle('active', !visible);
+    if (!visible) {
+        // Pre-fill custom input with last value, highlight last preset
+        const last = localStorage.getItem('assist_fit_last') || 'auto';
+        const input = document.getElementById('fit-custom-input');
+        if (input && /^\d+$/.test(last)) input.value = last;
+        document.querySelectorAll('.fit-item').forEach(el => {
+            el.classList.toggle('active', el.dataset.cols === String(last));
+        });
+    }
+}
+
+/** Apply a preset choice from the Fit menu. */
+function fitMenuPick(choice) {
+    localStorage.setItem('assist_fit_last', String(choice));
+    if (choice === 'auto') {
+        termFitToScreen();
+    } else {
+        termFitToScreen(choice);
+    }
+    toggleFitMenu();
+}
+
+/** Apply the custom column count from the Fit menu input. */
+function fitMenuApplyCustom() {
+    const input = document.getElementById('fit-custom-input');
+    const v = parseInt(input.value);
+    if (!v || v < 40 || v > 400) {
+        showFlash('error', 'Width must be 40–400');
+        return;
+    }
+    localStorage.setItem('assist_fit_last', String(v));
+    termFitToScreen(v);
+    toggleFitMenu();
 }
 
 function termFontSmaller() {
