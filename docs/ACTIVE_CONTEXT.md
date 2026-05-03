@@ -1,9 +1,9 @@
 # Active Context
 
-**Last Updated**: 2026-04-29 (Phase 1 shipped)
+**Last Updated**: 2026-05-03 (idle-window redraw fix + URL linkification)
 **Current Task**: Fix terminal artifacts + redesign idle-window collapse (pill + bottom sheet)
 **Branch**: main
-**Mode**: Phase 1 committed; awaiting live-tmux verification before Phase 2
+**Mode**: Phase 1 + idle-redraw fix shipped; Phase 2 still pending
 
 ---
 
@@ -19,6 +19,13 @@ Two-part work on the phone terminal UI:
 
 Spec at `docs/superpowers/specs/2026-04-29-terminal-artifacts-and-idle-collapse-design.md`.
 Plan at `docs/superpowers/plans/2026-04-29-terminal-artifacts-and-idle-collapse.md`.
+
+### 2026-05-03 follow-up
+- Idle session in browser still showed mangled tab-bar/title cells even after Phase 1; user confirmed attaching a real tmux client cleared it.
+- Root cause: `_force_repaint` sent SIGWINCH to `pane_pid` (the bash tmux spawned), not to the foreground TUI. SIGWINCH to bash is ignored. SIGWINCH alone (even to claude) is also insufficient — Ink's resize handler no-ops when size is unchanged.
+- Fix: replaced `_force_repaint` with `_force_redraw` in `routes/streaming.py` — a tmux `resize-window` toggle (1 row down, then back up). The real ioctl(TIOCSWINSZ) propagates SIGWINCH via the kernel to the fg pgrp, forcing a full clear+redraw. Restores the prior `window-size` policy (resize-window pins it to manual) and preserves `pane_last_activity` + refreshes `pane_content_hash` so the poll cycle does **not** reclassify the redrawn session as active.
+- Triggered on every WS connect AND every subscribe (tab click), before the initial capture, so the first frame is already clean. Skipped if a real tmux client is attached.
+- Also: URLs (http/https) in terminal output now render as clickable `<a target="_blank">` anchors, with trailing `.,;:!?)]}'"` stripped. New `_linkifyAndEscape` helper in `js/terminal.js`; `.term-link` CSS in `css/terminal.css`.
 
 ### Key Decisions Made This Session
 - Cache-pop moved inside `ws_lock`, before `ws_clients.append` (closes server race)

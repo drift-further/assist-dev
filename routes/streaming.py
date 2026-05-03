@@ -1,8 +1,7 @@
 """routes/streaming.py — WebSocket terminal streaming."""
 
+import hashlib
 import json
-import os
-import signal
 import subprocess
 import threading
 import time
@@ -15,29 +14,107 @@ from shared.tmux import capture_pane, set_ws_send_timeout
 
 _sock = None  # Set by register_streaming()
 
+# How long to wait after the resize toggle for the TUI to flush its redraw
+# before we snapshot the new content hash. 0.3s is plenty for Ink/ncurses.
+_REDRAW_FLUSH_SEC = 0.3
 
-def _force_repaint(target):
-    """Send SIGWINCH to target's pane process to force a TUI repaint.
+
+def _force_redraw(target):
+    """Force a TUI in `target` to fully repaint, clearing tmux-grid artifacts.
 
     Why: tmux pane cells outside a TUI's current redraw region can hold stale
-    content from earlier output. capture-pane returns the full grid verbatim,
-    so the browser sees the staleness as artifacts. A real tmux client attach
-    fixes this only because it triggers a SIGWINCH (size-changed) repaint as
-    a side-effect. We replicate just that signal — no stdin contamination,
-    no behavior change for non-TUI processes (which ignore SIGWINCH).
+    content from earlier output. capture-pane returns the grid verbatim, so the
+    browser sees the staleness as overlapping/garbled characters. A real tmux
+    client attach fixes this because attaching triggers ioctl(TIOCSWINSZ) on
+    the pty, which delivers SIGWINCH from the kernel to the foreground process
+    group of the controlling tty (the actual TUI — e.g. node/claude — not its
+    bash parent), and the TUI does a full clear-and-redraw.
 
-    Best-effort: failure is silent.
+    Bare SIGWINCH is not enough: TUIs typically no-op the signal handler when
+    the size hasn't changed. We replicate the attach behavior by briefly
+    resizing the window by one row, then back. That's a real size change → real
+    SIGWINCH delivery via the tty layer → full clear-and-redraw.
+
+    Side-effect we have to undo: tmux's `resize-window` pins the window's
+    `window-size` option to `manual`. We save the prior value and restore it.
+
+    Side-effect we have to suppress: the TUI's repaint changes the captured
+    content. The poll loop hashes captures and bumps `pane_last_activity` on
+    any change, which would reclassify an idle session as active. After the
+    redraw we snapshot the new content hash and restore the prior activity
+    timestamp so the next poll sees no change.
+
+    Skipped if a real tmux client is attached — don't tug on someone's terminal
+    out from under them. Best-effort otherwise: failure is silent.
     """
     try:
-        proc = subprocess.run(
-            ["tmux", "list-panes", "-t", target, "-F", "#{pane_pid}"],
-            capture_output=True,
-            text=True,
-            timeout=2,
+        info = subprocess.run(
+            ["tmux", "display-message", "-t", target, "-p",
+             "#{pane_width}\t#{pane_height}\t#{session_attached}"],
+            capture_output=True, text=True, timeout=2,
         )
-        pid = proc.stdout.strip().split("\n")[0]
-        if pid.isdigit():
-            os.kill(int(pid), signal.SIGWINCH)
+        if info.returncode != 0:
+            return
+        parts = info.stdout.strip().split("\t")
+        if len(parts) < 3:
+            return
+        try:
+            w = int(parts[0])
+            h = int(parts[1])
+            attached = int(parts[2] or "0")
+        except ValueError:
+            return
+        if attached > 0 or h < 2:
+            return
+
+        with state._activity_lock:
+            saved_activity = state.pane_last_activity.get(target)
+
+        opt = subprocess.run(
+            ["tmux", "show-options", "-t", target, "-w", "-v", "window-size"],
+            capture_output=True, text=True, timeout=2,
+        )
+        old_window_size = (
+            opt.stdout.strip()
+            if opt.returncode == 0 and opt.stdout.strip()
+            else None
+        )
+
+        subprocess.run(
+            ["tmux", "resize-window", "-t", target, "-x", str(w), "-y", str(h - 1)],
+            capture_output=True, timeout=2,
+        )
+        subprocess.run(
+            ["tmux", "resize-window", "-t", target, "-x", str(w), "-y", str(h)],
+            capture_output=True, timeout=2,
+        )
+
+        if old_window_size:
+            subprocess.run(
+                ["tmux", "set-option", "-t", target, "-w",
+                 "window-size", old_window_size],
+                capture_output=True, timeout=2,
+            )
+        else:
+            subprocess.run(
+                ["tmux", "set-option", "-t", target, "-w", "-u", "window-size"],
+                capture_output=True, timeout=2,
+            )
+
+        time.sleep(_REDRAW_FLUSH_SEC)
+
+        cap = subprocess.run(
+            ["tmux", "capture-pane", "-e", "-p", "-t", target, "-S", "-60"],
+            capture_output=True, text=True, timeout=2,
+        )
+        if cap.returncode == 0:
+            tail = cap.stdout.rstrip("\n")
+            if tail:
+                new_hash = hashlib.md5(tail.encode()).hexdigest()
+                with state._activity_lock:
+                    state.pane_content_hash[target] = new_hash
+                    if saved_activity is not None:
+                        state.pane_last_activity[target] = saved_activity
     except Exception:
         pass
 
@@ -72,6 +149,10 @@ def register_streaming(sock_instance):
                 pass
             return
 
+        # Force a clean repaint BEFORE the initial capture so the first frame
+        # the browser renders is already free of stale tmux-grid artifacts.
+        _force_redraw(target)
+
         try:
             content, info = capture_pane(target, lines)
             if content is not None:
@@ -92,12 +173,9 @@ def register_streaming(sock_instance):
         set_ws_send_timeout(ws)
 
         with state.ws_lock:
-            is_first = not any(t == target for _w, t, _l in state.ws_clients)
             cache_key = f"{target}:{lines}"
             state.ws_last_content.pop(cache_key, None)
             state.ws_clients.append((ws, target, lines))
-        if is_first:
-            _force_repaint(target)
         _ensure_streamer()
 
         try:
@@ -113,18 +191,16 @@ def register_streaming(sock_instance):
                     if msg.get("type") == "subscribe":
                         new_target = msg.get("target", target)
                         new_lines = min(int(msg.get("lines", lines)), 20000)
+                        # Repaint BEFORE the resubscribe capture so the user
+                        # sees a clean first frame on the new tab.
+                        _force_redraw(new_target)
                         with state.ws_lock:
                             state.ws_clients[:] = [
                                 (w, t, l) for w, t, l in state.ws_clients if w is not ws
                             ]
-                            is_first = not any(
-                                t == new_target for _w, t, _l in state.ws_clients
-                            )
                             cache_key = f"{new_target}:{new_lines}"
                             state.ws_last_content.pop(cache_key, None)
                             state.ws_clients.append((ws, new_target, new_lines))
-                        if is_first:
-                            _force_repaint(new_target)
                         target = new_target
                         lines = new_lines
                         _ensure_streamer()

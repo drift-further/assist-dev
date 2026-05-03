@@ -33,6 +33,39 @@ function stripAnsi(text) {
     return _stripOsc(text).replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
 }
 
+// Match http(s) URLs in raw (pre-escape) text. Stops at whitespace, angle
+// brackets, or quotes — none of which belong inside a URL — so wrapping
+// patterns like <url> or "url" stay outside the match.
+const _URL_RE = /https?:\/\/[^\s<>"']+/g;
+const _URL_TRAIL_RE = /[.,;:!?)\]}'"]+$/;
+
+function _escHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Escape a text segment to HTML, wrapping any http(s) URLs in clickable
+// anchors that open in a new tab. Trailing punctuation (.,;:!?)]}'") is
+// kept outside the link so "see https://x.com." renders correctly.
+function _linkifyAndEscape(text) {
+    let out = '';
+    let last = 0;
+    let m;
+    _URL_RE.lastIndex = 0;
+    while ((m = _URL_RE.exec(text)) !== null) {
+        let url = m[0];
+        const tm = url.match(_URL_TRAIL_RE);
+        const tail = tm ? tm[0] : '';
+        if (tail) url = url.slice(0, -tail.length);
+        out += _escHtml(text.slice(last, m.index));
+        const eu = _escHtml(url);
+        out += `<a href="${eu}" target="_blank" rel="noopener noreferrer" class="term-link">${eu}</a>`;
+        if (tail) out += _escHtml(tail);
+        last = m.index + m[0].length;
+    }
+    out += _escHtml(text.slice(last));
+    return out;
+}
+
 function ansiToHtml(rawText) {
     const parts = _stripOsc(rawText).split(/(\x1b\[[0-9;]*m)/);
     let html = '';
@@ -80,7 +113,7 @@ function ansiToHtml(rawText) {
             if (underline) s.push('text-decoration:underline');
             if (s.length) { html += '<span style="' + s.join(';') + '">'; spanOpen = true; }
         } else {
-            html += part.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            html += _linkifyAndEscape(part);
         }
     }
     if (spanOpen) html += '</span>';

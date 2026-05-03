@@ -576,6 +576,12 @@
     color: #d0e8d4; white-space: pre; min-width: 80ch;
     -webkit-user-select: text; user-select: text; min-height: 80px;
 }
+.term-link {
+    color: var(--cyan); text-decoration: underline;
+    text-decoration-color: rgba(0, 212, 255, 0.4);
+    cursor: pointer;
+}
+.term-link:hover, .term-link:active { color: var(--amber); text-decoration-color: var(--amber); }
 .term-load-more {
     display: none; text-align: center; padding: 6px;
     font-size: 8px; font-weight: 600; color: var(--text-dim);
