@@ -178,17 +178,33 @@ say "[6/7] Claude Code statusline integration"
 
 STATUSLINE_BIN="$SCRIPT_DIR/bin/statusline.sh"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+CONTEXT_USAGE="$HOME/.claude/state/context-usage.json"
+# Threshold for "recent enough to count as working". One week covers the
+# infrequent-Claude-user case without permanently masking a broken setup.
+STALE_AFTER_SEC=604800
 
 chmod +x "$STATUSLINE_BIN" 2>/dev/null || true
 mkdir -p "$HOME/.claude/state" 2>/dev/null && ok "ensured ~/.claude/state/"
 
-if [[ -f "$CLAUDE_SETTINGS" ]]; then
-    has_statusline="$(python3 -c "import json; d=json.load(open('$CLAUDE_SETTINGS')); print('yes' if 'statusLine' in d else 'no')" 2>/dev/null || echo 'err')"
-    if [[ "$has_statusline" == "yes" ]]; then
-        ok "Claude Code statusLine already configured — 'i' button will use existing script"
-        warn "  ensure your statusLine writes context-usage.json (see bin/statusline.sh for reference)"
-    elif [[ "$has_statusline" == "no" ]]; then
-        python3 - "$CLAUDE_SETTINGS" "$STATUSLINE_BIN" <<'PYEOF'
+# Read the configured statusLine command (or empty if none/malformed).
+read_statusline_cmd() {
+    python3 -c "
+import json, sys
+try:
+    d = json.load(open('$CLAUDE_SETTINGS'))
+    sl = d.get('statusLine')
+    if isinstance(sl, dict): print(sl.get('command', ''))
+    elif isinstance(sl, str): print(sl)
+except Exception:
+    sys.exit(2)
+" 2>/dev/null
+}
+
+# Replace ~/.claude/settings.json's statusLine with assist's, after backing up.
+write_assist_statusline() {
+    local backup="$CLAUDE_SETTINGS.bak.$(date +%s)"
+    cp "$CLAUDE_SETTINGS" "$backup"
+    python3 - "$CLAUDE_SETTINGS" "$STATUSLINE_BIN" <<'PYEOF'
 import json, sys
 path, cmd = sys.argv[1], sys.argv[2]
 with open(path) as f:
@@ -197,16 +213,78 @@ d['statusLine'] = {'type': 'command', 'command': cmd, 'padding': 0}
 with open(path, 'w') as f:
     json.dump(d, f, indent=2)
 PYEOF
-        ok "added statusLine to $CLAUDE_SETTINGS"
-        ok "  using $STATUSLINE_BIN"
-    else
-        warn "could not parse $CLAUDE_SETTINGS — add statusLine manually:"
-        warn "  \"statusLine\": {\"type\": \"command\", \"command\": \"$STATUSLINE_BIN\"}"
+    ok "  backed up old settings to: $backup"
+}
+
+# Returns 0 if context-usage.json is present and updated within STALE_AFTER_SEC.
+context_usage_is_fresh() {
+    [[ -f "$CONTEXT_USAGE" ]] || return 1
+    local mtime now age
+    mtime="$(stat -c%Y "$CONTEXT_USAGE" 2>/dev/null || stat -f%m "$CONTEXT_USAGE" 2>/dev/null || echo 0)"
+    now="$(date +%s)"
+    age=$(( now - mtime ))
+    [[ $age -lt $STALE_AFTER_SEC ]]
+}
+
+# Prompt for replacement. Honors ASSIST_REPLACE_STATUSLINE=1 for non-interactive
+# runs and defaults to "no" when there's no TTY.
+prompt_replace_statusline() {
+    if [[ "${ASSIST_REPLACE_STATUSLINE:-0}" == "1" ]]; then
+        echo "y"; return
     fi
-else
+    if [[ -t 0 ]]; then
+        local ans=""
+        read -r -p "    Replace it with Assist's bin/statusline.sh? [y/N] " ans
+        echo "${ans:-n}"
+    else
+        echo "n"
+    fi
+}
+
+if [[ ! -f "$CLAUDE_SETTINGS" ]]; then
     warn "~/.claude/settings.json not found — Claude Code may not be installed yet"
     warn "  after installing Claude Code, add statusLine to get 'i' button context data:"
     warn "  \"statusLine\": {\"type\": \"command\", \"command\": \"$STATUSLINE_BIN\"}"
+else
+    sl_cmd="$(read_statusline_cmd)" || sl_cmd="__parse_error__"
+
+    if [[ "$sl_cmd" == "__parse_error__" ]]; then
+        warn "could not parse $CLAUDE_SETTINGS — add statusLine manually:"
+        warn "  \"statusLine\": {\"type\": \"command\", \"command\": \"$STATUSLINE_BIN\"}"
+    elif [[ -z "$sl_cmd" ]]; then
+        # No statusLine — install ours.
+        write_assist_statusline
+        ok "added statusLine to $CLAUDE_SETTINGS"
+        ok "  using $STATUSLINE_BIN"
+    elif [[ "$sl_cmd" == "$STATUSLINE_BIN" ]]; then
+        ok "Claude Code statusLine already set to Assist's bin/statusline.sh"
+    else
+        # A custom statusLine is configured. The 'i' panel only works if SOMETHING
+        # is keeping ~/.claude/state/context-usage.json fresh — check that directly,
+        # which is robust to project-local overrides we can't see from here.
+        if context_usage_is_fresh; then
+            ok "Claude Code statusLine is configured and ~/.claude/state/context-usage.json is recent"
+            ok "  ($sl_cmd)"
+        else
+            warn "Claude Code statusLine is configured but ~/.claude/state/context-usage.json is missing or stale:"
+            warn "    command: $sl_cmd"
+            if [[ -f "$CONTEXT_USAGE" ]]; then
+                warn "    last updated: $(date -d "@$(stat -c%Y "$CONTEXT_USAGE")" '+%Y-%m-%d %H:%M' 2>/dev/null || stat -f%Sm "$CONTEXT_USAGE")"
+            else
+                warn "    file does not exist"
+            fi
+            warn "    The Assist 'i' button will be blank without it."
+            ans="$(prompt_replace_statusline)"
+            if [[ "$ans" == "y" || "$ans" == "Y" ]]; then
+                write_assist_statusline
+                ok "replaced statusLine with $STATUSLINE_BIN"
+                ok "  the 'i' panel will populate after Claude Code runs once"
+            else
+                warn "    skipped — set ASSIST_REPLACE_STATUSLINE=1 to auto-replace next time, or update manually:"
+                warn "    \"statusLine\": {\"type\": \"command\", \"command\": \"$STATUSLINE_BIN\"}"
+            fi
+        fi
+    fi
 fi
 
 # ---- [7/7] done ------------------------------------------------------------
