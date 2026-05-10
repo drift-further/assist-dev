@@ -1,7 +1,7 @@
 # History Drawer Rework — Design
 
 **Date:** 2026-05-10
-**Status:** Spec, not yet implemented
+**Status:** Implemented 2026-05-10
 
 ## Problem
 
