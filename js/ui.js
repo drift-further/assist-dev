@@ -49,16 +49,19 @@ function switchHistTab(tab) {
     _activeHistTab = tab;
     document.querySelectorAll('.drawer-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
     const clearBtn = document.getElementById('clear-btn');
-    if (clearBtn) clearBtn.style.display = tab === 'history' ? '' : 'none';
+    if (clearBtn) clearBtn.style.display = tab === 'favs' ? 'none' : '';
     updateHistTabCounts();
     renderLists();
 }
 
 function updateHistTabCounts() {
     const favTexts = new Set(_favorites.map(f => f.text));
-    const histCount = _history.filter(h => !favTexts.has(h.text)).length;
+    const nonFav = _history.filter(h => !favTexts.has(h.text));
+    const promptCount = nonFav.filter(h => classifyKind(h.text) === 'prompt').length;
+    const cmdCount = nonFav.filter(h => classifyKind(h.text) === 'command').length;
     document.querySelectorAll('.drawer-tab').forEach(t => {
-        if (t.dataset.tab === 'history') t.textContent = 'History' + (histCount ? ' ' + histCount : '');
+        if (t.dataset.tab === 'prompts') t.textContent = 'Prompts' + (promptCount ? ' ' + promptCount : '');
+        if (t.dataset.tab === 'commands') t.textContent = 'Cmds' + (cmdCount ? ' ' + cmdCount : '');
         if (t.dataset.tab === 'favs') t.textContent = 'Favs' + (_favorites.length ? ' ' + _favorites.length : '');
     });
 }
@@ -78,8 +81,9 @@ function renderLists() {
             html = '<div style="text-align:center;padding:30px;color:var(--text-muted);font-size:10px;letter-spacing:1px;">No favorites yet</div>';
         }
     } else {
+        const wantKind = _activeHistTab === 'commands' ? 'command' : 'prompt';
         const favTexts = new Set(_favorites.map(f => f.text));
-        const filtered = _history.filter(h => !favTexts.has(h.text));
+        const filtered = _history.filter(h => !favTexts.has(h.text) && classifyKind(h.text) === wantKind);
 
         if (filtered.length > 0) {
             for (const h of filtered) {
@@ -89,7 +93,8 @@ function renderLists() {
                 </div>`;
             }
         } else {
-            html = '<div style="text-align:center;padding:30px;color:var(--text-muted);font-size:10px;letter-spacing:1px;">No history yet</div>';
+            const emptyMsg = wantKind === 'command' ? 'No commands yet' : 'No prompts yet';
+            html = `<div style="text-align:center;padding:30px;color:var(--text-muted);font-size:10px;letter-spacing:1px;">${emptyMsg}</div>`;
         }
     }
 
