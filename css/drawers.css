@@ -144,6 +144,54 @@
 .drawer-tab:last-child { border-radius: 0 4px 4px 0; border-left: none; }
 .drawer-tab.active { color: var(--green); border-color: rgba(0, 255, 65, 0.4); background: rgba(0, 255, 65, 0.08); }
 .drawer-tab:active { transform: scale(0.95); }
+
+.filter-row {
+    position: relative;
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(0, 255, 65, 0.15);
+}
+
+.hist-filter {
+    width: 100%;
+    box-sizing: border-box;
+    background: rgba(0, 0, 0, 0.4);
+    color: var(--text);
+    border: 1px solid rgba(0, 255, 65, 0.25);
+    border-radius: 4px;
+    padding: 8px 28px 8px 10px;
+    font: 12px 'JetBrains Mono', 'Fira Code', monospace;
+    outline: none;
+}
+
+.hist-filter:focus {
+    border-color: var(--green);
+    background: rgba(0, 255, 65, 0.05);
+}
+
+.hist-filter::placeholder {
+    color: var(--text-muted);
+    opacity: 0.6;
+}
+
+.hist-filter-clear {
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 16px;
+    cursor: pointer;
+    display: none;
+    padding: 4px 6px;
+    line-height: 1;
+}
+
+.hist-filter-clear:active {
+    color: var(--green);
+}
+
 .drawer-bottom .list-area { flex: 1; overflow-y: auto; }
 
 /* Inline keys panel (toggle show/hide like git panel) */

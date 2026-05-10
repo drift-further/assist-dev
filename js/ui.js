@@ -68,33 +68,42 @@ function updateHistTabCounts() {
 
 function renderLists() {
     let html = '';
+    const filterLower = _filterText.toLowerCase();
+    const matchesFilter = (text) => !filterLower || text.toLowerCase().includes(filterLower);
 
     if (_activeHistTab === 'favs') {
-        if (_favorites.length > 0) {
-            for (const f of _favorites) {
+        const items = _favorites.filter(f => matchesFilter(f.text));
+        if (items.length > 0) {
+            for (const f of items) {
                 html += `<div class="list-item" onclick="loadText(this)" data-text="${escHtml(f.text)}">
                     <span class="list-item-text">${escHtml(f.display || f.text)}</span>
                     <button class="list-item-star fav" onclick="toggleFavorite('${escHtml(f.text).replace(/'/g, "\\'")}', event)">&#9733;</button>
                 </div>`;
             }
         } else {
-            html = '<div style="text-align:center;padding:30px;color:var(--text-muted);font-size:10px;letter-spacing:1px;">No favorites yet</div>';
+            const msg = _filterText ? `No matches for "${escHtml(_filterText)}"` : 'No favorites yet';
+            html = `<div style="text-align:center;padding:30px;color:var(--text-muted);font-size:10px;letter-spacing:1px;">${msg}</div>`;
         }
     } else {
         const wantKind = _activeHistTab === 'commands' ? 'command' : 'prompt';
         const favTexts = new Set(_favorites.map(f => f.text));
-        const filtered = _history.filter(h => !favTexts.has(h.text) && classifyKind(h.text) === wantKind);
+        const items = _history.filter(h =>
+            !favTexts.has(h.text) &&
+            classifyKind(h.text) === wantKind &&
+            matchesFilter(h.text)
+        );
 
-        if (filtered.length > 0) {
-            for (const h of filtered) {
+        if (items.length > 0) {
+            for (const h of items) {
                 html += `<div class="list-item" onclick="loadText(this)" data-text="${escHtml(h.text)}">
                     <span class="list-item-text">${escHtml(h.display || h.text)}</span>
                     <button class="list-item-star unfav" onclick="toggleFavorite('${escHtml(h.text).replace(/'/g, "\\'")}', event)">&#9734;</button>
                 </div>`;
             }
         } else {
-            const emptyMsg = wantKind === 'command' ? 'No commands yet' : 'No prompts yet';
-            html = `<div style="text-align:center;padding:30px;color:var(--text-muted);font-size:10px;letter-spacing:1px;">${emptyMsg}</div>`;
+            const emptyBucketMsg = wantKind === 'command' ? 'No commands yet' : 'No prompts yet';
+            const msg = _filterText ? `No matches for "${escHtml(_filterText)}"` : emptyBucketMsg;
+            html = `<div style="text-align:center;padding:30px;color:var(--text-muted);font-size:10px;letter-spacing:1px;">${msg}</div>`;
         }
     }
 
@@ -106,6 +115,24 @@ function loadText(el) {
     closeBottomDrawer();
     input.focus();
 }
+
+function clearHistFilter() {
+    _filterText = '';
+    const el = document.getElementById('hist-filter');
+    if (el) el.value = '';
+    document.getElementById('hist-filter-clear').style.display = 'none';
+    renderLists();
+}
+
+(function attachHistFilter() {
+    const el = document.getElementById('hist-filter');
+    if (!el) return;
+    el.addEventListener('input', () => {
+        _filterText = el.value;
+        document.getElementById('hist-filter-clear').style.display = el.value ? 'block' : 'none';
+        renderLists();
+    });
+})();
 
 // ================================================================
 // Drawer controls (left: more keys, right: keys, bottom: history)
@@ -153,6 +180,7 @@ function closeBottomDrawer() {
     if (!document.getElementById('drawer-left').classList.contains('open')) {
         document.getElementById('drawer-overlay').classList.remove('visible');
     }
+    if (typeof clearHistFilter === 'function') clearHistFilter();
 }
 
 function toggleKeysPanel() {

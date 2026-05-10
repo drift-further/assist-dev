@@ -83,6 +83,10 @@
             </div>
             <button class="drawer-close" onclick="closeBottomDrawer()">&times;</button>
         </div>
+        <div class="filter-row">
+            <input type="text" id="hist-filter" class="hist-filter" placeholder="Filter…" autocomplete="off" autocapitalize="off" spellcheck="false">
+            <button class="hist-filter-clear" id="hist-filter-clear" onclick="clearHistFilter()" aria-label="Clear filter">&times;</button>
+        </div>
         <div class="list-area" id="list-area"></div>
         <button class="clear-btn" id="clear-btn" onclick="clearHistory()">Clear History</button>
     </div>
