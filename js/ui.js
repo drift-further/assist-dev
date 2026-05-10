@@ -66,6 +66,21 @@ function updateHistTabCounts() {
     });
 }
 
+function highlightMatch(text, query) {
+    const escaped = escHtml(text);
+    if (!query) return escaped;
+    const queryLower = query.toLowerCase();
+    const textLower = text.toLowerCase();
+    const idx = textLower.indexOf(queryLower);
+    if (idx === -1) return escaped;
+    // Recompute indices on the escaped string by walking through plain text positions.
+    // Simpler: split plain text, escape each segment, join with <mark>.
+    const before = text.slice(0, idx);
+    const match = text.slice(idx, idx + query.length);
+    const after = text.slice(idx + query.length);
+    return escHtml(before) + '<mark>' + escHtml(match) + '</mark>' + escHtml(after);
+}
+
 function renderLists() {
     let html = '';
     const filterLower = _filterText.toLowerCase();
@@ -75,8 +90,9 @@ function renderLists() {
         const items = _favorites.filter(f => matchesFilter(f.text));
         if (items.length > 0) {
             for (const f of items) {
+                const display = f.display || f.text;
                 html += `<div class="list-item" onclick="loadText(this)" data-text="${escHtml(f.text)}">
-                    <span class="list-item-text">${escHtml(f.display || f.text)}</span>
+                    <span class="list-item-text">${highlightMatch(display, _filterText)}</span>
                     <button class="list-item-star fav" onclick="toggleFavorite('${escHtml(f.text).replace(/'/g, "\\'")}', event)">&#9733;</button>
                 </div>`;
             }
@@ -95,8 +111,9 @@ function renderLists() {
 
         if (items.length > 0) {
             for (const h of items) {
+                const display = h.display || h.text;
                 html += `<div class="list-item" onclick="loadText(this)" data-text="${escHtml(h.text)}">
-                    <span class="list-item-text">${escHtml(h.display || h.text)}</span>
+                    <span class="list-item-text">${highlightMatch(display, _filterText)}</span>
                     <button class="list-item-star unfav" onclick="toggleFavorite('${escHtml(h.text).replace(/'/g, "\\'")}', event)">&#9734;</button>
                 </div>`;
             }
