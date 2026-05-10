@@ -27,7 +27,23 @@ function isFav(text) {
     return _favorites.some(f => f.text === text);
 }
 
-let _activeHistTab = 'history';
+const SHELL_CMDS = new Set([
+    'cd', 'ls', 'pwd', 'echo', 'cat', 'grep', 'mkdir', 'rm', 'cp', 'mv',
+    'git', 'make', 'npm', 'python', 'pip', 'docker', 'tmux', 'kill',
+    'clear', 'exit', 'claude', 'bash', 'sudo', 'chmod', 'chown',
+    'find', 'awk', 'sed', 'head', 'tail', 'wc', 'which', 'ps', 'df', 'du'
+]);
+
+function classifyKind(text) {
+    if (!text) return 'prompt';
+    const trimmed = text.trim();
+    const firstWord = trimmed.split(/\s+/)[0];
+    if (SHELL_CMDS.has(firstWord)) return 'command';
+    if (trimmed.length < 5 && !/\s/.test(trimmed)) return 'command';
+    return 'prompt';
+}
+
+let _activeHistTab = 'prompts';
 
 function switchHistTab(tab) {
     _activeHistTab = tab;

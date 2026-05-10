@@ -39,6 +39,7 @@ const routeAttach = document.getElementById('route-attach');
 let lastAction = null;
 let _history = [];
 let _favorites = [];
+let _filterText = '';
 
 // Terminal state
 let _termOpen = true;           // always open in drawer layout
