@@ -115,13 +115,36 @@ def _extract_summary(tail, prompt_type):
     return None
 
 
-def _prompt_hash(tail):
-    """Hash of last 500 chars to detect same prompt.
+# Patterns that mark the end of an interactive prompt block. Whatever sits
+# *below* one of these in the captured pane is Claude Code's status bar
+# (Vibing… timer, token counts, tips) which animates every second — hashing
+# it would reset the countdown each tick and the prompt would never fire.
+_PROMPT_TERMINATOR_RE = re.compile(
+    r"(?:Enter to select|Esc to cancel)\s*[·•]"
+    r"|\(y/n(?:/a)?\)"
+    r"|\[Y/n(?:/a)?\]"
+    r"|\[y/N\]"
+    r"|\(yes/no\)",
+    re.IGNORECASE,
+)
 
-    The prompt itself (question + options + footer) is ~180 chars, so 500
-    includes enough surrounding context to distinguish consecutive prompts
-    for the same file (different diff content above the prompt).
+
+def _prompt_hash(tail):
+    """Hash a stable region of the prompt to detect the same prompt across ticks.
+
+    Hashes ~500 chars ending at the prompt's terminator line (the footer or
+    y/n marker), so the animated status bar below the prompt doesn't change
+    the hash every second. Falls back to the last 500 chars when no
+    terminator is found.
     """
+    matches = list(_PROMPT_TERMINATOR_RE.finditer(tail))
+    if matches:
+        last = matches[-1]
+        end = tail.find("\n", last.end())
+        if end < 0:
+            end = len(tail)
+        start = max(0, end - 500)
+        return hash(tail[start:end])
     return hash(tail[-500:])
 
 
