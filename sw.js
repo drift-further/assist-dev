@@ -1,5 +1,5 @@
 // sw.js — Service worker for Assist (stale-while-revalidate for static assets)
-const VERSION = 'assist-v2-002';
+const VERSION = 'assist-v2-003';
 const STATIC_CACHE = 'assist-static-' + VERSION;
 const STATIC_URLS = [
     '/',

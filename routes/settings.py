@@ -69,6 +69,33 @@ def patch_project_settings_api(project):
     if not data:
         return jsonify({"ok": False, "error": "No data"}), 400
     updated = state.patch_project_settings(project, data)
+    # Sync auto-yes runtime state when the patch touches it. Otherwise toggling
+    # "Auto-enable: ON" in the per-project panel only persists to disk; the
+    # scanner doesn't pick it up until the user next switches tabs or the
+    # server restarts.
+    autoyes_patch = data.get("autoyes")
+    if isinstance(autoyes_patch, dict):
+        with state.autoyes_lock:
+            if "enabled_default" in autoyes_patch:
+                enabled = bool(autoyes_patch["enabled_default"])
+                state.autoyes_sessions[project] = enabled
+                if not enabled:
+                    stale = [
+                        t
+                        for t in state.autoyes_countdowns
+                        if t.startswith(project + ":")
+                    ]
+                    for t in stale:
+                        state.autoyes_countdowns.pop(t, None)
+                        state.autoyes_answered.pop(t, None)
+                    state.autoyes_delays.pop(project, None)
+            if "delay" in autoyes_patch:
+                try:
+                    state.autoyes_delays[project] = max(
+                        1, min(30, int(autoyes_patch["delay"]))
+                    )
+                except (ValueError, TypeError):
+                    pass
     return jsonify({"ok": True, "project": project, "settings": updated})
 
 

@@ -246,35 +246,36 @@ const SMART_PATTERNS = [
         desc: 'Select option',
         match: (tail) => {
             const lines = tail.split('\n');
-            // Footer must be near the bottom (last 6 lines) — if it's higher, the prompt is resolved
-            const bottom = lines.slice(-6);
-            const hasFooter = bottom.some(l => /(?:Enter to select|Esc to cancel)\s*[·•]/.test(l));
-            if (!hasFooter) {
-                // Fallback: options near the bottom (simple numbered prompts without footer)
-                const last = lines.slice(-8);
-                const optPattern = /^\s*(?:[^\d\s]\s*)?(\d+)[\.\)]\s+\S/;
-                let count = 0;
-                let lastOptIdx = -1;
-                for (let i = 0; i < last.length; i++) {
-                    if (optPattern.test(last[i])) { count++; lastOptIdx = i; }
-                }
-                return count >= 2 && lastOptIdx >= last.length - 3;
-            }
-            // Find region: between last ──── separator and footer
+            // Find the LAST footer in tail. Claude Code renders its TodoWrite
+            // status panel BELOW the prompt footer when tasks are active, so
+            // the footer is often pushed 10-20 lines up from the bottom.
+            // Bound depth from bottom (~30 lines) to skip stale footers in
+            // scrollback. Mirrors routes/autoyes.py:_detect_autoyes_prompt.
+            const FOOTER_DEPTH_MAX = 30;
             let footerIdx = -1;
             for (let i = lines.length - 1; i >= 0; i--) {
                 if (/(?:Enter to select|Esc to cancel)\s*[·•]/.test(lines[i])) { footerIdx = i; break; }
             }
-            let sepIdx = 0;
-            for (let i = footerIdx - 1; i >= 0; i--) {
-                if (/^[\s]*─{10,}/.test(lines[i])) { sepIdx = i + 1; break; }
-            }
             const optPattern = /^\s*(?:[^\d\s]\s*)?(\d+)[\.\)]\s+\S/;
-            let count = 0;
-            for (let i = sepIdx; i < footerIdx; i++) {
-                if (optPattern.test(lines[i])) count++;
+            if (footerIdx >= 0 && (lines.length - 1 - footerIdx) <= FOOTER_DEPTH_MAX) {
+                let sepIdx = Math.max(0, footerIdx - 10);
+                for (let i = footerIdx - 1; i >= sepIdx; i--) {
+                    if (/^[\s]*─{10,}/.test(lines[i])) { sepIdx = i + 1; break; }
+                }
+                let count = 0;
+                for (let i = sepIdx; i < footerIdx; i++) {
+                    if (optPattern.test(lines[i])) count++;
+                }
+                return count >= 2;
             }
-            return count >= 2;
+            // Fallback: simple numbered prompts without footer
+            const last = lines.slice(-8);
+            let count = 0;
+            let lastOptIdx = -1;
+            for (let i = 0; i < last.length; i++) {
+                if (optPattern.test(last[i])) { count++; lastOptIdx = i; }
+            }
+            return count >= 2 && lastOptIdx >= last.length - 3;
         },
         getActions: (tail) => {
             const actions = [];

@@ -500,6 +500,11 @@ async function _saveProjectSetting(section, key, value) {
         if (data.ok) {
             _projectSettings = data.settings;
             showFlash('ok', 'Saved');
+            // Server now mirrors autoyes runtime state — refresh local cache
+            // so the +menu / smart-action ⚡ toggle reflects it immediately.
+            if (section === 'autoyes' && typeof syncAutoYesState === 'function') {
+                syncAutoYesState().then(() => updateAutoYesUI(_projectSettingsName));
+            }
         }
     } catch (e) {
         showFlash('error', 'Save failed');
