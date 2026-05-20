@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -119,7 +120,15 @@ def automate_start():
     if not state.CLAUDE_MOUNT_SCRIPT or not state.CLAUDE_MOUNT_SCRIPT.exists():
         with state.automate_lock:
             state.automate["active"] = False
-        return jsonify({"ok": False, "error": "ASSIST_MOUNT_SCRIPT not configured — set it in .env"}), 400
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": "ASSIST_MOUNT_SCRIPT not configured — set it in .env",
+                }
+            ),
+            400,
+        )
 
     if not state.tmux_target:
         with state.automate_lock:
@@ -426,16 +435,27 @@ def automate_stop():
 
 
 def _automate_cleanup(container, session):
-    """Kill container and tmux session."""
+    """Kill container and tmux session. Best-effort — never raises."""
     if container:
-        subprocess.run(["docker", "kill", container], capture_output=True, timeout=10)
-        subprocess.run(
-            ["docker", "rm", "-f", container], capture_output=True, timeout=10
-        )
+        try:
+            subprocess.run(
+                ["docker", "kill", container], capture_output=True, timeout=10
+            )
+        except Exception as e:
+            print(f"[automate] docker kill {container} failed: {e}")
+        try:
+            subprocess.run(
+                ["docker", "rm", "-f", container], capture_output=True, timeout=10
+            )
+        except Exception as e:
+            print(f"[automate] docker rm {container} failed: {e}")
     if session:
-        subprocess.run(
-            ["tmux", "kill-session", "-t", session], capture_output=True, timeout=5
-        )
+        try:
+            subprocess.run(
+                ["tmux", "kill-session", "-t", session], capture_output=True, timeout=5
+            )
+        except Exception as e:
+            print(f"[automate] tmux kill-session {session} failed: {e}")
 
 
 def _automate_soft_relaunch():
@@ -597,166 +617,199 @@ def _automate_monitor():
         if state.automate_stop_event.is_set():
             return
 
-        with state.automate_lock:
-            if not state.automate["active"]:
+        try:
+            result = _automate_monitor_iteration()
+            if result == "stop":
                 return
-            session = state.automate["session"]
-            container = state.automate["container"]
-            timeout_sec = state.automate["timeout_minutes"] * 60
-            last_hash = state.automate["last_output_hash"]
-            project_name = state.automate["project"]
+        except SystemExit:
+            raise
+        except Exception as e:
+            print(f"[automate] monitor iteration error: {e}")
+            traceback.print_exc()
 
-        proj = (
-            state.get_project_settings(project_name)
-            if project_name
-            else copy.deepcopy(state.DEFAULT_PROJECT_SETTINGS)
+
+def _automate_monitor_iteration():
+    """Single pass of the monitor loop. Wrapped by _automate_monitor for fault tolerance."""
+    with state.automate_lock:
+        if not state.automate["active"]:
+            return "stop"
+        session = state.automate["session"]
+        container = state.automate["container"]
+        timeout_sec = state.automate["timeout_minutes"] * 60
+        last_hash = state.automate["last_output_hash"]
+        project_name = state.automate["project"]
+
+    proj = (
+        state.get_project_settings(project_name)
+        if project_name
+        else copy.deepcopy(state.DEFAULT_PROJECT_SETTINGS)
+    )
+
+    proc = None
+    try:
+        proc = subprocess.run(
+            [
+                "tmux",
+                "capture-pane",
+                "-p",
+                "-t",
+                f"{session}:0.0",
+                "-S",
+                "-50",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
-
-        proc = None
-        try:
-            proc = subprocess.run(
-                [
-                    "tmux",
-                    "capture-pane",
-                    "-p",
-                    "-t",
-                    f"{session}:0.0",
-                    "-S",
-                    "-50",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if proc.returncode == 0:
-                content_hash = hashlib.md5(proc.stdout.encode()).hexdigest()
-                if content_hash != last_hash:
-                    with state.automate_lock:
-                        state.automate["last_output_at"] = time.time()
-                        state.automate["last_output_hash"] = content_hash
-        except Exception:
-            pass
-
-        try:
-            if (
-                proc is not None
-                and proc.returncode == 0
-                and proj["triggers"]["trust_auto_approve"]
-            ):
-                out = proc.stdout
-                if "Yes, I trust this folder" in out:
-                    tmux_send_text(f"{session}:0.0", "1")
-                    tmux_send_keys(f"{session}:0.0", "Enter")
-                elif "trust the files" in out or "Yes, proceed" in out:
-                    tmux_send_keys(f"{session}:0.0", "Enter")
-        except Exception:
-            pass
-
-        try:
-            if proc is not None and proc.returncode == 0:
-                done_signals = proj["triggers"]["done_signals"]
+        if proc.returncode == 0:
+            content_hash = hashlib.md5(proc.stdout.encode()).hexdigest()
+            if content_hash != last_hash:
                 with state.automate_lock:
-                    if any(sig in proc.stdout for sig in done_signals):
-                        if state.automate["done_signal_at"] is None:
-                            state.automate["done_signal_at"] = time.time()
-                            print(f"[automate] Done signal detected in {session}")
-                    else:
-                        state.automate["done_signal_at"] = None
-        except Exception:
-            pass
+                    state.automate["last_output_at"] = time.time()
+                    state.automate["last_output_hash"] = content_hash
+    except Exception:
+        pass
 
-        container_running = False
-        try:
-            proc = subprocess.run(
-                [
-                    "docker",
-                    "inspect",
-                    "--format",
-                    "{{.State.Running}}",
-                    container,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            container_running = proc.stdout.strip().lower() == "true"
-        except Exception:
-            pass
+    try:
+        if (
+            proc is not None
+            and proc.returncode == 0
+            and proj["triggers"]["trust_auto_approve"]
+        ):
+            out = proc.stdout
+            if "Yes, I trust this folder" in out:
+                tmux_send_text(f"{session}:0.0", "1")
+                tmux_send_keys(f"{session}:0.0", "Enter")
+            elif "trust the files" in out or "Yes, proceed" in out:
+                tmux_send_keys(f"{session}:0.0", "Enter")
+    except Exception:
+        pass
 
-        now = time.time()
-        relaunch_type = None
-        should_stop = False
-
-        with state.automate_lock:
-            if not state.automate["active"]:
-                return
-
-            if not container_running and state.automate["status"] == "running":
-                if now - state.automate["started_at"] > 15:
-                    relaunch_type = "hard"
+    try:
+        if proc is not None and proc.returncode == 0:
+            done_signals = proj["triggers"]["done_signals"]
+            with state.automate_lock:
+                if any(sig in proc.stdout for sig in done_signals):
+                    if state.automate["done_signal_at"] is None:
+                        state.automate["done_signal_at"] = time.time()
+                        print(f"[automate] Done signal detected in {session}")
                 else:
-                    continue
-            elif (
-                state.automate["done_signal_at"] is not None
-                and now - state.automate["done_signal_at"]
-                > proj["triggers"]["done_idle_sec"]
-                and state.automate["status"] == "running"
-            ):
-                print(
-                    f"[automate] Done signal + {proj['triggers']['done_idle_sec']}s idle — soft relaunch"
-                )
-                state.automate["done_signal_at"] = None
-                relaunch_type = "soft"
-            elif (
-                now - state.automate["last_output_at"] > timeout_sec
-                and state.automate["status"] == "running"
-            ):
-                relaunch_type = "soft"
+                    state.automate["done_signal_at"] = None
+    except Exception:
+        pass
+
+    container_running = False
+    container_status_known = False
+    try:
+        proc = subprocess.run(
+            [
+                "docker",
+                "inspect",
+                "--format",
+                "{{.State.Running}}",
+                container,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if proc.returncode == 0:
+            container_running = proc.stdout.strip().lower() == "true"
+            container_status_known = True
+        elif (
+            "No such" in (proc.stderr or "") or "no such" in (proc.stdout or "").lower()
+        ):
+            container_status_known = True  # confirmed gone
+    except Exception:
+        pass  # docker daemon unresponsive — leave status unknown, retry next cycle
+
+    now = time.time()
+    relaunch_type = None
+    should_stop = False
+
+    with state.automate_lock:
+        if not state.automate["active"]:
+            return "stop"
+
+        if (
+            container_status_known
+            and not container_running
+            and state.automate["status"] == "running"
+        ):
+            if now - state.automate["started_at"] > 15:
+                relaunch_type = "hard"
             else:
-                continue
+                return None
+        elif (
+            state.automate["done_signal_at"] is not None
+            and now - state.automate["done_signal_at"]
+            > proj["triggers"]["done_idle_sec"]
+            and state.automate["status"] == "running"
+        ):
+            print(
+                f"[automate] Done signal + {proj['triggers']['done_idle_sec']}s idle — soft relaunch"
+            )
+            state.automate["done_signal_at"] = None
+            relaunch_type = "soft"
+        elif (
+            now - state.automate["last_output_at"] > timeout_sec
+            and state.automate["status"] == "running"
+        ):
+            relaunch_type = "soft"
+        else:
+            return None
 
-        if relaunch_type is None:
-            continue
+    if relaunch_type is None:
+        return None
 
-        with state.automate_lock:
-            continuous = state.automate["continuous"]
-            max_iter = state.automate["max_iterations"]
-            completed = state.automate["iterations_completed"]
-            stop_after = state.automate.get("stop_after", "")
-            state.automate["iterations_completed"] = completed + 1
+    with state.automate_lock:
+        continuous = state.automate["continuous"]
+        max_iter = state.automate["max_iterations"]
+        completed = state.automate["iterations_completed"]
+        stop_after = state.automate.get("stop_after", "")
+        state.automate["iterations_completed"] = completed + 1
 
-            if not continuous:
-                if max_iter <= 0 or (completed + 1) >= max_iter:
-                    should_stop = True
-
-            # Check time-of-day cutoff before relaunching
-            if not should_stop and _past_stop_time(stop_after, state.automate["started_at"]):
+        if not continuous:
+            if max_iter <= 0 or (completed + 1) >= max_iter:
                 should_stop = True
-                print(
-                    f"[automate] Past stop_after time ({stop_after}) — stopping"
-                )
 
-            if should_stop:
-                print(
-                    f"[automate] Iteration {completed + 1}/{max_iter or 1} complete — stopping"
-                )
-                _automate_save()
+        # Check time-of-day cutoff before relaunching
+        if not should_stop and _past_stop_time(
+            stop_after, state.automate["started_at"]
+        ):
+            should_stop = True
+            print(f"[automate] Past stop_after time ({stop_after}) — stopping")
 
         if should_stop:
-            with state.automate_lock:
-                container = state.automate["container"]
-                session = state.automate["session"]
-            _automate_cleanup(container, session)
-            with state.automate_lock:
-                state.automate["active"] = False
-                state.automate["status"] = "completed"
-                _automate_save()
-            return
-
-        with state.automate_lock:
+            print(
+                f"[automate] Iteration {completed + 1}/{max_iter or 1} complete — stopping"
+            )
             _automate_save()
 
-        if relaunch_type == "soft":
+    if should_stop:
+        with state.automate_lock:
+            container = state.automate["container"]
+            session = state.automate["session"]
+        _automate_cleanup(container, session)
+        with state.automate_lock:
+            state.automate["active"] = False
+            state.automate["status"] = "completed"
+            _automate_save()
+        return "stop"
+
+    with state.automate_lock:
+        _automate_save()
+
+    if relaunch_type == "soft":
+        try:
             _automate_soft_relaunch()
-        else:
+        except Exception as e:
+            print(f"[automate] soft relaunch failed: {e}")
+            traceback.print_exc()
+    else:
+        try:
             _automate_relaunch()
+        except Exception as e:
+            print(f"[automate] hard relaunch failed: {e}")
+            traceback.print_exc()
+    return None

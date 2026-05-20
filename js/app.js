@@ -260,6 +260,8 @@ function _applyStatesData(states) {
             tab.dataset.idleSeconds = Math.floor(info.idle_seconds || 0);
         }
     }
+    // Re-evaluate stale group now that idleSeconds is populated.
+    if (typeof _applyStaleGroup === 'function') _applyStaleGroup();
 }
 
 function _applyScanData(scanPanes) {

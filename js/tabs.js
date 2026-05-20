@@ -567,7 +567,14 @@ function _applyStaleGroup() {
         return ai - bi;  // smaller idle = more recent
     });
 
-    // Move stale tabs out of strip into sheet body
+    // Hide/show tabs via class — never .remove() — so this function stays
+    // idempotent across calls (poll-driven and activity-decay-driven). If we
+    // removed stale tabs from the DOM, a later between-poll call (which only
+    // inspects tabs currently in the strip) would lose track of them when it
+    // rebuilds the sheet, causing stale rows to flicker out.
+    const staleSet = new Set(staleTabs);
+    allTabs.forEach(t => t.classList.toggle('stale-tucked', staleSet.has(t)));
+
     sheetBody.innerHTML = '';
     staleTabs.forEach(tab => {
         const target = tab.dataset.target || '';
@@ -585,7 +592,6 @@ function _applyStaleGroup() {
 
         const name = document.createElement('span');
         name.className = 'row-name';
-        // Reuse the tab's label text (first text node), strip badges/idle-time spans.
         const label = tab.cloneNode(true);
         Array.from(label.querySelectorAll('.tab-badge, .tab-idle-time, .tab-dot')).forEach(n => n.remove());
         name.textContent = label.textContent.trim() || session;
@@ -601,9 +607,6 @@ function _applyStaleGroup() {
 
         row.onclick = () => _onStaleRowTap(target);
         sheetBody.appendChild(row);
-
-        // Remove the tab from the strip
-        tab.remove();
     });
 
     if (sheetCount) sheetCount.textContent = String(staleTabs.length);
@@ -643,7 +646,9 @@ const _origApplySessionsData = typeof _applySessionsData === 'function' ? _apply
 // Hook into tab rendering — called after each poll updates tabs
 function _postTabRender() {
     _reorderTabsDom();
-    _applyStaleGroup();
+    // Stale group is applied later, after _applyStatesData populates
+    // dataset.idleSeconds — calling it here would always see idle=0 and
+    // bounce stale tabs back into the strip on every poll.
     // Restore reorder mode if it was active (poll rebuilds DOM every 5s)
     if (_reorderModeTab) {
         const target = _reorderModeTab.dataset.target;

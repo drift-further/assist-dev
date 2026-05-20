@@ -172,6 +172,9 @@
 /* Idle: no dot */
 .session-tab.idle .tab-dot { display: none; }
 
+/* Stale-tucked: hidden from strip, represented by a row in the bottom sheet. */
+.session-tab.stale-tucked { display: none; }
+
 /* --- Idle fade: graduated visual warning for sessions sitting idle --- */
 
 /* Time badge: positioned above tab center */

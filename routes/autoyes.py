@@ -44,11 +44,23 @@ def _detect_autoyes_prompt(tail):
     if _CONFIRM_YN_RE.search(bottom):
         if not re.search(r"\(y/n/a\)|\[Y/n/a\]", bottom, re.IGNORECASE):
             return ("confirm-yn", "y", False, _extract_summary(tail, "confirm"))
-    has_footer = _NUMBERED_FOOTER_RE.search(bottom)
-    if has_footer and _NUMBERED_YES_RE.search(tail):
-        return ("numbered-yes", "", True, _extract_summary(tail, "numbered"))
-    if has_footer and _SELECTED_YES_RE.search(tail):
-        return ("selected-yes", "", True, _extract_summary(tail, "numbered"))
+    # Numbered prompts: Claude Code renders its TodoWrite/status panel BELOW
+    # the "Esc to cancel · …" footer when tasks are active, pushing the
+    # footer out of `bottom`. Anchor on the LAST footer in the tail and
+    # require the Yes option just above it. Bound the footer's distance from
+    # the bottom (depth*4) to ignore stale footers buried in scrollback.
+    last_footer = None
+    for m in _NUMBERED_FOOTER_RE.finditer(tail):
+        last_footer = m
+    if last_footer:
+        footer_line = tail.count("\n", 0, last_footer.start())
+        if (len(lines) - 1 - footer_line) <= depth * 4:
+            region_start = max(0, footer_line - 6)
+            region = "\n".join(lines[region_start:footer_line + 1])
+            if _NUMBERED_YES_RE.search(region):
+                return ("numbered-yes", "", True, _extract_summary(tail, "numbered"))
+            if _SELECTED_YES_RE.search(region):
+                return ("selected-yes", "", True, _extract_summary(tail, "numbered"))
     return None
 
 

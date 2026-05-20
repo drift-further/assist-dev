@@ -37,3 +37,8 @@ sudo_pw.dat
 .playwright-mcp/
 sessions/
 docs/superpowers/
+# CocoIndex Code (ccc)
+/.cocoindex_code/
+
+# Session scratch (not real active context)
+docs/ACTIVE_CONTEXT.md
