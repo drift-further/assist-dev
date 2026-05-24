@@ -7,7 +7,7 @@ import threading
 import time
 
 import shared.state as state
-from shared.tmux import capture_pane, set_ws_send_timeout
+from shared.tmux import _has_wrapper_descendant, capture_pane, set_ws_send_timeout
 
 # The sock route is registered via register_streaming() called from serve.py.
 # We cannot use a Blueprint for @sock.route — flask-sock requires the app-level Sock instance.
@@ -67,7 +67,7 @@ def _force_redraw(target):
     try:
         info = subprocess.run(
             ["tmux", "display-message", "-t", target, "-p",
-             "#{pane_width}\t#{pane_height}\t#{session_attached}"],
+             "#{pane_width}\t#{pane_height}\t#{session_attached}\t#{pane_pid}"],
             capture_output=True, text=True, timeout=2,
         )
         if info.returncode != 0:
@@ -83,6 +83,12 @@ def _force_redraw(target):
             return
         if attached > 0:
             return
+        pane_pid = None
+        if len(parts) >= 4:
+            try:
+                pane_pid = int(parts[3])
+            except ValueError:
+                pass
 
         target_w = max(w, _MIN_REDRAW_COLS)
         target_h = max(h, _MIN_REDRAW_ROWS)
@@ -90,36 +96,51 @@ def _force_redraw(target):
         with state._activity_lock:
             saved_activity = state.pane_last_activity.get(target)
 
-        opt = subprocess.run(
-            ["tmux", "show-options", "-t", target, "-w", "-v", "window-size"],
-            capture_output=True, text=True, timeout=2,
-        )
-        old_window_size = (
-            opt.stdout.strip()
-            if opt.returncode == 0 and opt.stdout.strip()
-            else None
-        )
+        is_wrapper = _has_wrapper_descendant(target, pane_pid)
 
-        subprocess.run(
-            ["tmux", "resize-window", "-t", target, "-x", str(target_w), "-y", str(target_h - 1)],
-            capture_output=True, timeout=2,
-        )
-        subprocess.run(
-            ["tmux", "resize-window", "-t", target, "-x", str(target_w), "-y", str(target_h)],
-            capture_output=True, timeout=2,
-        )
-
-        if old_window_size:
+        if is_wrapper:
+            # Wrapper TUI (e.g. claude inside docker via claude-mount.sh):
+            # the in-container TUI's foreground pty is several hops from the
+            # host pane, so SIGWINCH-via-resize can't reach it. Ctrl+L does,
+            # because tmux send-keys goes through the host pty -> docker
+            # stdin -> container pty -> claude, and claude implements C-l as
+            # full clear-and-redraw. This wipes the dirty cells without
+            # losing any in-flight typed input (claude re-renders it).
             subprocess.run(
-                ["tmux", "set-option", "-t", target, "-w",
-                 "window-size", old_window_size],
+                ["tmux", "send-keys", "-t", target, "C-l"],
                 capture_output=True, timeout=2,
             )
         else:
+            opt = subprocess.run(
+                ["tmux", "show-options", "-t", target, "-w", "-v", "window-size"],
+                capture_output=True, text=True, timeout=2,
+            )
+            old_window_size = (
+                opt.stdout.strip()
+                if opt.returncode == 0 and opt.stdout.strip()
+                else None
+            )
+
             subprocess.run(
-                ["tmux", "set-option", "-t", target, "-w", "-u", "window-size"],
+                ["tmux", "resize-window", "-t", target, "-x", str(target_w), "-y", str(target_h - 1)],
                 capture_output=True, timeout=2,
             )
+            subprocess.run(
+                ["tmux", "resize-window", "-t", target, "-x", str(target_w), "-y", str(target_h)],
+                capture_output=True, timeout=2,
+            )
+
+            if old_window_size:
+                subprocess.run(
+                    ["tmux", "set-option", "-t", target, "-w",
+                     "window-size", old_window_size],
+                    capture_output=True, timeout=2,
+                )
+            else:
+                subprocess.run(
+                    ["tmux", "set-option", "-t", target, "-w", "-u", "window-size"],
+                    capture_output=True, timeout=2,
+                )
 
         time.sleep(_REDRAW_FLUSH_SEC)
 
@@ -284,13 +305,15 @@ def _terminal_streamer():
                     prev_content = state.ws_last_content.get(cache_key)
 
                     if prev_content == content:
-                        # Self-heal: a TUI on the alt-screen that has been
-                        # quiet for a few seconds may have left stale grid
-                        # cells from cursor-position writes that never
-                        # triggered a full repaint. Fire _force_redraw in a
-                        # daemon thread so the 0.3s flush doesn't block the
-                        # poll cadence. Throttled so it can't churn.
-                        if info and info.get("alternate_on"):
+                        # Self-heal: a TUI (alt-screen on host, or wrapped
+                        # in docker/podman) that's been quiet for a few
+                        # seconds may have left stale grid cells from
+                        # cursor-position writes that never triggered a
+                        # full repaint. _force_redraw picks the right
+                        # strategy per kind (resize toggle vs Ctrl+L) and
+                        # runs in a daemon thread so the 0.3s flush doesn't
+                        # block the poll. Throttled so it can't churn.
+                        if info and (info.get("alternate_on") or info.get("is_wrapper")):
                             stable_for = now - _stable_since.get(target, now)
                             since_redraw = now - _last_redraw_time.get(target, 0.0)
                             if stable_for >= _REDRAW_STABLE_SEC and since_redraw >= _REDRAW_THROTTLE_SEC:

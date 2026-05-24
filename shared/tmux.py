@@ -1,12 +1,73 @@
 """shared/tmux.py — tmux and X11/macOS interaction helpers."""
 
+import os
 import platform
 import subprocess
+import time
 import uuid
 
 from shared.state import WS_SEND_TIMEOUT
 
 _IS_MAC = platform.system() == "Darwin"
+
+# Wrapper-TUI detection: when a pane runs a script that exec's docker/podman
+# to host the real TUI (e.g. claude inside docker via claude-mount.sh), the
+# in-container TUI writes to its own pty. The host tmux pane receives the
+# output but never sees clean erase-codes between animation frames, so stale
+# cells accumulate above the live viewport. Capturing only the visible
+# screen (`-S 0`) hides the accumulated mess.
+_WRAPPER_COMMS = ("docker", "podman", "lxc-attach", "kubectl")
+_WRAPPER_CACHE: dict[str, tuple[float, bool]] = {}
+_WRAPPER_CACHE_TTL = 5.0  # seconds
+
+
+def _has_wrapper_descendant(target, pane_pid):
+    """True if any descendant of pane_pid is a known TUI-wrapper.
+
+    Cached per target for 5s to avoid scanning /proc on every poll. Linux-
+    only path via /proc; falls back to False on macOS or any read error.
+    """
+    if pane_pid is None or _IS_MAC:
+        return False
+    now = time.time()
+    cached = _WRAPPER_CACHE.get(target)
+    if cached and now - cached[0] < _WRAPPER_CACHE_TTL:
+        return cached[1]
+    try:
+        children: dict[int, list[tuple[int, str]]] = {}
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            try:
+                # comm can contain spaces and parens — find the LAST `)`
+                # then parse the fixed fields that follow.
+                with open(f"/proc/{entry}/stat") as f:
+                    raw = f.read()
+                close = raw.rfind(")")
+                if close < 0:
+                    continue
+                ppid = int(raw[close + 2:].split()[1])
+                with open(f"/proc/{entry}/comm") as f:
+                    comm = f.read().strip()
+                children.setdefault(ppid, []).append((int(entry), comm))
+            except (OSError, ValueError, IndexError):
+                continue
+        stack = [int(pane_pid)]
+        seen = set()
+        while stack:
+            pid = stack.pop()
+            if pid in seen:
+                continue
+            seen.add(pid)
+            for cpid, ccomm in children.get(pid, []):
+                if ccomm in _WRAPPER_COMMS:
+                    _WRAPPER_CACHE[target] = (now, True)
+                    return True
+                stack.append(cpid)
+        _WRAPPER_CACHE[target] = (now, False)
+        return False
+    except Exception:
+        return False
 
 # tmux `send-keys -l` has an internal command buffer limit around 16 KB
 # (fails with "command too long"). Above this threshold we fall back to
@@ -200,7 +261,7 @@ def capture_pane(target, lines=2000):
             "-t",
             target,
             "-p",
-            "#{pane_current_command}\t#{pane_width}\t#{pane_height}\t#{cursor_y}\t#{alternate_on}",
+            "#{pane_current_command}\t#{pane_width}\t#{pane_height}\t#{cursor_y}\t#{alternate_on}\t#{pane_pid}",
         ],
         capture_output=True,
         text=True,
@@ -208,6 +269,7 @@ def capture_pane(target, lines=2000):
     )
     info = {}
     alternate_on = False
+    pane_pid = None
     if info_proc.returncode == 0 and info_proc.stdout.strip():
         parts = info_proc.stdout.strip().split("\t")
         if len(parts) >= 3:
@@ -220,11 +282,22 @@ def capture_pane(target, lines=2000):
                 info["cursor_y"] = int(parts[3])
             if len(parts) >= 5:
                 alternate_on = parts[4] == "1"
+            if len(parts) >= 6:
+                try:
+                    pane_pid = int(parts[5])
+                except ValueError:
+                    pass
             info["alternate_on"] = alternate_on
 
+    # Wrapper detection exposed to the streamer so periodic self-heal can
+    # send Ctrl+L (which reaches the in-container TUI) instead of a
+    # resize-window toggle (which doesn't).
+    is_wrapper = (not alternate_on) and _has_wrapper_descendant(target, pane_pid)
+    info["is_wrapper"] = is_wrapper
+
     capture_args = ["tmux", "capture-pane", "-e", "-p", "-t", target]
-    if alternate_on:
-        capture_args += ["-S", "0"]  # current screen only (no scrollback)
+    if alternate_on or is_wrapper:
+        capture_args += ["-S", "0"]
     else:
         capture_args += ["-S", f"-{lines}"]
 
