@@ -897,10 +897,12 @@ function updateConnIndicator() {
 }
 
 // -- Terminal capture (HTTP fallback) --
-async function captureTerminal() {
+async function captureTerminal(opts = {}) {
     if (!_termTarget) return;
     try {
-        const resp = await fetch(`/terminal/capture?target=${encodeURIComponent(_termTarget)}&lines=${_termLines}`);
+        const params = new URLSearchParams({target: _termTarget, lines: String(_termLines)});
+        if (opts.full) params.set('full', '1');
+        const resp = await fetch(`/terminal/capture?${params}`);
         const data = await resp.json();
         if (!data.ok) return;
         _applyTerminalContent(data.content || '', data.info, data.target || _termTarget);
@@ -945,7 +947,10 @@ function resumeTerminal() {
 
 function loadMore() {
     _termLines = Math.min(_termLines + 2000, 20000);
-    captureTerminal();
+    // Bypass wrapper visible-only capture so docker-wrapped sessions can
+    // surface their tmux scrollback on demand. Snapshot only — the next
+    // WS frame will revert to the live (clean) view.
+    captureTerminal({full: true});
 }
 
 function showSessionInfo() {

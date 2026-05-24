@@ -245,7 +245,7 @@ def detect_venv(project_path):
     return None
 
 
-def capture_pane(target, lines=2000):
+def capture_pane(target, lines=2000, force_scrollback=False):
     """Capture tmux pane content and info. Returns (content, info) or (None, None).
 
     When the pane is on the alternate screen (a TUI like Claude Code is
@@ -253,6 +253,12 @@ def capture_pane(target, lines=2000):
     flow into scrollback, and historical main-screen scrollback (e.g. prior
     Claude launch banners) would just be noise. When on the main screen,
     capture up to `lines` of scrollback so shell history is preserved.
+
+    `force_scrollback=True` bypasses the wrapper-detection visible-only
+    capture so callers (e.g. the explicit `Load more` button) can see the
+    raw -S -lines window even on a docker-wrapped session. Artifacts will
+    show; that's the user's explicit ask. Alt-screen is unaffected because
+    alt-screen content genuinely doesn't have scrollback.
     """
     info_proc = subprocess.run(
         [
@@ -296,7 +302,7 @@ def capture_pane(target, lines=2000):
     info["is_wrapper"] = is_wrapper
 
     capture_args = ["tmux", "capture-pane", "-e", "-p", "-t", target]
-    if alternate_on or is_wrapper:
+    if alternate_on or (is_wrapper and not force_scrollback):
         capture_args += ["-S", "0"]
     else:
         capture_args += ["-S", f"-{lines}"]
