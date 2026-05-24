@@ -245,7 +245,7 @@ def detect_venv(project_path):
     return None
 
 
-def capture_pane(target, lines=2000, force_scrollback=False):
+def capture_pane(target, lines=2000):
     """Capture tmux pane content and info. Returns (content, info) or (None, None).
 
     When the pane is on the alternate screen (a TUI like Claude Code is
@@ -254,11 +254,11 @@ def capture_pane(target, lines=2000, force_scrollback=False):
     Claude launch banners) would just be noise. When on the main screen,
     capture up to `lines` of scrollback so shell history is preserved.
 
-    `force_scrollback=True` bypasses the wrapper-detection visible-only
-    capture so callers (e.g. the explicit `Load more` button) can see the
-    raw -S -lines window even on a docker-wrapped session. Artifacts will
-    show; that's the user's explicit ask. Alt-screen is unaffected because
-    alt-screen content genuinely doesn't have scrollback.
+    Wrapper sessions (claude inside docker) are captured WITH full
+    scrollback like any main-screen pane — the periodic Ctrl+L self-heal in
+    the streamer keeps the live region clean, so there's no reason to hide
+    history. We only expose `info["is_wrapper"]` so the streamer knows to
+    use Ctrl+L (not a resize toggle) when it self-heals.
     """
     info_proc = subprocess.run(
         [
@@ -297,13 +297,13 @@ def capture_pane(target, lines=2000, force_scrollback=False):
 
     # Wrapper detection exposed to the streamer so periodic self-heal can
     # send Ctrl+L (which reaches the in-container TUI) instead of a
-    # resize-window toggle (which doesn't).
-    is_wrapper = (not alternate_on) and _has_wrapper_descendant(target, pane_pid)
-    info["is_wrapper"] = is_wrapper
+    # resize-window toggle (which doesn't). Does NOT affect the capture
+    # range — wrapper sessions keep full scrollback.
+    info["is_wrapper"] = (not alternate_on) and _has_wrapper_descendant(target, pane_pid)
 
     capture_args = ["tmux", "capture-pane", "-e", "-p", "-t", target]
-    if alternate_on or (is_wrapper and not force_scrollback):
-        capture_args += ["-S", "0"]
+    if alternate_on:
+        capture_args += ["-S", "0"]  # current screen only (no scrollback)
     else:
         capture_args += ["-S", f"-{lines}"]
 

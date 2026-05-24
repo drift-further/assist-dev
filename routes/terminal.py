@@ -797,8 +797,7 @@ def terminal_capture():
         int(request.args.get("lines", state.get_setting("terminal", "capture_lines"))),
         state.get_setting("limits", "max_capture_lines"),
     )
-    force_scrollback = request.args.get("full", "0") == "1"
-    content, info = capture_pane(target, lines, force_scrollback=force_scrollback)
+    content, info = capture_pane(target, lines)
     if content is None:
         return jsonify({"ok": False, "error": "capture-pane failed"}), 500
 

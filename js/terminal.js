@@ -560,9 +560,8 @@ function selectTab(target) {
         disconnectTerminalWs();
         connectTerminalWs();
     }
-    // Resize the tmux pane to match the viewport. Otherwise sessions stuck at
-    // a tiny size (e.g. 58x2 from a prior broken redraw) render unreadable.
-    try { termFitToScreen(); } catch(e) {}
+    // No auto-resize on tab click (per user) — the pane keeps whatever size
+    // it was launched/last fit at. Use the Fit menu to resize explicitly.
     // Scroll the active tab into view
     const activeTab = document.querySelector('.session-tab.active');
     if (activeTab) activeTab.scrollIntoView({behavior: 'smooth', inline: 'nearest', block: 'nearest'});
@@ -761,8 +760,9 @@ function connectTerminalWs() {
             target: _termTarget,
             lines: _termLines,
         }));
-        // Match tmux pane to viewport so we don't render a tiny stale pane.
-        try { termFitToScreen(); } catch(e) {}
+        // No auto-resize on (re)connect — repeated reconnects were resizing
+        // the pane to transient viewport measurements. Resize is now manual
+        // via the Fit menu only.
         // Measure real round-trip latency via ping
         _sendWsPing();
         // Clear HTTP polling since WS is active
@@ -897,12 +897,10 @@ function updateConnIndicator() {
 }
 
 // -- Terminal capture (HTTP fallback) --
-async function captureTerminal(opts = {}) {
+async function captureTerminal() {
     if (!_termTarget) return;
     try {
-        const params = new URLSearchParams({target: _termTarget, lines: String(_termLines)});
-        if (opts.full) params.set('full', '1');
-        const resp = await fetch(`/terminal/capture?${params}`);
+        const resp = await fetch(`/terminal/capture?target=${encodeURIComponent(_termTarget)}&lines=${_termLines}`);
         const data = await resp.json();
         if (!data.ok) return;
         _applyTerminalContent(data.content || '', data.info, data.target || _termTarget);
@@ -947,10 +945,7 @@ function resumeTerminal() {
 
 function loadMore() {
     _termLines = Math.min(_termLines + 2000, 20000);
-    // Bypass wrapper visible-only capture so docker-wrapped sessions can
-    // surface their tmux scrollback on demand. Snapshot only — the next
-    // WS frame will revert to the live (clean) view.
-    captureTerminal({full: true});
+    captureTerminal();
 }
 
 function showSessionInfo() {
