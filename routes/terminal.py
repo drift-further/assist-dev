@@ -538,6 +538,34 @@ def terminal_kill():
     return jsonify({"ok": True, "session": session})
 
 
+@terminal_bp.route("/terminal/clear", methods=["POST"])
+def terminal_clear():
+    """Aggressively clear a pane's tmux grid + scrollback.
+
+    Used by the client's double-tap-active-tab gesture to wipe accumulated
+    artifacts from in-container TUIs (e.g. claude inside docker via
+    claude-mount.sh) that the SIGWINCH-redraw path can't reach because the
+    real TUI is several PTY hops away from the host tmux pane.
+
+    Runs `tmux clear-history` (wipes scrollback) then `send-keys C-l` (asks
+    the foreground process to clear the visible screen). Both are best-effort.
+    """
+    data = request.get_json(silent=True) or {}
+    target = (data.get("target") or "").strip()
+    if not target:
+        return jsonify({"ok": False, "error": "No target specified"}), 400
+
+    subprocess.run(
+        ["tmux", "clear-history", "-t", target],
+        capture_output=True, timeout=5,
+    )
+    subprocess.run(
+        ["tmux", "send-keys", "-t", target, "C-l"],
+        capture_output=True, timeout=5,
+    )
+    return jsonify({"ok": True, "target": target})
+
+
 @terminal_bp.route("/terminal/rename", methods=["POST"])
 def terminal_rename():
     """Rename a tmux session."""

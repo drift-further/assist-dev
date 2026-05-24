@@ -18,6 +18,23 @@ _sock = None  # Set by register_streaming()
 # before we snapshot the new content hash. 0.3s is plenty for Ink/ncurses.
 _REDRAW_FLUSH_SEC = 0.3
 
+# Floor sizes for the redraw toggle. If a previous toggle left the pane stuck
+# tiny (e.g. second resize-window call failed), heal it back up to a usable
+# size instead of preserving the broken state. Matches the floors used in
+# /terminal/resize and js/terminal.js:_calcTermSize.
+_MIN_REDRAW_COLS = 40
+_MIN_REDRAW_ROWS = 10
+
+# Periodic self-heal: when a TUI session has been streaming-stable (no content
+# change) for this long AND we haven't redrawn in the throttle window, fire a
+# background _force_redraw to clear any accumulated tmux-grid artifacts.
+_REDRAW_STABLE_SEC = 3.0
+_REDRAW_THROTTLE_SEC = 10.0
+
+# Per-target timestamps for the self-heal heuristic (poll-thread only).
+_stable_since: dict[str, float] = {}
+_last_redraw_time: dict[str, float] = {}
+
 
 def _force_redraw(target):
     """Force a TUI in `target` to fully repaint, clearing tmux-grid artifacts.
@@ -64,8 +81,11 @@ def _force_redraw(target):
             attached = int(parts[2] or "0")
         except ValueError:
             return
-        if attached > 0 or h < 2:
+        if attached > 0:
             return
+
+        target_w = max(w, _MIN_REDRAW_COLS)
+        target_h = max(h, _MIN_REDRAW_ROWS)
 
         with state._activity_lock:
             saved_activity = state.pane_last_activity.get(target)
@@ -81,11 +101,11 @@ def _force_redraw(target):
         )
 
         subprocess.run(
-            ["tmux", "resize-window", "-t", target, "-x", str(w), "-y", str(h - 1)],
+            ["tmux", "resize-window", "-t", target, "-x", str(target_w), "-y", str(target_h - 1)],
             capture_output=True, timeout=2,
         )
         subprocess.run(
-            ["tmux", "resize-window", "-t", target, "-x", str(w), "-y", str(h)],
+            ["tmux", "resize-window", "-t", target, "-x", str(target_w), "-y", str(target_h)],
             capture_output=True, timeout=2,
         )
 
@@ -264,60 +284,31 @@ def _terminal_streamer():
                     prev_content = state.ws_last_content.get(cache_key)
 
                     if prev_content == content:
+                        # Self-heal: a TUI on the alt-screen that has been
+                        # quiet for a few seconds may have left stale grid
+                        # cells from cursor-position writes that never
+                        # triggered a full repaint. Fire _force_redraw in a
+                        # daemon thread so the 0.3s flush doesn't block the
+                        # poll cadence. Throttled so it can't churn.
+                        if info and info.get("alternate_on"):
+                            stable_for = now - _stable_since.get(target, now)
+                            since_redraw = now - _last_redraw_time.get(target, 0.0)
+                            if stable_for >= _REDRAW_STABLE_SEC and since_redraw >= _REDRAW_THROTTLE_SEC:
+                                _last_redraw_time[target] = now
+                                threading.Thread(
+                                    target=_force_redraw, args=(target,), daemon=True
+                                ).start()
                         continue
 
-                    # Determine if we can send a delta (append-only optimization)
-                    msg_data = None
-                    if prev_content is not None:
-                        prev_lines = prev_content.split("\n")
-                        new_lines = content.split("\n")
-                        # Check for simple tail append: prev is a prefix of new
-                        if (
-                            len(new_lines) > len(prev_lines)
-                            and new_lines[: len(prev_lines)] == prev_lines
-                        ):
-                            appended = new_lines[len(prev_lines) :]
-                            msg_data = {
-                                "type": "delta",
-                                "ops": [{"op": "append", "lines": appended}],
-                                "target": target,
-                                "info": info,
-                                "ts": now,
-                            }
-                        # Check for tail replacement: first N lines match, rest changed
-                        elif len(new_lines) >= len(prev_lines):
-                            common = 0
-                            for i in range(min(len(prev_lines), len(new_lines))):
-                                if prev_lines[i] != new_lines[i]:
-                                    break
-                                common = i + 1
-                            if (
-                                common > len(new_lines) * 0.5
-                            ):  # >50% unchanged = worth a delta
-                                msg_data = {
-                                    "type": "delta",
-                                    "ops": [
-                                        {
-                                            "op": "replace",
-                                            "start": common,
-                                            "end": len(prev_lines),
-                                            "lines": new_lines[common:],
-                                        }
-                                    ],
-                                    "target": target,
-                                    "info": info,
-                                    "ts": now,
-                                }
+                    _stable_since[target] = now
 
-                    # Fallback to full content
-                    if msg_data is None:
-                        msg_data = {
-                            "type": "full",
-                            "content": content,
-                            "target": target,
-                            "info": info,
-                            "ts": now,
-                        }
+                    msg_data = {
+                        "type": "full",
+                        "content": content,
+                        "target": target,
+                        "info": info,
+                        "ts": now,
+                    }
 
                     state.ws_last_content[cache_key] = content
 
@@ -351,6 +342,11 @@ def _terminal_streamer():
                 stale = [k for k in state.ws_last_content if k not in active_keys]
                 for k in stale:
                     del state.ws_last_content[k]
+
+                active_targets = {t for t, _ in targets}
+                for d in (_stable_since, _last_redraw_time):
+                    for t in [t for t in d if t not in active_targets]:
+                        del d[t]
 
             except Exception:
                 time.sleep(0.5)

@@ -508,13 +508,26 @@ function markActiveTab(target) {
 
 let _tabSwitchScrollLock = false;  // briefly suppress scroll-freeze after tab switch
 
+// Double-tap on the already-active tab triggers an aggressive pane clear
+// (tmux clear-history + send-keys C-l). This is the only path that
+// successfully cleans tmux-grid artifacts left by TUIs that don't repaint
+// on SIGWINCH — typically a Claude running inside docker through claude-mount,
+// where SIGWINCH on the host pane doesn't reach the in-container TUI.
+let _lastTabTapTime = 0;
+const _DOUBLE_TAP_MS = 500;
+
 function selectTab(target) {
+    if (target === _termTarget && (Date.now() - _lastTabTapTime) < _DOUBLE_TAP_MS) {
+        _lastTabTapTime = 0;  // consume; require fresh sequence for next clear
+        _clearActivePane(target);
+        return;
+    }
+    _lastTabTapTime = Date.now();
     _termTarget = target;
     markActiveTab(target);
     _termPaused = false;
     _tabSwitchScrollLock = true;  // suppress scroll-freeze until content renders
     _termLines = 2000;
-    _termLineBuffer = [];  // reset delta buffer on tab switch
     _termHasNew = false;
     _smartDismissed = null; // Reset dismiss so smart actions reappear on return
     // Drop any throttled render queued for the old target so it cannot fire
@@ -547,6 +560,9 @@ function selectTab(target) {
         disconnectTerminalWs();
         connectTerminalWs();
     }
+    // Resize the tmux pane to match the viewport. Otherwise sessions stuck at
+    // a tiny size (e.g. 58x2 from a prior broken redraw) render unreadable.
+    try { termFitToScreen(); } catch(e) {}
     // Scroll the active tab into view
     const activeTab = document.querySelector('.session-tab.active');
     if (activeTab) activeTab.scrollIntoView({behavior: 'smooth', inline: 'nearest', block: 'nearest'});
@@ -562,6 +578,26 @@ function selectTab(target) {
 // Kept for backward compat — tab clicks now use selectTab() directly
 async function onSessionChange() {
     // No-op: tabs handle selection via selectTab()
+}
+
+async function _clearActivePane(target) {
+    if (!target) return;
+    try {
+        await fetch('/terminal/clear', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({target}),
+        });
+        showFlash('sent', 'Cleared');
+        // Re-capture so the fresh state lands immediately.
+        if (_termWs && _termWsConnected) {
+            _termWs.send(JSON.stringify({type: 'subscribe', target, lines: _termLines}));
+        } else {
+            captureTerminal();
+        }
+    } catch(e) {
+        showFlash('error', 'Clear failed');
+    }
 }
 
 // -- Render throttle --
@@ -592,10 +628,6 @@ function _scheduleRender(content, info, target) {
 }
 
 function _doRender(content, info, target) {
-    // Guard: a queued render may carry the previous target if the user
-    // switched tabs during the throttle window. selectTab clears the timer,
-    // but defense-in-depth here keeps stale content out of term-content.
-    if (target && _termTarget && target !== _termTarget) return;
     _lastRenderTime = Date.now();
 
     // Update info bar
@@ -682,7 +714,6 @@ let _wsLastMessageTime = 0;      // timestamp of last WS message (capture or hea
 let _wsInactivityTimer = null;    // timer to detect dead streams
 const _WS_INACTIVITY_TIMEOUT = 8000;  // ms — reconnect if no message for this long
 
-let _termLineBuffer = [];  // internal line buffer for delta reconstruction
 let _wsLatency = 0;  // latest round-trip time in ms
 let _wsPingSentAt = 0;  // timestamp when ping was sent
 
@@ -730,6 +761,8 @@ function connectTerminalWs() {
             target: _termTarget,
             lines: _termLines,
         }));
+        // Match tmux pane to viewport so we don't render a tiny stale pane.
+        try { termFitToScreen(); } catch(e) {}
         // Measure real round-trip latency via ping
         _sendWsPing();
         // Clear HTTP polling since WS is active
@@ -789,11 +822,7 @@ function onWsMessage(event) {
             handleAutoYesWsMessage(data);
             return;
         }
-        // Reject stale content for wrong target BEFORE modifying line buffer.
-        // Race: streamer may send for old target after tab switch but before
-        // the server processes the new subscribe. Without this guard the buffer
-        // gets corrupted and subsequent deltas render mixed-session content.
-        if (data.target && _termTarget && data.target !== _termTarget) return;
+        if (data.type !== 'full' && data.type !== 'capture') return;
         // Timestamp marker on >30s gap
         const now = Date.now();
         if (_lastWsUpdateTime > 0 && (now - _lastWsUpdateTime) > _TIMESTAMP_GAP_SEC * 1000) {
@@ -803,31 +832,11 @@ function onWsMessage(event) {
             const ampm = h >= 12 ? 'PM' : 'AM';
             const h12 = h % 12 || 12;
             const marker = `\n\u2500\u2500 ${h12}:${m} ${ampm} \u2500\u2500\n`;
-            if (data.type === 'full' || data.type === 'capture') {
-                data.content = (data.content || '') + marker;
-            }
+            data.content = (data.content || '') + marker;
         }
         _lastWsUpdateTime = now;
 
-        if (data.type === 'full') {
-            _termLineBuffer = (data.content || '').split('\n');
-            _applyTerminalContent(data.content || '', data.info, data.target);
-        } else if (data.type === 'delta') {
-            for (const op of (data.ops || [])) {
-                if (op.op === 'append') {
-                    _termLineBuffer = _termLineBuffer.concat(op.lines);
-                } else if (op.op === 'replace') {
-                    _termLineBuffer = _termLineBuffer.slice(0, op.start).concat(op.lines);
-                }
-            }
-            const content = _termLineBuffer.join('\n');
-            _applyTerminalContent(content, data.info, data.target);
-        } else if (data.type === 'capture') {
-            // Legacy compatibility
-            _applyTerminalContent(data.content || '', data.info, data.target);
-        } else {
-            return;
-        }
+        _applyTerminalContent(data.content || '', data.info, data.target);
     } catch(e) {}
 }
 

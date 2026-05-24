@@ -220,6 +220,7 @@ def capture_pane(target, lines=2000):
                 info["cursor_y"] = int(parts[3])
             if len(parts) >= 5:
                 alternate_on = parts[4] == "1"
+            info["alternate_on"] = alternate_on
 
     capture_args = ["tmux", "capture-pane", "-e", "-p", "-t", target]
     if alternate_on:
