@@ -82,7 +82,7 @@ def terminal_launch():
     rows = data.get("rows", state.get_setting("terminal", "default_rows"))
     # Clamp to sane range
     cols = max(40, min(int(cols), 400))
-    rows = max(10, min(int(rows), 200))
+    rows = max(30, min(int(rows), 200))
 
     proc = subprocess.run(
         [
@@ -486,7 +486,7 @@ def terminal_resize():
         return jsonify({"ok": False, "error": "cols and rows required"}), 400
 
     cols = max(40, min(int(cols), 400))
-    rows = max(10, min(int(rows), 200))
+    rows = max(30, min(int(rows), 200))
 
     proc = subprocess.run(
         [
@@ -510,6 +510,36 @@ def terminal_resize():
         )
 
     return jsonify({"ok": True, "session": session, "cols": cols, "rows": rows})
+
+
+@terminal_bp.route("/terminal/unpin", methods=["POST"])
+def terminal_unpin():
+    """Unpin a session's window-size so it follows whatever tmux client attaches.
+
+    /terminal/resize uses `resize-window`, which pins window-size=manual. That
+    keeps the window fixed when a real client attaches, so an oversized terminal
+    shows dead padding (the dotted rows). Unsetting the window option restores
+    the global `latest` behavior: the window snaps to the attached client's
+    exact size. Note: the next /terminal/resize re-pins it to manual.
+    """
+    data = request.get_json(silent=True) or {}
+    session = (data.get("session") or "").strip()
+    if not session:
+        return jsonify({"ok": False, "error": "No session specified"}), 400
+
+    proc = subprocess.run(
+        ["tmux", "set-option", "-t", session, "-w", "-u", "window-size"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    if proc.returncode != 0:
+        return (
+            jsonify({"ok": False, "error": f"unpin failed: {proc.stderr}"}),
+            500,
+        )
+
+    return jsonify({"ok": True, "session": session})
 
 
 @terminal_bp.route("/terminal/kill", methods=["POST"])
@@ -676,7 +706,7 @@ def terminal_duplicate():
     cols = data.get("cols", state.get_setting("terminal", "default_cols"))
     rows = data.get("rows", state.get_setting("terminal", "default_rows"))
     cols = max(40, min(int(cols), 400))
-    rows = max(10, min(int(rows), 200))
+    rows = max(30, min(int(rows), 200))
 
     proc = subprocess.run(
         [

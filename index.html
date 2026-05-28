@@ -136,6 +136,7 @@
                 <button class="fit-item" data-cols="100" onclick="fitMenuPick(100)">Compact 100</button>
                 <button class="fit-item" data-cols="160" onclick="fitMenuPick(160)">Wide 160</button>
                 <button class="fit-item" data-cols="200" onclick="fitMenuPick(200)">Desktop 200</button>
+                <button class="fit-item fit-follow" onclick="fitMenuUnpin()" title="Unpin window size so it follows whatever terminal you tmux attach (removes the padding dots). Next Fit re-pins it.">Follow attach</button>
                 <div class="fit-custom">
                     <input type="number" class="fit-custom-input" id="fit-custom-input" min="40" max="400" placeholder="cols" inputmode="numeric">
                     <button class="fit-item fit-apply" onclick="fitMenuApplyCustom()">Apply</button>

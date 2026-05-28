@@ -23,7 +23,7 @@ _REDRAW_FLUSH_SEC = 0.3
 # size instead of preserving the broken state. Matches the floors used in
 # /terminal/resize and js/terminal.js:_calcTermSize.
 _MIN_REDRAW_COLS = 40
-_MIN_REDRAW_ROWS = 10
+_MIN_REDRAW_ROWS = 30
 
 # Periodic self-heal: when a TUI session has been streaming-stable (no content
 # change) for this long AND we haven't redrawn in the throttle window, fire a

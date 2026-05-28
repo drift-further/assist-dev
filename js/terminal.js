@@ -1044,7 +1044,7 @@ function _calcTermSize() {
     const availW = (container && container.clientWidth > 0 ? container.clientWidth : window.innerWidth) - 16;
     const availH = (container && container.clientHeight > 0 ? container.clientHeight : window.innerHeight * 0.6) - 16;
     const cols = Math.max(40, Math.floor(availW / charW));
-    const rows = Math.max(10, Math.floor(availH / lineH));
+    const rows = Math.max(30, Math.floor(availH / lineH));
     return { cols, rows };
 }
 
@@ -1108,6 +1108,32 @@ function fitMenuApplyCustom() {
     }
     localStorage.setItem('assist_fit_last', String(v));
     termFitToScreen(v);
+    toggleFitMenu();
+}
+
+/** Unpin the current session's window-size so it follows the attached tmux client.
+ *  Assist's Fit presets pin window-size=manual; this restores 'latest' so a real
+ *  `tmux attach` from any terminal fits exactly with no padding dots. The next
+ *  Fit re-pins it. */
+async function fitMenuUnpin() {
+    if (!_termTarget) {
+        showFlash('error', 'No active session');
+        toggleFitMenu();
+        return;
+    }
+    const session = _termTarget.split(':')[0];
+    try {
+        const resp = await fetch('/terminal/unpin', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ session }),
+        });
+        const data = await resp.json();
+        showFlash(data.ok ? 'ok' : 'error',
+            data.ok ? 'Window follows attached terminal' : (data.error || 'Unpin failed'));
+    } catch(e) {
+        showFlash('error', 'Unpin failed');
+    }
     toggleFitMenu();
 }
 
