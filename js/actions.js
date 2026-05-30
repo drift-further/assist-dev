@@ -2,6 +2,7 @@
 
 // Auto-Yes: now server-side. UI just toggles and shows countdown.
 let _autoyesState = {};  // session -> bool (mirrors server state)
+let _autoyesDelays = {};  // session -> seconds (per-session active delay, mirrors server)
 let _autoyesCountdown = null;  // { target, remaining, delay, prompt_type } or null
 let _autoyesDelay = (SETTINGS && SETTINGS.autoyes) ? SETTINGS.autoyes.default_delay : 5;  // current delay setting (persists across toggles)
 let _autoyesPickerVisible = false;
@@ -11,22 +12,26 @@ function isAutoYes(session) {
 }
 
 // Show inline delay picker instead of browser prompt()
+// When OFF: picker enables auto-yes ("Start").
+// When ON: picker edits the live delay ("Update") or turns it off ("Off").
 function showAutoYesPicker() {
     const target = _smartActionTarget || _termTarget;
     const session = target ? target.split(':')[0] : '';
     if (!session) return;
 
-    // If already on, just turn off
-    if (isAutoYes(session)) {
-        _enableAutoYes(session, null);
-        return;
-    }
-
-    // Show the picker
     const picker = document.getElementById('autoyes-picker');
     if (!picker) return;
+    const on = isAutoYes(session);
+    // Prefill with the session's active delay when running, else last-used value
+    if (on && _autoyesDelays[session]) _autoyesDelay = _autoyesDelays[session];
     const valEl = document.getElementById('ay-pick-val');
     if (valEl) valEl.textContent = _autoyesDelay;
+    const goBtn = document.getElementById('ay-pick-go');
+    if (goBtn) goBtn.textContent = on ? 'Update' : 'Start';
+    const offBtn = document.getElementById('ay-pick-off');
+    if (offBtn) offBtn.style.display = on ? '' : 'none';
+    const labelEl = picker.querySelector('.ay-pick-label');
+    if (labelEl) labelEl.textContent = on ? 'Change delay' : 'Auto-Yes delay';
     picker.classList.add('visible');
     _autoyesPickerVisible = true;
 }
@@ -42,12 +47,45 @@ function ayPickConfirm() {
     const session = target ? target.split(':')[0] : '';
     document.getElementById('autoyes-picker').classList.remove('visible');
     _autoyesPickerVisible = false;
-    if (session) _enableAutoYes(session, _autoyesDelay);
+    if (!session) return;
+    if (isAutoYes(session)) {
+        _setAutoYesDelay(session, _autoyesDelay);  // already running — update delay
+    } else {
+        _enableAutoYes(session, _autoyesDelay);     // off — enable with chosen delay
+    }
+}
+
+function ayPickTurnOff() {
+    const target = _smartActionTarget || _termTarget;
+    const session = target ? target.split(':')[0] : '';
+    document.getElementById('autoyes-picker').classList.remove('visible');
+    _autoyesPickerVisible = false;
+    if (session) _enableAutoYes(session, null);  // toggle off
 }
 
 function ayPickCancel() {
     document.getElementById('autoyes-picker').classList.remove('visible');
     _autoyesPickerVisible = false;
+}
+
+// Update the delay for an already-running session (no toggle off/on)
+async function _setAutoYesDelay(session, delay) {
+    try {
+        const resp = await fetch('/autoyes/set-delay', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ session, delay }),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            _autoyesDelays[session] = data.delay;
+            showFlash('sent', `Auto-Yes delay → ${data.delay}s`);
+        } else {
+            showFlash('error', data.error || 'Failed to update');
+        }
+    } catch (e) {
+        showFlash('error', 'Failed to update');
+    }
 }
 
 async function _enableAutoYes(session, delay) {
@@ -62,6 +100,8 @@ async function _enableAutoYes(session, delay) {
         const data = await resp.json();
         if (data.ok) {
             _autoyesState[session] = data.enabled;
+            if (data.enabled && delay !== null) _autoyesDelays[session] = delay;
+            else if (!data.enabled) delete _autoyesDelays[session];
             showFlash('sent', data.enabled ? `Auto-Yes ON (${delay}s)` : 'Auto-Yes OFF');
             updateAutoYesUI(session);
             _smartActionsKey = '';
@@ -96,6 +136,7 @@ async function syncAutoYesState() {
         const resp = await fetch('/autoyes/status');
         const data = await resp.json();
         _autoyesState = data.sessions || {};
+        _autoyesDelays = data.delays || {};
         // Update countdown if any
         const target = _smartActionTarget || _termTarget;
         if (target && data.countdowns && data.countdowns[target]) {

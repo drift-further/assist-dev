@@ -319,6 +319,7 @@ def autoyes_status():
             {
                 "sessions": dict(state.autoyes_sessions),
                 "countdowns": countdowns,
+                "delays": dict(state.autoyes_delays),
             }
         )
 
@@ -372,6 +373,48 @@ def autoyes_cancel():
             broadcast_autoyes_event(target, "cancelled", cd["prompt_type"])
             return jsonify({"ok": True, "cancelled": True})
     return jsonify({"ok": True, "cancelled": False})
+
+
+@autoyes_bp.route("/autoyes/set-delay", methods=["POST"])
+def autoyes_set_delay():
+    """Update the auto-yes delay for an already-enabled session.
+
+    Applies to future prompts and recomputes any in-flight countdown so the
+    new delay takes effect immediately (e.g. 5s -> 2s while a countdown runs).
+    """
+    data = request.get_json(silent=True) or {}
+    session = (data.get("session") or "").strip()
+    if not session:
+        return jsonify({"ok": False, "error": "No session"}), 400
+    try:
+        delay = max(1, min(30, int(data.get("delay"))))
+    except (ValueError, TypeError):
+        return jsonify({"ok": False, "error": "Invalid delay"}), 400
+
+    # Collect targets to re-broadcast AFTER releasing the lock
+    # (broadcast_autoyes_event also acquires autoyes_lock — avoid deadlock).
+    rebroadcast = []
+    with state.autoyes_lock:
+        if not state.autoyes_sessions.get(session, False):
+            return jsonify({"ok": False, "error": "Auto-Yes not enabled"}), 409
+        state.autoyes_delays[session] = delay
+        # Recompute any active countdown for this session against the new delay,
+        # anchored to the prompt's original start time.
+        for target, cd in state.autoyes_countdowns.items():
+            if target.startswith(session + ":") and not cd["cancelled"]:
+                start = cd["deadline"] - cd["delay"]
+                cd["delay"] = delay
+                cd["deadline"] = start + delay
+                rebroadcast.append((target, cd["prompt_type"]))
+
+    # Persist for restoration after restart
+    state.patch_project_settings(session, {"autoyes": {"delay": delay}})
+
+    for target, prompt_type in rebroadcast:
+        broadcast_autoyes_event(target, "countdown", prompt_type)
+
+    log.info("autoyes: delay updated for %s -> %ds", session, delay)
+    return jsonify({"ok": True, "session": session, "delay": delay})
 
 
 def restore_autoyes_from_settings():
