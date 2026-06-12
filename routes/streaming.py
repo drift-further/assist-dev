@@ -13,6 +13,7 @@ from shared.tmux import (
     _has_wrapper_descendant,
     capture_pane,
     set_ws_send_timeout,
+    tmux_exact_target,
 )
 
 # The sock route is registered via register_streaming() called from serve.py.
@@ -77,9 +78,11 @@ def _force_redraw(target):
     out from under them. Best-effort otherwise: failure is silent.
     """
     try:
-        # `=` forces exact session-name matching — a dead target must fail,
-        # not prefix-match into resizing some other live session's pane.
-        exact = f"={target}"
+        # `=name:` (colon required!) forces exact session-name matching — a
+        # dead target must fail, not prefix-match into resizing some other
+        # live session's pane. Bare `=name` is broken on tmux 3.4: pane-target
+        # commands reject it and display-message expands formats empty.
+        exact = tmux_exact_target(target)
         info = subprocess.run(
             ["tmux", "display-message", "-t", exact, "-p",
              "#{pane_width}\t#{pane_height}\t#{session_attached}\t#{pane_pid}\t#{pane_current_command}"],

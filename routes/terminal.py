@@ -14,6 +14,7 @@ from shared.tmux import (
     capture_pane,
     detect_venv,
     pane_wants_ctrl_l_heal,
+    tmux_exact_target,
     tmux_send_keys,
     tmux_send_text,
     tmux_target_exists,
@@ -386,7 +387,7 @@ def terminal_resize():
     # is safe; harmless no-op visually when the screen is already clean.
     if pane_wants_ctrl_l_heal(session):
         subprocess.run(
-            ["tmux", "send-keys", "-t", f"={session}", "C-l"],
+            ["tmux", "send-keys", "-t", tmux_exact_target(session), "C-l"],
             capture_output=True, timeout=2,
         )
 
@@ -409,7 +410,7 @@ def terminal_unpin():
         return jsonify({"ok": False, "error": "No session specified"}), 400
 
     proc = subprocess.run(
-        ["tmux", "set-option", "-t", f"={session}", "-w", "-u", "window-size"],
+        ["tmux", "set-option", "-t", tmux_exact_target(session), "-w", "-u", "window-size"],
         capture_output=True,
         text=True,
         timeout=5,
@@ -467,11 +468,11 @@ def terminal_clear():
         return jsonify({"ok": False, "error": "No target specified"}), 400
 
     subprocess.run(
-        ["tmux", "clear-history", "-t", f"={target}"],
+        ["tmux", "clear-history", "-t", tmux_exact_target(target)],
         capture_output=True, timeout=5,
     )
     subprocess.run(
-        ["tmux", "send-keys", "-t", f"={target}", "C-l"],
+        ["tmux", "send-keys", "-t", tmux_exact_target(target), "C-l"],
         capture_output=True, timeout=5,
     )
     return jsonify({"ok": True, "target": target})
@@ -519,7 +520,7 @@ def terminal_cwd():
     if not session:
         return jsonify({"ok": False, "error": "No session specified"}), 400
     proc = subprocess.run(
-        ["tmux", "display-message", "-t", f"={session}", "-p", "#{pane_current_path}"],
+        ["tmux", "display-message", "-t", tmux_exact_target(session), "-p", "#{pane_current_path}"],
         capture_output=True,
         text=True,
         timeout=5,
@@ -541,7 +542,7 @@ def terminal_duplicate():
 
     # Get the CWD of the source session's active pane
     cwd_proc = subprocess.run(
-        ["tmux", "display-message", "-t", f"={session}", "-p", "#{pane_current_path}"],
+        ["tmux", "display-message", "-t", tmux_exact_target(session), "-p", "#{pane_current_path}"],
         capture_output=True,
         text=True,
         timeout=5,

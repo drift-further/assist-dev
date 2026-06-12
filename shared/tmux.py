@@ -348,6 +348,20 @@ def capture_pane(target, lines=2000):
     return content, info
 
 
+def tmux_exact_target(target):
+    """Return the exact-match form of a `session[:window.pane]` target.
+
+    Exact matching matters: a dead target must resolve to nothing, not
+    prefix-match into another live session. BUT tmux 3.4 only honors the
+    `=` prefix when the session part is delimited by `:` — bare `=name`
+    makes pane-target commands fail ("can't find pane") and display-message
+    silently expand every format variable EMPTY. `=name:` pins exact
+    session matching and resolves to the session's active pane.
+    """
+    name, _sep, rest = target.partition(":")
+    return f"={name}:{rest}"
+
+
 def pane_wants_ctrl_l_heal(target):
     """True when a full repaint of `target` needs Ctrl+L rather than SIGWINCH.
 
@@ -358,7 +372,7 @@ def pane_wants_ctrl_l_heal(target):
     """
     try:
         proc = subprocess.run(
-            ["tmux", "display-message", "-t", f"={target}", "-p",
+            ["tmux", "display-message", "-t", tmux_exact_target(target), "-p",
              "#{pane_current_command}\t#{pane_pid}"],
             capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=2,
