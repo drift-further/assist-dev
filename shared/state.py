@@ -22,13 +22,12 @@ DEFAULT_SETTINGS = {
                 os.environ.get("ASSIST_PROJECTS_DIR", Path.home() / "projects")
             )
         ),
-        "port": int(os.environ.get("ASSIST_PORT", 8089)),
         "restart_cmd": "assist restart",
     },
     "terminal": {
         "font_size": 13,
         "default_cols": 200,
-        "default_rows": 50,
+        "default_rows": 60,
         "capture_lines": 2000,
         "tmux_history_limit": 20000,
         "idle_threshold_sec": 300,
@@ -102,6 +101,22 @@ def _deep_merge(base, override):
     return result
 
 
+def atomic_write_json(path, data, indent=2):
+    """Write JSON to *path* atomically: tmp file + flush + fsync + os.replace.
+
+    A crash mid-write leaves the old file intact instead of torn JSON
+    (which loaders silently swallow, falling back to defaults).
+    """
+    path = Path(path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=indent)
+        f.write("\n")
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
 def load_settings():
     """Load settings from disk, merge with defaults. Call once at startup."""
     global _settings
@@ -128,14 +143,18 @@ def load_settings():
     _apply_settings()
 
 
+def _save_settings_locked():
+    """Write settings to disk. Caller must hold _settings_lock."""
+    try:
+        atomic_write_json(SETTINGS_FILE, _settings)
+    except OSError:
+        pass
+
+
 def save_settings():
     """Persist current settings to disk."""
     with _settings_lock:
-        data = copy.deepcopy(_settings)
-    try:
-        SETTINGS_FILE.write_text(json.dumps(data, indent=2) + "\n")
-    except OSError:
-        pass
+        _save_settings_locked()
 
 
 def get_settings():
@@ -145,12 +164,16 @@ def get_settings():
 
 
 def patch_settings(patch):
-    """Deep-merge patch into settings, save, and re-apply. Returns updated settings."""
+    """Deep-merge patch into settings, save, and re-apply. Returns updated settings.
+
+    The file write happens while still holding the lock so two overlapping
+    patches cannot persist an older snapshot last.
+    """
     global _settings
     with _settings_lock:
         _settings = _deep_merge(_settings, patch)
+        _save_settings_locked()
         result = copy.deepcopy(_settings)
-    save_settings()
     _apply_settings()
     return result
 
@@ -176,33 +199,38 @@ def load_project_settings():
         _project_settings = {}
 
 
+def _save_project_settings_locked():
+    """Write project settings to disk. Caller must hold _project_settings_lock."""
+    try:
+        atomic_write_json(PROJECT_SETTINGS_FILE, _project_settings)
+    except OSError:
+        pass
+
+
 def save_project_settings():
     """Persist per-project settings to disk."""
     with _project_settings_lock:
-        data = copy.deepcopy(_project_settings)
-    try:
-        PROJECT_SETTINGS_FILE.write_text(json.dumps(data, indent=2) + "\n")
-    except OSError:
-        pass
+        _save_project_settings_locked()
 
 
 def get_project_settings(project):
     """Return merged defaults + project overrides (deep copy)."""
     with _project_settings_lock:
-        overrides = _project_settings.get(project, {})
+        overrides = copy.deepcopy(_project_settings.get(project, {}))
     return _deep_merge(copy.deepcopy(DEFAULT_PROJECT_SETTINGS), overrides)
 
 
 def patch_project_settings(project, patch):
-    """Deep-merge patch into project settings, save, return updated."""
+    """Deep-merge patch into project settings, save under lock, return updated."""
     global _project_settings
     with _project_settings_lock:
         current = _project_settings.get(project, {})
         _project_settings[project] = _deep_merge(current, patch)
+        _save_project_settings_locked()
         result = _deep_merge(
-            copy.deepcopy(DEFAULT_PROJECT_SETTINGS), _project_settings[project]
+            copy.deepcopy(DEFAULT_PROJECT_SETTINGS),
+            copy.deepcopy(_project_settings[project]),
         )
-    save_project_settings()
     return result
 
 
@@ -274,26 +302,34 @@ def load_container_config():
         _container_config = {}
 
 
-def save_container_config():
-    with _container_config_lock:
-        data = copy.deepcopy(_container_config)
+def _save_container_config_locked():
+    """Write container config to disk. Caller must hold _container_config_lock."""
     try:
-        CONTAINER_CONFIG_FILE.write_text(json.dumps(data, indent=2) + "\n")
+        atomic_write_json(CONTAINER_CONFIG_FILE, _container_config)
     except OSError:
         pass
 
 
-def get_container_config():
+def save_container_config():
     with _container_config_lock:
-        return _deep_merge(copy.deepcopy(DEFAULT_CONTAINER_CONFIG), _container_config)
+        _save_container_config_locked()
+
+
+def get_container_config():
+    """Return merged defaults + saved config (deep copy)."""
+    with _container_config_lock:
+        saved = copy.deepcopy(_container_config)
+    return _deep_merge(copy.deepcopy(DEFAULT_CONTAINER_CONFIG), saved)
 
 
 def patch_container_config(patch):
     global _container_config
     with _container_config_lock:
         _container_config = _deep_merge(_container_config, patch)
-        result = _deep_merge(copy.deepcopy(DEFAULT_CONTAINER_CONFIG), _container_config)
-    save_container_config()
+        _save_container_config_locked()
+        result = _deep_merge(
+            copy.deepcopy(DEFAULT_CONTAINER_CONFIG), copy.deepcopy(_container_config)
+        )
     return result
 
 
@@ -325,13 +361,17 @@ def load_extensions():
             save_extensions()
 
 
-def save_extensions():
-    with _extensions_lock:
-        data = copy.deepcopy(_extensions)
+def _save_extensions_locked():
+    """Write extensions to disk. Caller must hold _extensions_lock."""
     try:
-        EXTENSIONS_FILE.write_text(json.dumps(data, indent=2) + "\n")
+        atomic_write_json(EXTENSIONS_FILE, _extensions)
     except OSError:
         pass
+
+
+def save_extensions():
+    with _extensions_lock:
+        _save_extensions_locked()
 
 
 def get_extensions():
@@ -342,7 +382,7 @@ def get_extensions():
 def add_extension(ext):
     with _extensions_lock:
         _extensions.append(ext)
-    save_extensions()
+        _save_extensions_locked()
     return get_extensions()
 
 
@@ -352,14 +392,14 @@ def update_extension(ext_id, patch):
             if ext.get("id") == ext_id:
                 ext.update(patch)
                 break
-    save_extensions()
+        _save_extensions_locked()
     return get_extensions()
 
 
 def delete_extension(ext_id):
     with _extensions_lock:
         _extensions[:] = [e for e in _extensions if e.get("id") != ext_id]
-    save_extensions()
+        _save_extensions_locked()
     return get_extensions()
 
 
@@ -431,7 +471,7 @@ automate_stop_event = threading.Event()
 # ---------------------------------------------------------------------------
 # WebSocket state
 # ---------------------------------------------------------------------------
-ws_clients = []  # list of (ws, target, lines)
+ws_clients = []  # list of {"ws", "lock", "target", "lines", "last_send"} dicts
 ws_lock = threading.Lock()
 ws_streamer_running = False
 ws_last_content = {}  # "target:lines" -> last content string
@@ -460,15 +500,13 @@ def touch_activity(target: str):
 
 def save_idle_state():
     """Persist idle tracking dicts to disk."""
-    import json
-
     with _activity_lock:
         data = {
             "content_hash": dict(pane_content_hash),
             "last_activity": {k: round(v, 2) for k, v in pane_last_activity.items()},
         }
     try:
-        _IDLE_STATE_FILE.write_text(json.dumps(data))
+        atomic_write_json(_IDLE_STATE_FILE, data, indent=None)
     except OSError:
         pass
 

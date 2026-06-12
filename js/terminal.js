@@ -242,8 +242,15 @@ function renderProjects() {
     }
 }
 
+// Debounced — renderProjects() kicks off up to 10 session-history fetches,
+// so firing it on every keystroke hammered the server and raced duplicate rows.
+let _filterProjectsTimer = null;
 function filterProjects() {
-    renderProjects();
+    if (_filterProjectsTimer) clearTimeout(_filterProjectsTimer);
+    _filterProjectsTimer = setTimeout(() => {
+        _filterProjectsTimer = null;
+        renderProjects();
+    }, 200);
 }
 
 // -- Session restore --
@@ -268,6 +275,10 @@ async function loadProjectSessions(projectName) {
             </button>`;
         }
         html += '</div>';
+        // Stale responses can land after a re-render already inserted rows —
+        // drop any existing sessions row before inserting.
+        const existing = container.nextElementSibling;
+        if (existing && existing.classList.contains('proj-sessions')) existing.remove();
         container.insertAdjacentHTML('afterend', html);
     } catch(e) {}
 }
@@ -529,7 +540,7 @@ function selectTab(target) {
     _tabSwitchScrollLock = true;  // suppress scroll-freeze until content renders
     _termLines = 2000;
     _termHasNew = false;
-    _smartDismissed = null; // Reset dismiss so smart actions reappear on return
+    _getSmartState(target).dismissedContent = null; // Reset dismiss so smart actions reappear on return
     // Drop any throttled render queued for the old target so it cannot fire
     // after the switch and paint stale content into term-content.
     if (_renderTimer) { clearTimeout(_renderTimer); _renderTimer = null; }
@@ -703,7 +714,7 @@ function _doRender(content, info, target) {
     document.getElementById('term-load-more').classList.toggle('visible', lineCount >= _termLines - 5);
 
     // Smart actions always run (user needs to respond to prompts quickly)
-    const detected = detectSmartActions(stripAnsi(content));
+    const detected = detectSmartActions(stripAnsi(content), target || _termTarget);
     renderSmartActions(detected);
     _updateSudoSendBtn();
 }
@@ -715,6 +726,7 @@ const _WS_INACTIVITY_TIMEOUT = 8000;  // ms — reconnect if no message for this
 
 let _wsLatency = 0;  // latest round-trip time in ms
 let _wsPingSentAt = 0;  // timestamp when ping was sent
+let _wsPingTimer = null;  // single scheduled ping — cleared on reconnect/close so chains can't duplicate
 
 // Timestamp markers — insert divider on >30s WS update gaps
 let _lastWsUpdateTime = 0;
@@ -763,7 +775,9 @@ function connectTerminalWs() {
         // No auto-resize on (re)connect — repeated reconnects were resizing
         // the pane to transient viewport measurements. Resize is now manual
         // via the Fit menu only.
-        // Measure real round-trip latency via ping
+        // Measure real round-trip latency via ping (drop any chain from a
+        // previous connection first so reconnects don't duplicate pings)
+        if (_wsPingTimer) { clearTimeout(_wsPingTimer); _wsPingTimer = null; }
         _sendWsPing();
         // Clear HTTP polling since WS is active
         if (_termPollTimer) {
@@ -780,6 +794,7 @@ function connectTerminalWs() {
         _termWsConnected = false;
         _termWs = null;
         if (_wsInactivityTimer) { clearTimeout(_wsInactivityTimer); _wsInactivityTimer = null; }
+        if (_wsPingTimer) { clearTimeout(_wsPingTimer); _wsPingTimer = null; }
         updateConnIndicator();
         // Auto-reconnect with exponential backoff if terminal is still open
         if (_termOpen && _termTarget) {
@@ -813,8 +828,9 @@ function onWsMessage(event) {
             _wsLatency = Date.now() - _wsPingSentAt;
             _wsPingSentAt = 0;
             updateConnIndicator();
-            // Schedule next ping in 10s
-            setTimeout(_sendWsPing, 10000);
+            // Schedule next ping in 10s (single tracked timer)
+            if (_wsPingTimer) clearTimeout(_wsPingTimer);
+            _wsPingTimer = setTimeout(() => { _wsPingTimer = null; _sendWsPing(); }, 10000);
             return;
         }
         if (data.type === 'heartbeat') return;  // just resets inactivity timer (done in onmessage)
@@ -855,6 +871,10 @@ function disconnectTerminalWs() {
     if (_wsInactivityTimer) {
         clearTimeout(_wsInactivityTimer);
         _wsInactivityTimer = null;
+    }
+    if (_wsPingTimer) {
+        clearTimeout(_wsPingTimer);
+        _wsPingTimer = null;
     }
     if (_termWs) {
         _termWsConnected = false;
@@ -938,14 +958,45 @@ function resumeTerminal() {
         _termLastContent = _termLatestContent;
         display.scrollTop = display.scrollHeight;
         // Re-detect smart actions after resume
-        const detected = detectSmartActions(stripAnsi(_termLatestContent));
+        const detected = detectSmartActions(stripAnsi(_termLatestContent), _termTarget);
         renderSmartActions(detected);
     }
 }
 
-function loadMore() {
+async function loadMore() {
     _termLines = Math.min(_termLines + 2000, 20000);
-    captureTerminal();
+    if (!_termTarget) return;
+    // Re-subscribe the WS with the new line count so the next streamed
+    // frame doesn't erase the longer history we're about to render.
+    if (_termWs && _termWsConnected) {
+        _termWs.send(JSON.stringify({
+            type: 'subscribe',
+            target: _termTarget,
+            lines: _termLines,
+        }));
+    }
+    try {
+        const resp = await fetch(`/terminal/capture?target=${encodeURIComponent(_termTarget)}&lines=${_termLines}`);
+        const data = await resp.json();
+        if (!data.ok) return;
+        if (data.target && data.target !== _termTarget) return;
+        const content = data.content || '';
+        // Render directly, bypassing the paused check — the user is scrolled
+        // up (that's always the case when tapping Load more). Anchor the
+        // viewport so it doesn't jump when taller content lands.
+        const pre = document.getElementById('term-content');
+        const display = document.getElementById('term-display');
+        const fromBottom = display.scrollHeight - display.scrollTop;
+        _autoScrolling = true;
+        pre.innerHTML = ansiToHtml(content);
+        if (typeof applySelectionHighlights === 'function') applySelectionHighlights();
+        _termLastContent = content;
+        _termLatestContent = content;
+        display.scrollTop = display.scrollHeight - fromBottom;
+        requestAnimationFrame(() => { _autoScrolling = false; });
+        const lineCount = content.split('\n').length;
+        document.getElementById('term-load-more').classList.toggle('visible', lineCount >= _termLines - 5);
+    } catch(e) {}
 }
 
 function showSessionInfo() {
@@ -983,6 +1034,7 @@ async function killSession() {
                     delete _sessionPrompts[key];
                     delete _notifSentFor[key];
                     delete _lastScanContent[key];
+                    delete _smartState[key];
                     if (_activityDecayTimers[key]) {
                         clearTimeout(_activityDecayTimers[key]);
                         delete _activityDecayTimers[key];
@@ -1044,7 +1096,10 @@ function _calcTermSize() {
     const availW = (container && container.clientWidth > 0 ? container.clientWidth : window.innerWidth) - 16;
     const availH = (container && container.clientHeight > 0 ? container.clientHeight : window.innerHeight * 0.6) - 16;
     const cols = Math.max(40, Math.floor(availW / charW));
-    const rows = Math.max(30, Math.floor(availH / lineH));
+    // 60-row floor (not viewport-derived): claude's diff renderer misdraws
+    // when its frame is taller than the pane, so keep panes tall even on
+    // small phone viewports — the display scrolls anyway.
+    const rows = Math.max(60, Math.floor(availH / lineH));
     return { cols, rows };
 }
 
@@ -1154,6 +1209,7 @@ function termFontLarger() {
 // -- Terminal search --
 let _searchMatches = [];
 let _searchIndex = -1;
+let _searchQueryLen = 0;
 
 function toggleTermSearch() {
     const bar = document.getElementById('term-search');
@@ -1185,6 +1241,8 @@ function onTermSearch() {
         document.getElementById('term-search-count').textContent = '';
         _searchMatches = [];
         _searchIndex = -1;
+        _searchQueryLen = 0;
+        _clearSearchHighlight();
         return;
     }
 
@@ -1193,6 +1251,7 @@ function onTermSearch() {
     const lowerQuery = query.toLowerCase();
     const lowerText = text.toLowerCase();
     _searchMatches = [];
+    _searchQueryLen = query.length;
     let pos = 0;
     while (true) {
         const idx = lowerText.indexOf(lowerQuery, pos);
@@ -1203,6 +1262,62 @@ function onTermSearch() {
 
     _searchIndex = _searchMatches.length > 0 ? 0 : -1;
     _updateSearchCount();
+    if (_searchIndex >= 0) _scrollToMatch(); else _clearSearchHighlight();
+}
+
+function _clearSearchHighlight() {
+    document.querySelectorAll('.search-highlight').forEach(el => {
+        const parent = el.parentNode;
+        el.replaceWith(document.createTextNode(el.textContent));
+        if (parent) parent.normalize();
+    });
+}
+
+// Wrap the current match in a highlight span when it sits entirely inside
+// one text node (the common case). Matches spanning ANSI span boundaries
+// get scroll-only — wrapping across elements isn't worth the complexity.
+function _highlightCurrentMatch(offset, length) {
+    _clearSearchHighlight();
+    const pre = document.getElementById('term-content');
+    if (!pre || length <= 0) return;
+    const walker = document.createTreeWalker(pre, NodeFilter.SHOW_TEXT);
+    let pos = 0;
+    let node;
+    while ((node = walker.nextNode())) {
+        const len = node.textContent.length;
+        if (offset < pos + len) {
+            if (offset >= pos && offset + length <= pos + len) {
+                const range = document.createRange();
+                range.setStart(node, offset - pos);
+                range.setEnd(node, offset - pos + length);
+                const mark = document.createElement('span');
+                mark.className = 'search-highlight';
+                mark.style.background = 'var(--amber)';
+                mark.style.color = '#000';
+                try { range.surroundContents(mark); } catch(e) {}
+            }
+            return;
+        }
+        pos += len;
+    }
+}
+
+function _scrollToMatch() {
+    if (_searchIndex < 0 || _searchIndex >= _searchMatches.length) return;
+    const pre = document.getElementById('term-content');
+    const display = document.getElementById('term-display');
+    if (!pre || !display) return;
+    const offset = _searchMatches[_searchIndex];
+    const text = pre.textContent;
+    // Line index = newline count before the match; content is white-space:pre
+    // (no wrapping), so scrollHeight / totalLines gives the line height.
+    const line = text.slice(0, offset).split('\n').length - 1;
+    const totalLines = text.split('\n').length;
+    const lineH = pre.scrollHeight / Math.max(1, totalLines);
+    // Deliberately NOT guarded with _autoScrolling: the scroll listener
+    // should pause the stream so the match stays in view.
+    display.scrollTop = Math.max(0, line * lineH - display.clientHeight / 2);
+    _highlightCurrentMatch(offset, _searchQueryLen);
 }
 
 function _updateSearchCount() {
@@ -1218,10 +1333,12 @@ function termSearchPrev() {
     if (_searchMatches.length === 0) return;
     _searchIndex = (_searchIndex - 1 + _searchMatches.length) % _searchMatches.length;
     _updateSearchCount();
+    _scrollToMatch();
 }
 
 function termSearchNext() {
     if (_searchMatches.length === 0) return;
     _searchIndex = (_searchIndex + 1) % _searchMatches.length;
     _updateSearchCount();
+    _scrollToMatch();
 }

@@ -7,12 +7,22 @@ import threading
 import time
 
 import shared.state as state
-from shared.tmux import _has_wrapper_descendant, capture_pane, set_ws_send_timeout
+from shared.security import origin_allowed
+from shared.tmux import (
+    _NATIVE_TUI_COMMS,
+    _has_wrapper_descendant,
+    capture_pane,
+    set_ws_send_timeout,
+)
 
 # The sock route is registered via register_streaming() called from serve.py.
 # We cannot use a Blueprint for @sock.route — flask-sock requires the app-level Sock instance.
 
 _sock = None  # Set by register_streaming()
+
+# Default scrollback lines for a stream when the client doesn't specify.
+# Used both before the first message arrives and as the parse fallback.
+_DEFAULT_LINES = 2000
 
 # How long to wait after the resize toggle for the TUI to flush its redraw
 # before we snapshot the new content hash. 0.3s is plenty for Ink/ncurses.
@@ -23,7 +33,7 @@ _REDRAW_FLUSH_SEC = 0.3
 # size instead of preserving the broken state. Matches the floors used in
 # /terminal/resize and js/terminal.js:_calcTermSize.
 _MIN_REDRAW_COLS = 40
-_MIN_REDRAW_ROWS = 30
+_MIN_REDRAW_ROWS = 60
 
 # Periodic self-heal: when a TUI session has been streaming-stable (no content
 # change) for this long AND we haven't redrawn in the throttle window, fire a
@@ -31,7 +41,9 @@ _MIN_REDRAW_ROWS = 30
 _REDRAW_STABLE_SEC = 3.0
 _REDRAW_THROTTLE_SEC = 10.0
 
-# Per-target timestamps for the self-heal heuristic (poll-thread only).
+# Per-target timestamps for the self-heal heuristic. Written by the streamer
+# thread and (via _maybe_redraw_async) WS handler threads; plain dict ops are
+# fine here — a lost-update race only skews the throttle by one window.
 _stable_since: dict[str, float] = {}
 _last_redraw_time: dict[str, float] = {}
 
@@ -65,10 +77,14 @@ def _force_redraw(target):
     out from under them. Best-effort otherwise: failure is silent.
     """
     try:
+        # `=` forces exact session-name matching — a dead target must fail,
+        # not prefix-match into resizing some other live session's pane.
+        exact = f"={target}"
         info = subprocess.run(
-            ["tmux", "display-message", "-t", target, "-p",
-             "#{pane_width}\t#{pane_height}\t#{session_attached}\t#{pane_pid}"],
-            capture_output=True, text=True, timeout=2,
+            ["tmux", "display-message", "-t", exact, "-p",
+             "#{pane_width}\t#{pane_height}\t#{session_attached}\t#{pane_pid}\t#{pane_current_command}"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=2,
         )
         if info.returncode != 0:
             return
@@ -89,6 +105,7 @@ def _force_redraw(target):
                 pane_pid = int(parts[3])
             except ValueError:
                 pass
+        cmd = parts[4] if len(parts) >= 5 else ""
 
         target_w = max(w, _MIN_REDRAW_COLS)
         target_h = max(h, _MIN_REDRAW_ROWS)
@@ -98,7 +115,7 @@ def _force_redraw(target):
 
         is_wrapper = _has_wrapper_descendant(target, pane_pid)
 
-        if is_wrapper:
+        if is_wrapper or cmd in _NATIVE_TUI_COMMS:
             # Wrapper TUI (e.g. claude inside docker via claude-mount.sh):
             # the in-container TUI's foreground pty is several hops from the
             # host pane, so SIGWINCH-via-resize can't reach it. Ctrl+L does,
@@ -106,14 +123,20 @@ def _force_redraw(target):
             # stdin -> container pty -> claude, and claude implements C-l as
             # full clear-and-redraw. This wipes the dirty cells without
             # losing any in-flight typed input (claude re-renders it).
+            #
+            # Native host claude gets the same treatment for the opposite
+            # reason: SIGWINCH *does* reach it, but its diff renderer skips
+            # cells it believes unchanged, so a resize-driven redraw is what
+            # LEAVES stale cells. Only C-l invalidates its screen model.
             subprocess.run(
-                ["tmux", "send-keys", "-t", target, "C-l"],
+                ["tmux", "send-keys", "-t", exact, "C-l"],
                 capture_output=True, timeout=2,
             )
         else:
             opt = subprocess.run(
-                ["tmux", "show-options", "-t", target, "-w", "-v", "window-size"],
-                capture_output=True, text=True, timeout=2,
+                ["tmux", "show-options", "-t", exact, "-w", "-v", "window-size"],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=2,
             )
             old_window_size = (
                 opt.stdout.strip()
@@ -122,31 +145,32 @@ def _force_redraw(target):
             )
 
             subprocess.run(
-                ["tmux", "resize-window", "-t", target, "-x", str(target_w), "-y", str(target_h - 1)],
+                ["tmux", "resize-window", "-t", exact, "-x", str(target_w), "-y", str(target_h - 1)],
                 capture_output=True, timeout=2,
             )
             subprocess.run(
-                ["tmux", "resize-window", "-t", target, "-x", str(target_w), "-y", str(target_h)],
+                ["tmux", "resize-window", "-t", exact, "-x", str(target_w), "-y", str(target_h)],
                 capture_output=True, timeout=2,
             )
 
             if old_window_size:
                 subprocess.run(
-                    ["tmux", "set-option", "-t", target, "-w",
+                    ["tmux", "set-option", "-t", exact, "-w",
                      "window-size", old_window_size],
                     capture_output=True, timeout=2,
                 )
             else:
                 subprocess.run(
-                    ["tmux", "set-option", "-t", target, "-w", "-u", "window-size"],
+                    ["tmux", "set-option", "-t", exact, "-w", "-u", "window-size"],
                     capture_output=True, timeout=2,
                 )
 
         time.sleep(_REDRAW_FLUSH_SEC)
 
         cap = subprocess.run(
-            ["tmux", "capture-pane", "-e", "-p", "-t", target, "-S", "-60"],
-            capture_output=True, text=True, timeout=2,
+            ["tmux", "capture-pane", "-e", "-p", "-t", exact, "-S", "-60"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=2,
         )
         if cap.returncode == 0:
             tail = cap.stdout.rstrip("\n")
@@ -160,6 +184,49 @@ def _force_redraw(target):
         pass
 
 
+def _maybe_redraw_async(target, info):
+    """Kick a background repaint on connect/subscribe for TUI/wrapper panes.
+
+    Plain shell panes don't accumulate stale alt-screen cells — skip them so
+    a connect doesn't pay the redraw cost (or tug at the pane) for nothing.
+    Throttled via _last_redraw_time so reconnect churn can't fire redraws
+    back-to-back; the streamer's periodic self-heal shares the same clock.
+    """
+    if not info or not (
+        info.get("alternate_on") or info.get("is_wrapper") or info.get("is_native_tui")
+    ):
+        return
+    now = time.time()
+    if now - _last_redraw_time.get(target, 0.0) < _REDRAW_THROTTLE_SEC:
+        return
+    _last_redraw_time[target] = now
+    threading.Thread(target=_force_redraw, args=(target,), daemon=True).start()
+
+
+def _full_frame(target, lines):
+    """Capture `target` and return the JSON 'full' frame, or an 'error' frame
+    when the capture fails (dead/unknown target) so the client doesn't sit on
+    a healthy-looking but frozen terminal. Returns (frame_json, info)."""
+    content, info = capture_pane(target, lines)
+    if content is None:
+        return (
+            json.dumps({"type": "error", "error": "Target not found", "target": target}),
+            None,
+        )
+    return (
+        json.dumps(
+            {
+                "type": "full",
+                "content": content,
+                "target": target,
+                "info": info,
+                "ts": time.time(),
+            }
+        ),
+        info,
+    )
+
+
 def register_streaming(sock_instance):
     """Register the WebSocket route on the given Sock instance.
 
@@ -171,43 +238,55 @@ def register_streaming(sock_instance):
     @_sock.route("/terminal/stream")
     def terminal_stream(ws):
         """WebSocket endpoint for real-time terminal streaming."""
+        # WS handshakes bypass CORS entirely — enforce the same Origin
+        # allowlist as the HTTP before_request hook (shared/security.py).
+        if not origin_allowed(
+            ws.environ.get("HTTP_ORIGIN"), ws.environ.get("HTTP_HOST")
+        ):
+            try:
+                ws.close()
+            except Exception:
+                pass
+            return
+
         target = None
-        lines = 200
+        lines = _DEFAULT_LINES
 
         try:
             raw = ws.receive(timeout=5)
             if raw:
                 msg = json.loads(raw)
                 target = msg.get("target", state.tmux_target)
-                lines = min(int(msg.get("lines", 2000)), 20000)
+                lines = min(int(msg.get("lines", _DEFAULT_LINES)), 20000)
         except Exception:
             target = state.tmux_target
 
+        # One entry per connection, mutated in place on resubscribe. The lock
+        # serializes ws.send() across the three threads that write to this
+        # socket (handler, streamer, autoyes broadcaster) — simple_websocket's
+        # send() has no internal lock and can interleave partial writes.
+        client = {
+            "ws": ws,
+            "lock": threading.Lock(),
+            "target": target,
+            "lines": lines,
+            "last_send": time.time(),
+        }
+
         if not target:
             try:
-                ws.send(json.dumps({"type": "error", "error": "No target specified"}))
+                _send_to(client, json.dumps({"type": "error", "error": "No target specified"}))
             except Exception:
                 pass
             return
 
-        # Force a clean repaint BEFORE the initial capture so the first frame
-        # the browser renders is already free of stale tmux-grid artifacts.
-        _force_redraw(target)
-
+        # First frame goes out immediately — even if the pane has stale
+        # grid artifacts. Any repaint runs in the background afterwards and
+        # the streamer pushes the cleaned frame when the content changes.
         try:
-            content, info = capture_pane(target, lines)
-            if content is not None:
-                ws.send(
-                    json.dumps(
-                        {
-                            "type": "full",
-                            "content": content,
-                            "target": target,
-                            "info": info,
-                            "ts": time.time(),
-                        }
-                    )
-                )
+            frame, info = _full_frame(target, lines)
+            _send_to(client, frame)
+            _maybe_redraw_async(target, info)
         except Exception:
             return
 
@@ -216,7 +295,7 @@ def register_streaming(sock_instance):
         with state.ws_lock:
             cache_key = f"{target}:{lines}"
             state.ws_last_content.pop(cache_key, None)
-            state.ws_clients.append((ws, target, lines))
+            state.ws_clients.append(client)
         _ensure_streamer()
 
         try:
@@ -227,37 +306,22 @@ def register_streaming(sock_instance):
                 try:
                     msg = json.loads(raw)
                     if msg.get("type") == "ping":
-                        ws.send(json.dumps({"type": "pong"}))
+                        _send_to(client, json.dumps({"type": "pong"}))
                         continue
                     if msg.get("type") == "subscribe":
                         new_target = msg.get("target", target)
                         new_lines = min(int(msg.get("lines", lines)), 20000)
-                        # Repaint BEFORE the resubscribe capture so the user
-                        # sees a clean first frame on the new tab.
-                        _force_redraw(new_target)
                         with state.ws_lock:
-                            state.ws_clients[:] = [
-                                (w, t, l) for w, t, l in state.ws_clients if w is not ws
-                            ]
                             cache_key = f"{new_target}:{new_lines}"
                             state.ws_last_content.pop(cache_key, None)
-                            state.ws_clients.append((ws, new_target, new_lines))
+                            client["target"] = new_target
+                            client["lines"] = new_lines
                         target = new_target
                         lines = new_lines
                         _ensure_streamer()
-                        content, info = capture_pane(target, lines)
-                        if content is not None:
-                            ws.send(
-                                json.dumps(
-                                    {
-                                        "type": "full",
-                                        "content": content,
-                                        "target": target,
-                                        "info": info,
-                                        "ts": time.time(),
-                                    }
-                                )
-                            )
+                        frame, info = _full_frame(target, lines)
+                        _send_to(client, frame)
+                        _maybe_redraw_async(target, info)
                 except Exception:
                     pass
         except Exception:
@@ -269,7 +333,6 @@ def register_streaming(sock_instance):
 def _terminal_streamer():
     """Background thread: polls tmux, pushes changes to WebSocket clients."""
     _empty_count = 0
-    _last_heartbeat = time.time()
     try:
         while True:
             try:
@@ -277,23 +340,39 @@ def _terminal_streamer():
                     if not state.ws_clients:
                         _empty_count += 1
                         if _empty_count > 50:
+                            # Exit decision and flag flip must be atomic:
+                            # a client connecting in between would see a
+                            # live-but-doomed streamer and get no frames.
+                            # Inside ws_lock, ws_clients is still empty here
+                            # and _ensure_streamer will start a fresh thread
+                            # for the next connect.
+                            state.ws_streamer_running = False
                             return
-                        time.sleep(0.1)
-                        continue
-                    _empty_count = 0
-                    clients = list(state.ws_clients)
+                        clients = []
+                    else:
+                        _empty_count = 0
+                        # Snapshot (entry, target, lines) under the lock —
+                        # subscribe mutates entries in place.
+                        clients = [
+                            (c, c["target"], c["lines"]) for c in state.ws_clients
+                        ]
+
+                if not clients:
+                    # Sleep OUTSIDE ws_lock — holding it here starves
+                    # connecting handlers and the autoyes broadcaster.
+                    time.sleep(0.1)
+                    continue
 
                 now = time.time()
 
                 targets = {}
-                for ws, target, lines in clients:
+                for client, target, lines in clients:
                     key = (target, lines)
                     if key not in targets:
                         targets[key] = []
-                    targets[key].append(ws)
+                    targets[key].append(client)
 
-                sent_any = False
-                for (target, lines), sockets in targets.items():
+                for (target, lines), group in targets.items():
                     try:
                         content, info = capture_pane(target, lines)
                     except Exception:
@@ -302,18 +381,24 @@ def _terminal_streamer():
                         continue
 
                     cache_key = f"{target}:{lines}"
-                    prev_content = state.ws_last_content.get(cache_key)
+                    with state.ws_lock:
+                        prev_content = state.ws_last_content.get(cache_key)
 
                     if prev_content == content:
-                        # Self-heal: a TUI (alt-screen on host, or wrapped
-                        # in docker/podman) that's been quiet for a few
+                        # Self-heal: a TUI (alt-screen on host, native
+                        # claude on the main screen, or wrapped in
+                        # docker/podman) that's been quiet for a few
                         # seconds may have left stale grid cells from
                         # cursor-position writes that never triggered a
                         # full repaint. _force_redraw picks the right
                         # strategy per kind (resize toggle vs Ctrl+L) and
                         # runs in a daemon thread so the 0.3s flush doesn't
                         # block the poll. Throttled so it can't churn.
-                        if info and (info.get("alternate_on") or info.get("is_wrapper")):
+                        if info and (
+                            info.get("alternate_on")
+                            or info.get("is_wrapper")
+                            or info.get("is_native_tui")
+                        ):
                             stable_for = now - _stable_since.get(target, now)
                             since_redraw = now - _last_redraw_time.get(target, 0.0)
                             if stable_for >= _REDRAW_STABLE_SEC and since_redraw >= _REDRAW_THROTTLE_SEC:
@@ -333,42 +418,40 @@ def _terminal_streamer():
                         "ts": now,
                     }
 
-                    state.ws_last_content[cache_key] = content
+                    with state.ws_lock:
+                        state.ws_last_content[cache_key] = content
 
                     try:
                         msg = json.dumps(msg_data)
                     except Exception:
                         continue
 
-                    for ws in sockets:
+                    for client in group:
                         try:
-                            ws.send(msg)
-                            sent_any = True
+                            _send_to(client, msg)
                         except Exception:
-                            _remove_ws_client(ws)
+                            _remove_ws_client(client["ws"])
 
-                if (
-                    not sent_any
-                    and (now - _last_heartbeat) >= state.WS_HEARTBEAT_INTERVAL
-                ):
-                    hb_msg = json.dumps({"type": "heartbeat", "ts": now})
-                    for ws, _t, _l in clients:
+                # Per-client heartbeats: a client watching a quiet target
+                # still needs traffic inside the frontend's 8s inactivity
+                # window even while OTHER targets are busy — a global
+                # sent_any flag starves it into a reconnect loop.
+                for client, _t, _l in clients:
+                    if now - client["last_send"] >= state.WS_HEARTBEAT_INTERVAL:
                         try:
-                            ws.send(hb_msg)
+                            _send_to(client, json.dumps({"type": "heartbeat", "ts": now}))
                         except Exception:
-                            _remove_ws_client(ws)
-                    _last_heartbeat = now
-                elif sent_any:
-                    _last_heartbeat = now
+                            _remove_ws_client(client["ws"])
 
                 active_keys = {f"{t}:{l}" for t, l in targets}
-                stale = [k for k in state.ws_last_content if k not in active_keys]
-                for k in stale:
-                    del state.ws_last_content[k]
+                with state.ws_lock:
+                    stale = [k for k in state.ws_last_content if k not in active_keys]
+                    for k in stale:
+                        del state.ws_last_content[k]
 
                 active_targets = {t for t, _ in targets}
                 for d in (_stable_since, _last_redraw_time):
-                    for t in [t for t in d if t not in active_targets]:
+                    for t in [t for t in list(d) if t not in active_targets]:
                         del d[t]
 
             except Exception:
@@ -378,12 +461,29 @@ def _terminal_streamer():
     except Exception:
         pass
     finally:
-        state.ws_streamer_running = False
+        with state.ws_lock:
+            # Only clear the flag if no replacement streamer has started
+            # since (the normal-exit path above already cleared it, which
+            # lets _ensure_streamer spawn a successor before this runs).
+            if state.ws_streamer_thread is threading.current_thread():
+                state.ws_streamer_running = False
+
+
+def _send_to(client, msg):
+    """Send on a client's socket, serialized by its per-client lock.
+
+    simple_websocket's send() is not thread-safe; the streamer, the WS
+    handler thread, and the autoyes broadcaster can all write to the same
+    socket. Also stamps last_send for per-client heartbeat bookkeeping.
+    """
+    with client["lock"]:
+        client["ws"].send(msg)
+        client["last_send"] = time.time()
 
 
 def _remove_ws_client(ws):
     with state.ws_lock:
-        state.ws_clients[:] = [(w, t, l) for w, t, l in state.ws_clients if w is not ws]
+        state.ws_clients[:] = [c for c in state.ws_clients if c["ws"] is not ws]
 
 
 def _ensure_streamer():
@@ -427,8 +527,8 @@ def broadcast_autoyes_event(target, event, prompt_type):
 
     with state.ws_lock:
         clients = list(state.ws_clients)
-    for ws, _, _ in clients:
+    for client in clients:
         try:
-            ws.send(msg)
+            _send_to(client, msg)
         except Exception:
-            _remove_ws_client(ws)
+            _remove_ws_client(client["ws"])

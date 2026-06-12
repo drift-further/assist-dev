@@ -104,9 +104,9 @@ async function _enableAutoYes(session, delay) {
             else if (!data.enabled) delete _autoyesDelays[session];
             showFlash('sent', data.enabled ? `Auto-Yes ON (${delay}s)` : 'Auto-Yes OFF');
             updateAutoYesUI(session);
-            _smartActionsKey = '';
+            _getSmartState(_termTarget).key = '';  // force re-render (toggle label changed)
             if (_termLatestContent) {
-                const detected = detectSmartActions(stripAnsi(_termLatestContent));
+                const detected = detectSmartActions(stripAnsi(_termLatestContent), _termTarget);
                 renderSmartActions(detected);
             }
         }
@@ -372,11 +372,13 @@ function _unfreezeAndScroll() {
     display.scrollTop = display.scrollHeight;
 }
 
-function detectSmartActions(content) {
+// `content` must be ANSI-stripped; `target` keys the per-pane dismiss state.
+function detectSmartActions(content, target) {
     if (!content) return null;
-    if (_smartDismissed && content === _smartDismissed) return null;
+    const st = _getSmartState(target);
+    if (st.dismissedContent && content === st.dismissedContent) return null;
     // Reset dismiss if content changed
-    if (_smartDismissed && content !== _smartDismissed) _smartDismissed = null;
+    if (st.dismissedContent && content !== st.dismissedContent) st.dismissedContent = null;
 
     const lines = content.split('\n');
     const tail = lines.slice(-60).join('\n');
@@ -395,11 +397,14 @@ function detectSmartActions(content) {
 }
 
 function renderSmartActions(result, targetOverride) {
-    const key = result ? result.id + '|' + result.actions.map(a => a.secret ? '***' : a.send).join(',') : '';
+    // Dedupe key must distinguish actions by what they SEND — numbered-options
+    // and claude-resume actions have no `send`, so fall back to optNum/claudeCmd/label.
+    const key = result ? result.id + '|' + result.actions.map(a => a.secret ? '***' : (a.send ?? a.optNum ?? a.claudeCmd ?? a.label)).join(',') : '';
     const target = targetOverride || _termTarget;
 
-    if (_smartActionsKey === key) return;
-    _smartActionsKey = key;
+    const st = _getSmartState(target);
+    if (st.key === key && _smartActionTarget === target) return;
+    st.key = key;
     _smartActionTarget = target;
 
     const container = document.getElementById('smart-actions');
@@ -464,7 +469,7 @@ function renderSmartActions(result, targetOverride) {
 }
 
 function hideSmartActions() {
-    _smartActionsKey = '';
+    _getSmartState(_smartActionTarget).key = '';
     _layoutShifting = true;
     document.getElementById('smart-actions').classList.remove('visible');
     requestAnimationFrame(() => {
@@ -473,7 +478,18 @@ function hideSmartActions() {
 }
 
 function dismissSmartActions() {
-    _smartDismissed = _termLatestContent;
+    const target = _smartActionTarget || _termTarget;
+    // Use the content of whichever pane the actions came from (main or split)
+    let content = _termLatestContent;
+    if (target && target !== _termTarget) {
+        const session = _termTarget ? _termTarget.split(':')[0] : '';
+        const split = _splitPanes[session];
+        if (split && split.target === target) content = split.lastContent;
+    }
+    // Store ANSI-STRIPPED content — detection always receives stripped
+    // content, so a raw capture here would never match and the panel
+    // would reappear on the next poll.
+    _getSmartState(target).dismissedContent = content ? stripAnsi(content) : null;
     hideSmartActions();
 }
 

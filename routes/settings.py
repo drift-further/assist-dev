@@ -1,6 +1,7 @@
 """routes/settings.py — Settings API: read, update, and server restart."""
 
 import os
+import shlex
 import subprocess
 
 from flask import Blueprint, jsonify, request
@@ -8,6 +9,43 @@ from flask import Blueprint, jsonify, request
 from shared import state
 
 settings_bp = Blueprint("settings_bp", __name__)
+
+# Keys that may only be changed by editing settings.json on disk —
+# never via the HTTP API (they feed shell execution).
+_API_BLOCKED_KEYS = {"server.restart_cmd", "server.session_init_cmd"}
+
+# Shell operators that must never appear in the configured restart command
+# now that it is executed list-form (no shell to interpret them anyway).
+_SHELL_OPERATORS = set(";|&$`<>")
+
+
+def _filter_patch(patch, defaults, blocked=frozenset(), _prefix=""):
+    """Keep only keys that exist in the defaults structure (recursively).
+
+    Returns (filtered_patch, rejected_key_paths). Keys in `blocked`
+    (dotted paths) are stripped even when they exist in defaults.
+    """
+    filtered = {}
+    rejected = []
+    for key, value in patch.items():
+        path = f"{_prefix}{key}"
+        if key not in defaults or path in blocked:
+            rejected.append(path)
+            continue
+        default_value = defaults[key]
+        if isinstance(default_value, dict) and isinstance(value, dict):
+            sub_filtered, sub_rejected = _filter_patch(
+                value, default_value, blocked, _prefix=path + "."
+            )
+            rejected.extend(sub_rejected)
+            if sub_filtered:
+                filtered[key] = sub_filtered
+        elif isinstance(default_value, dict) != isinstance(value, dict):
+            # Type-shape mismatch (dict vs scalar) — refuse to clobber.
+            rejected.append(path)
+        else:
+            filtered[key] = value
+    return filtered, rejected
 
 # Track server start time for uptime display
 _start_time = None
@@ -45,8 +83,13 @@ def patch_settings():
     data = request.get_json(silent=True) or {}
     if not data:
         return jsonify({"ok": False, "error": "No data"}), 400
-    updated = state.patch_settings(data)
-    return jsonify({"ok": True, "settings": updated})
+    filtered, rejected = _filter_patch(
+        data, state.DEFAULT_SETTINGS, blocked=_API_BLOCKED_KEYS
+    )
+    if not filtered:
+        return jsonify({"ok": False, "error": "No valid keys", "rejected": rejected}), 400
+    updated = state.patch_settings(filtered)
+    return jsonify({"ok": True, "settings": updated, "rejected": rejected})
 
 
 @settings_bp.route("/api/project-settings/<project>")
@@ -68,6 +111,9 @@ def patch_project_settings_api(project):
     data = request.get_json(silent=True) or {}
     if not data:
         return jsonify({"ok": False, "error": "No data"}), 400
+    data, rejected = _filter_patch(data, state.DEFAULT_PROJECT_SETTINGS)
+    if not data:
+        return jsonify({"ok": False, "error": "No valid keys", "rejected": rejected}), 400
     updated = state.patch_project_settings(project, data)
     # Sync auto-yes runtime state when the patch touches it. Otherwise toggling
     # "Auto-enable: ON" in the per-project panel only persists to disk; the
@@ -96,20 +142,38 @@ def patch_project_settings_api(project):
                     )
                 except (ValueError, TypeError):
                     pass
-    return jsonify({"ok": True, "project": project, "settings": updated})
+    return jsonify(
+        {"ok": True, "project": project, "settings": updated, "rejected": rejected}
+    )
 
 
 @settings_bp.route("/api/restart", methods=["POST"])
 def restart_server():
-    """Execute the configured restart command."""
+    """Execute the configured restart command (list-form, no shell)."""
     cmd = state.get_setting("server", "restart_cmd")
     if not cmd:
         return jsonify({"ok": False, "error": "No restart command configured"}), 400
+    if any(ch in cmd for ch in _SHELL_OPERATORS):
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": "restart_cmd contains shell operators; "
+                    "edit settings.json to a plain argv command",
+                }
+            ),
+            500,
+        )
+    try:
+        argv = shlex.split(cmd)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": f"Unparseable restart_cmd: {e}"}), 500
+    if not argv:
+        return jsonify({"ok": False, "error": "Empty restart command"}), 500
     try:
         # Spawn detached so the response can be sent before we die
         subprocess.Popen(
-            cmd,
-            shell=True,
+            argv,
             start_new_session=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

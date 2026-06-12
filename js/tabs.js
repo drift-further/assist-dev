@@ -235,8 +235,10 @@ function _initTabLongPress() {
         const touch = e.touches[0];
         _tabLongPressTimer = setTimeout(function() {
             _tabLongPressTimer = null;
-            _createContextMenu(tab, touch.clientX, touch.clientY);
-            // Prevent the tap from also firing onclick
+            // Offset the menu below the touch point so the synthesized click
+            // on release doesn't land on the first menu item ("Pin").
+            _createContextMenu(tab, touch.clientX, touch.clientY + 12);
+            // Mark so touchend swallows the synthesized click
             tab._longPressTriggered = true;
         }, _TAB_LONG_PRESS_MS);
     }, {passive: true});
@@ -248,10 +250,26 @@ function _initTabLongPress() {
         }
     }, {passive: true});
 
-    container.addEventListener('touchend', function() {
+    container.addEventListener('touchend', function(e) {
         if (_tabLongPressTimer) {
             clearTimeout(_tabLongPressTimer);
             _tabLongPressTimer = null;
+        }
+        // Consume the long-press flag: swallow the click the browser
+        // synthesizes right after this touchend so it can't hit the menu
+        // or re-select the tab.
+        const tab = e.target.closest('.session-tab');
+        if (tab && tab._longPressTriggered) {
+            tab._longPressTriggered = false;
+            const swallow = function(ev) {
+                ev.preventDefault();
+                ev.stopPropagation();
+            };
+            document.addEventListener('click', swallow, {capture: true, once: true});
+            // Disarm if no synthesized click arrives (some browsers skip it)
+            setTimeout(function() {
+                document.removeEventListener('click', swallow, {capture: true});
+            }, 500);
         }
     }, {passive: true});
 
@@ -327,6 +345,9 @@ function _initTabDragReorder() {
         if (wasDragging && Math.abs(_dragOffsetX) > 40) {
             const tabs = Array.from(container.querySelectorAll('.session-tab'));
             const idx = tabs.indexOf(tab);
+            // Tab may have been removed (poll rebuild, session died) — bail
+            // rather than reorder with -1 math.
+            if (idx === -1) return;
             const direction = _dragOffsetX > 0 ? 1 : -1;
             const newIdx = Math.max(0, Math.min(tabs.length - 1, idx + direction));
             if (newIdx !== idx) {
@@ -339,12 +360,31 @@ function _initTabDragReorder() {
             }
         }
     }, {passive: true});
+
+    // touchcancel (call, browser gesture takeover) — clean up so _dragTab
+    // can't stay set and block the poll's tab rebuild forever.
+    container.addEventListener('touchcancel', function() {
+        if (_dragHoldTimer) { clearTimeout(_dragHoldTimer); _dragHoldTimer = null; }
+        if (_dragTab) {
+            _dragTab.style.opacity = '';
+            _dragTab.style.transform = '';
+            _dragTab.style.boxShadow = '';
+            _dragTab = null;
+        }
+        _dragEnabled = false;
+    }, {passive: true});
 }
 
 // --- Click-to-place reorder mode ---
 
 let _reorderModeTab = null;  // the tab being repositioned
 let _reorderCleanup = null;  // function to tear down listeners + visuals
+
+// True while a tab drag or reorder placement is in progress — the 5s poll
+// checks this and skips its tab-strip rebuild (app.js _applySessionsData).
+function _tabsInteractionActive() {
+    return !!(_dragTab || _reorderModeTab);
+}
 
 function _enterReorderMode(tab) {
     // Cancel any existing reorder mode

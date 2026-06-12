@@ -242,24 +242,21 @@ async function typeCmd(cmd) {
 }
 
 // ================================================================
-// Sudo Password — server-side persistence with localStorage cache
+// Sudo Password — stored server-side only; the client never sees it
 // ================================================================
-let _sudoPassword = null; // in-memory cache
+let _sudoHasPassword = false;
 
 async function initSudoButton() {
     const btn = document.getElementById('btn-sudo');
-    // Try server first, fall back to localStorage
     try {
         const resp = await fetch('/sudo-password');
         const data = await resp.json();
-        if (data.has_password) {
-            _sudoPassword = data.password;
-            localStorage.setItem('assist_sudo_pw', _sudoPassword);
-        } else {
-            // Migrate from localStorage to server if present
+        _sudoHasPassword = !!data.has_password;
+        if (!_sudoHasPassword) {
+            // Migrate a legacy localStorage password to the server, then drop it
             const local = localStorage.getItem('assist_sudo_pw');
             if (local) {
-                _sudoPassword = local;
+                _sudoHasPassword = true;
                 fetch('/sudo-password', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -268,9 +265,11 @@ async function initSudoButton() {
             }
         }
     } catch (e) {
-        _sudoPassword = localStorage.getItem('assist_sudo_pw');
+        _sudoHasPassword = false;
     }
-    if (_sudoPassword) {
+    // Never keep the password client-side
+    localStorage.removeItem('assist_sudo_pw');
+    if (_sudoHasPassword) {
         btn.classList.add('has-pw');
         btn.innerHTML = '&#128275;'; // open lock
     }
@@ -278,9 +277,9 @@ async function initSudoButton() {
 
 async function toggleSudoPassword() {
     const btn = document.getElementById('btn-sudo');
-    if (_sudoPassword) {
+    if (_sudoHasPassword) {
         if (confirm('Clear stored sudo password?')) {
-            _sudoPassword = null;
+            _sudoHasPassword = false;
             localStorage.removeItem('assist_sudo_pw');
             fetch('/sudo-password', {
                 method: 'POST',
@@ -294,8 +293,6 @@ async function toggleSudoPassword() {
     } else {
         const pw = prompt('Enter sudo password (stored on server):');
         if (pw) {
-            _sudoPassword = pw;
-            localStorage.setItem('assist_sudo_pw', pw);
             try {
                 await fetch('/sudo-password', {
                     method: 'POST',
@@ -303,6 +300,7 @@ async function toggleSudoPassword() {
                     body: JSON.stringify({ password: pw }),
                 });
             } catch (e) {}
+            _sudoHasPassword = true;
             btn.classList.add('has-pw');
             btn.innerHTML = '&#128275;'; // open lock
             showFlash('sent', 'Password stored');
@@ -342,12 +340,14 @@ function _resetSudoTap() {
     _updateSudoSendBtn();
 }
 
-async function _sendSudoPasswordToTerminal(pw) {
+async function _sendSudoPasswordToTerminal() {
+    // Server reads the stored password and types it into the pane \u2014
+    // the password never travels to the browser or into history.
     try {
-        const resp = await fetch('/type', {
+        const resp = await fetch('/sudo-send', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ text: pw, enter: true, target: getInputTarget() }),
+            body: JSON.stringify({ target: getInputTarget() }),
         });
         const data = await resp.json();
         if (data.ok) {
@@ -361,15 +361,14 @@ async function _sendSudoPasswordToTerminal(pw) {
 }
 
 async function doSudoSend() {
-    const pw = _sudoPassword || localStorage.getItem('assist_sudo_pw');
-    if (!pw) {
+    if (!_sudoHasPassword) {
         showFlash('error', 'No password (use \uD83D\uDD12 to set)');
         return;
     }
 
     // Single-tap mode when sudo prompt is visible in terminal
     if (_isSudoDetected()) {
-        await _sendSudoPasswordToTerminal(pw);
+        await _sendSudoPasswordToTerminal();
         _resetSudoTap();
         return;
     }
@@ -379,7 +378,7 @@ async function doSudoSend() {
     if (_sudoTapTimer) clearTimeout(_sudoTapTimer);
 
     if (_sudoTapCount >= _SUDO_TAP_REQUIRED) {
-        await _sendSudoPasswordToTerminal(pw);
+        await _sendSudoPasswordToTerminal();
         _resetSudoTap();
         return;
     }

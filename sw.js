@@ -1,5 +1,5 @@
-// sw.js — Service worker for Assist (stale-while-revalidate for static assets)
-const VERSION = 'assist-v2-003';
+// sw.js — Service worker for Assist (network-first for static assets, cache fallback when offline)
+const VERSION = 'assist-v3-001';
 const STATIC_CACHE = 'assist-static-' + VERSION;
 const STATIC_URLS = [
     '/',
@@ -38,9 +38,12 @@ self.addEventListener('activate', event => {
 });
 
 self.addEventListener('fetch', event => {
+    // Never intercept non-GET requests
+    if (event.request.method !== 'GET') return;
+
     const url = new URL(event.request.url);
 
-    // Network-only for API, poll, terminal, WebSocket
+    // Network-only for API, poll, terminal, sudo password, WebSocket
     if (
         url.pathname.startsWith('/poll') ||
         url.pathname.startsWith('/terminal/') ||
@@ -51,6 +54,7 @@ self.addEventListener('fetch', event => {
         url.pathname.startsWith('/upload') ||
         url.pathname.startsWith('/history') ||
         url.pathname.startsWith('/favorite') ||
+        url.pathname.startsWith('/sudo-password') ||
         url.pathname.startsWith('/autoyes/') ||
         url.pathname.startsWith('/api/') ||
         url.pathname.startsWith('/health')
@@ -58,16 +62,15 @@ self.addEventListener('fetch', event => {
         return;  // let browser handle normally (network-only)
     }
 
-    // Stale-while-revalidate for static assets
+    // Network-first with cache fallback for the app shell + static assets
+    // (/, /index.html, /js/, /css/). This is a LAN tool: stale-while-
+    // revalidate meant every deploy's first load verified stale code.
     event.respondWith(
         caches.open(STATIC_CACHE).then(cache =>
-            cache.match(event.request).then(cached => {
-                const fetched = fetch(event.request).then(response => {
-                    if (response.ok) cache.put(event.request, response.clone());
-                    return response;
-                }).catch(() => cached);
-                return cached || fetched;
-            })
+            fetch(event.request).then(response => {
+                if (response.ok) cache.put(event.request, response.clone());
+                return response;
+            }).catch(() => cache.match(event.request, {ignoreSearch: true}))
         )
     );
 });

@@ -2,9 +2,15 @@
 
 import json
 import re
+import threading
 import time
 
-from shared.state import HISTORY_FILE, FAVORITES_FILE, MAX_HISTORY
+# Attribute access (state.MAX_HISTORY) instead of from-import: MAX_HISTORY is
+# rebound by state._apply_settings() when settings are patched at runtime, so
+# importing it by value would freeze the startup value forever.
+import shared.state as state
+
+_history_lock = threading.Lock()
 
 # Common CLI commands that phone keyboards auto-capitalize.
 _LOWERCASE_COMMANDS = {
@@ -132,8 +138,8 @@ def load_json(path, default=None):
 
 
 def save_json(path, data):
-    """Write data as formatted JSON."""
-    path.write_text(json.dumps(data, indent=2))
+    """Write data as formatted JSON (atomic: tmp + fsync + rename)."""
+    state.atomic_write_json(path, data)
 
 
 def clean_for_history(text):
@@ -163,22 +169,23 @@ def add_to_history(text):
         return
     if len(text.strip()) <= 2:
         return
-    history = load_json(HISTORY_FILE, default=[])
-    history = [h for h in history if h["text"] != text]
-    history.insert(
-        0,
-        {
-            "text": text,
-            "display": display,
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        },
-    )
-    save_json(HISTORY_FILE, history[:MAX_HISTORY])
+    # Lock the whole read-modify-write: this is called from multiple endpoints
+    # concurrently and an unlocked RMW can drop entries.
+    with _history_lock:
+        history = load_json(state.HISTORY_FILE, default=[])
+        history = [h for h in history if h["text"] != text]
+        history.insert(
+            0,
+            {
+                "text": text,
+                "display": display,
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            },
+        )
+        save_json(state.HISTORY_FILE, history[: state.MAX_HISTORY])
 
 
 def resolve_target(data):
     """Return the tmux target to use: prefer client-supplied, fall back to global."""
-    from shared.state import tmux_target
-
     client_target = (data.get("target") or "").strip()
-    return client_target or tmux_target
+    return client_target or state.tmux_target

@@ -17,8 +17,21 @@ _IS_MAC = platform.system() == "Darwin"
 # cells accumulate above the live viewport. Capturing only the visible
 # screen (`-S 0`) hides the accumulated mess.
 _WRAPPER_COMMS = ("docker", "podman", "lxc-attach", "kubectl")
+
+# Native-TUI detection: claude running directly in the host pane renders on
+# the MAIN screen (alternate_on=0) with a diff-based renderer that skips
+# cells it believes unchanged (e.g. runs of spaces). After a reflow or a
+# frame taller than the pane, its model diverges from the tmux grid and the
+# skipped cells keep stale characters. SIGWINCH-via-resize triggers exactly
+# those diff redraws, so the heal for these panes is Ctrl+L (full
+# clear-and-repaint, re-renders in-flight typed input). Note: npx-launched
+# claude shows comm "node" — too generic to include safely.
+_NATIVE_TUI_COMMS = ("claude",)
 _WRAPPER_CACHE: dict[str, tuple[float, bool]] = {}
 _WRAPPER_CACHE_TTL = 5.0  # seconds
+# Entries for dead targets are never evicted individually; just reset the
+# whole cache when it grows past this (it repopulates within one TTL).
+_WRAPPER_CACHE_MAX = 256
 
 
 def _has_wrapper_descendant(target, pane_pid):
@@ -33,6 +46,8 @@ def _has_wrapper_descendant(target, pane_pid):
     cached = _WRAPPER_CACHE.get(target)
     if cached and now - cached[0] < _WRAPPER_CACHE_TTL:
         return cached[1]
+    if len(_WRAPPER_CACHE) > _WRAPPER_CACHE_MAX:
+        _WRAPPER_CACHE.clear()
     try:
         children: dict[int, list[tuple[int, str]]] = {}
         for entry in os.listdir("/proc"):
@@ -271,6 +286,8 @@ def capture_pane(target, lines=2000):
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=5,
     )
     info = {}
@@ -300,6 +317,9 @@ def capture_pane(target, lines=2000):
     # resize-window toggle (which doesn't). Does NOT affect the capture
     # range — wrapper sessions keep full scrollback.
     info["is_wrapper"] = (not alternate_on) and _has_wrapper_descendant(target, pane_pid)
+    # Native claude on the main screen needs the same Ctrl+L heal — its
+    # diff renderer leaves stale cells that SIGWINCH redraws can't clear.
+    info["is_native_tui"] = (not alternate_on) and info.get("command") in _NATIVE_TUI_COMMS
 
     capture_args = ["tmux", "capture-pane", "-e", "-p", "-t", target]
     if alternate_on:
@@ -307,10 +327,14 @@ def capture_pane(target, lines=2000):
     else:
         capture_args += ["-S", f"-{lines}"]
 
+    # Pane content is arbitrary bytes; under a non-UTF8 locale a bare
+    # text=True raises UnicodeDecodeError and silently freezes the stream.
     proc = subprocess.run(
         capture_args,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=5,
     )
     if proc.returncode != 0:
@@ -322,6 +346,32 @@ def capture_pane(target, lines=2000):
         lines_list.pop()
     content = "\n".join(lines_list)
     return content, info
+
+
+def pane_wants_ctrl_l_heal(target):
+    """True when a full repaint of `target` needs Ctrl+L rather than SIGWINCH.
+
+    Two kinds of pane qualify: native claude (diff renderer on the main
+    screen — resize-driven redraws are the ones that leave artifacts) and
+    wrapper TUIs (docker/podman — SIGWINCH never reaches the in-container
+    process, but send-keys does). Best-effort: False on any failure.
+    """
+    try:
+        proc = subprocess.run(
+            ["tmux", "display-message", "-t", f"={target}", "-p",
+             "#{pane_current_command}\t#{pane_pid}"],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=2,
+        )
+        if proc.returncode != 0:
+            return False
+        parts = proc.stdout.strip().split("\t")
+        if parts and parts[0] in _NATIVE_TUI_COMMS:
+            return True
+        pane_pid = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+        return _has_wrapper_descendant(target, pane_pid)
+    except Exception:
+        return False
 
 
 def set_ws_send_timeout(ws):

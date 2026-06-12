@@ -101,7 +101,7 @@ def save_commands(project):
     commands = data.get("commands", [])
     cmd_file = project_path / ".assist-commands.json"
     try:
-        cmd_file.write_text(json.dumps({"commands": commands}, indent=2))
+        state.atomic_write_json(cmd_file, {"commands": commands})
         return jsonify({"ok": True})
     except OSError as e:
         return jsonify({"ok": False, "error": str(e)}), 500

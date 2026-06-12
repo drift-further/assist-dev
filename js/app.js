@@ -88,6 +88,10 @@ async function consolidatedPoll() {
 
 // Extract session tab rendering from loadSessions() into a data-driven function
 function _applySessionsData(panes, activeTarget) {
+    // Skip the rebuild while a tab drag or reorder placement is in progress —
+    // innerHTML='' mid-interaction reorders the wrong tab and persists the
+    // corrupted order to localStorage.
+    if (typeof _tabsInteractionActive === 'function' && _tabsInteractionActive()) return;
     const container = document.getElementById('session-tabs');
     const current = _termTarget || activeTarget || '';
 
@@ -269,7 +273,7 @@ function _applyScanData(scanPanes) {
         const isActive = _termOpen && pane.target === _termTarget;
         if (isActive) continue;
 
-        const detected = detectSmartActions(stripAnsi(pane.tail));
+        const detected = detectSmartActions(stripAnsi(pane.tail), pane.target);
         const tab = document.querySelector(`.session-tab[data-target="${CSS.escape(pane.target)}"]`);
 
         if (detected) {
@@ -322,8 +326,18 @@ initSudoButton();
 initClipboardImagePaste();
 requestNotifPermission();
 
-// Two timers only: 1s UI clock + 5s server poll
-setInterval(consolidatedPoll, SETTINGS ? SETTINGS.connection.poll_interval_ms : 5000);
+// Two timers only: 1s UI clock + self-rescheduling server poll.
+// A setTimeout loop (not setInterval) so connection.poll_interval_ms is
+// re-read on every tick — the async settings fetch hasn't resolved yet
+// when this first runs.
+function _schedulePoll() {
+    const interval = SETTINGS?.connection?.poll_interval_ms || 5000;
+    setTimeout(async () => {
+        await consolidatedPoll();
+        _schedulePoll();
+    }, interval);
+}
+_schedulePoll();
 
 // Restore tmux target from localStorage
 try {

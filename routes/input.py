@@ -171,6 +171,7 @@ def type_text():
     data = request.get_json(silent=True) or {}
     text = (data.get("text") or "").strip()
     enter = data.get("enter", True)
+    no_history = bool(data.get("no_history"))
     if not text and not enter:
         return jsonify({"ok": False, "error": "No text provided"}), 400
     if text and enter:
@@ -185,7 +186,7 @@ def type_text():
             time.sleep(0.05)
             tmux_send_keys(target, "Enter")
         state.touch_activity(target)
-        if text:
+        if text and not no_history:
             add_to_history(text)
         return jsonify({"ok": True, "via": "tmux"})
 
@@ -203,7 +204,8 @@ def type_text():
         time.sleep(0.05)
         subprocess.run(["xdotool", "key", "Return"], timeout=5)
 
-    add_to_history(text)
+    if not no_history:
+        add_to_history(text)
     return jsonify({"ok": True, "via": "xdotool"})
 
 
@@ -237,15 +239,46 @@ def upload_file():
 _SUDO_PW_FILE = state.DATA_DIR / "sudo_pw.dat"
 
 
-@input_bp.route("/sudo-password", methods=["GET"])
-def sudo_password_get():
-    """Return the stored sudo password (base64-encoded on disk)."""
+def _read_sudo_password():
+    """Return the stored sudo password, or None when absent/unreadable."""
     try:
         encoded = _SUDO_PW_FILE.read_text().strip()
-        pw = base64.b64decode(encoded).decode()
-        return jsonify({"ok": True, "has_password": True, "password": pw})
+        return base64.b64decode(encoded).decode()
     except (OSError, ValueError):
-        return jsonify({"ok": True, "has_password": False})
+        return None
+
+
+@input_bp.route("/sudo-password", methods=["GET"])
+def sudo_password_get():
+    """Report whether a sudo password is stored. Never returns the password."""
+    return jsonify({"ok": True, "has_password": _read_sudo_password() is not None})
+
+
+@input_bp.route("/sudo-send", methods=["POST"])
+def sudo_send():
+    """Send the stored sudo password + Enter to the target pane, server-side.
+
+    The password never leaves the server and is never added to history.
+    """
+    pw = _read_sudo_password()
+    if not pw:
+        return jsonify({"ok": False, "error": "No password stored"}), 404
+
+    data = request.get_json(silent=True) or {}
+    target = resolve_target(data)
+
+    if not target or not tmux_target_exists(target):
+        return (
+            jsonify({"ok": False, "error": "No active tmux target — open a session first"}),
+            400,
+        )
+
+    if not tmux_send_text(target, pw):
+        return jsonify({"ok": False, "error": "tmux send-keys failed"}), 500
+    time.sleep(0.05)
+    tmux_send_keys(target, "Enter")
+    state.touch_activity(target)
+    return jsonify({"ok": True, "via": "tmux"})
 
 
 @input_bp.route("/sudo-password", methods=["POST"])

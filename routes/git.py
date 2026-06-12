@@ -1,6 +1,7 @@
 """routes/git.py — Git operations and venv creation in isolated tmux sessions."""
 
 import concurrent.futures
+import shlex
 import subprocess
 import time
 import uuid
@@ -14,6 +15,37 @@ from shared.utils import resolve_target
 
 git_bp = Blueprint("git_bp", __name__)
 
+# Characters that must never appear in any git argument — the command is
+# ultimately typed into a shell-backed tmux pane, so anything the shell
+# could interpret is rejected outright.
+_FORBIDDEN_CHARS = set(";|&$`(){}<>\n\r")
+
+
+def _validate_git_command(command):
+    """Validate a (possibly &&-chained) git command and rebuild it safely.
+
+    Each &&-segment must shlex-parse, have argv[0] == "git", and contain
+    no shell metacharacters in any token. Returns (rebuilt_cmd, None) on
+    success or (None, error_message) on rejection.
+    """
+    segments = command.split("&&")
+    rebuilt = []
+    for segment in segments:
+        segment = segment.strip()
+        if not segment:
+            return None, "Empty command segment"
+        try:
+            tokens = shlex.split(segment)
+        except ValueError as e:
+            return None, f"Unparseable command: {e}"
+        if not tokens or tokens[0] != "git":
+            return None, "Only git commands allowed"
+        for tok in tokens:
+            if any(ch in _FORBIDDEN_CHARS for ch in tok):
+                return None, "Shell metacharacters not allowed"
+        rebuilt.append(" ".join(shlex.quote(tok) for tok in tokens))
+    return " && ".join(rebuilt), None
+
 
 @git_bp.route("/api/git/run", methods=["POST"])
 def git_run():
@@ -25,9 +57,9 @@ def git_run():
     if not command:
         return jsonify({"ok": False, "error": "No command provided"}), 400
 
-    first_cmd = command.split("&&")[0].strip()
-    if not first_cmd.startswith("git "):
-        return jsonify({"ok": False, "error": "Only git commands allowed"}), 403
+    command, validation_error = _validate_git_command(command)
+    if validation_error:
+        return jsonify({"ok": False, "error": validation_error}), 403
 
     if not target:
         return jsonify({"ok": False, "error": "No active session"}), 400

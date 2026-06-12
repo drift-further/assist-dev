@@ -117,7 +117,9 @@ def get_claude_meta(target):
             if gs_proc.returncode == 0:
                 count = 0
                 for line in gs_proc.stdout.strip().split("\n"):
-                    if len(line) >= 2 and line[0] in "MA" or line[1] in "MA":
+                    if not line:
+                        continue
+                    if len(line) >= 2 and (line[0] in "MA" or line[1] in "MA"):
                         count += 1
                 result["edited_files"] = count
         except Exception:

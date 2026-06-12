@@ -23,6 +23,10 @@ _PERMISSION_YNA_RE = re.compile(
     re.IGNORECASE,
 )
 _CONFIRM_YN_RE = re.compile(r"\(y/n\)|\[Y/n\]|\[y/N\]|\(yes/no\)", re.IGNORECASE)
+# Bracket/word-style prompts ([Y/n], [y/N], (yes/no)) are readline prompts
+# that wait for Enter — a bare "y" just echoes and re-triggers a fresh
+# countdown each tick (yyy…). TUI-style (y/n) prompts react to the bare key.
+_CONFIRM_NEEDS_ENTER_RE = re.compile(r"\[Y/n\]|\[y/N\]|\(yes/no\)", re.IGNORECASE)
 _NUMBERED_YES_RE = re.compile(
     r"(?:^|\n)\s*(?:[^\d\s]\s*)?1[\.\)]\s*Yes\b", re.IGNORECASE
 )
@@ -41,9 +45,18 @@ def _detect_autoyes_prompt(tail):
     bottom = "\n".join(lines[-depth:])
     if _PERMISSION_YNA_RE.search(bottom):
         return ("permission-yna", "y", False, _extract_summary(tail, "permission"))
-    if _CONFIRM_YN_RE.search(bottom):
-        if not re.search(r"\(y/n/a\)|\[Y/n/a\]", bottom, re.IGNORECASE):
-            return ("confirm-yn", "y", False, _extract_summary(tail, "confirm"))
+    # confirm-yn must sit on the LAST non-empty line — a real interactive
+    # prompt waits at the bottom of the pane. A (y/n) merely *displayed*
+    # mid-screen (e.g. Claude printing code containing prompts) is not one.
+    last_line = ""
+    for ln in reversed(lines):
+        if ln.strip():
+            last_line = ln
+            break
+    if _CONFIRM_YN_RE.search(last_line):
+        if not re.search(r"\(y/n/a\)|\[Y/n/a\]", last_line, re.IGNORECASE):
+            with_enter = bool(_CONFIRM_NEEDS_ENTER_RE.search(last_line))
+            return ("confirm-yn", "y", with_enter, _extract_summary(tail, "confirm"))
     # Numbered prompts: Claude Code renders its TodoWrite/status panel BELOW
     # the "Esc to cancel · …" footer when tasks are active, pushing the
     # footer out of `bottom`. Anchor on the LAST footer in the tail and
@@ -193,16 +206,47 @@ def _autoyes_scan_tick():
         timeout=5,
     )
     if proc.returncode != 0:
+        # tmux server gone — every session is dead; drop all auto-yes state
+        # so ghost countdowns/toggles aren't served for the process lifetime.
+        if "no server" in (proc.stderr or "").lower():
+            with state.autoyes_lock:
+                state.autoyes_countdowns.clear()
+                state.autoyes_answered.clear()
+                state.autoyes_sessions.clear()
+                state.autoyes_delays.clear()
         return
 
     now = time.time()
 
+    # Build live session/pane sets, then prune state for dead sessions and
+    # dead panes BEFORE scanning (killed sessions otherwise leak countdown/
+    # answered/sessions/delays entries forever).
+    live_sessions = set()
+    live_targets = set()
+    pane_rows = []
     for line in proc.stdout.strip().split("\n"):
         if not line:
             continue
         parts = line.split("\t")
         if len(parts) < 3:
             continue
+        live_sessions.add(parts[0])
+        live_targets.add(f"{parts[0]}:{parts[1]}.{parts[2]}")
+        pane_rows.append(parts)
+
+    with state.autoyes_lock:
+        for sess in list(state.autoyes_sessions):
+            if sess not in live_sessions:
+                state.autoyes_sessions.pop(sess, None)
+                state.autoyes_delays.pop(sess, None)
+        for t in list(state.autoyes_countdowns):
+            if t not in live_targets:
+                state.autoyes_countdowns.pop(t, None)
+        for t in list(state.autoyes_answered):
+            if t not in live_targets:
+                state.autoyes_answered.pop(t, None)
+
+    for parts in pane_rows:
         session_name = parts[0]
         if session_name not in active_sessions:
             continue
@@ -225,8 +269,11 @@ def _autoyes_scan_tick():
         detected = _detect_autoyes_prompt(tail)
 
         # Collect broadcast event to fire AFTER releasing the lock
-        # (broadcast_autoyes_event also acquires autoyes_lock — avoid deadlock)
+        # (broadcast_autoyes_event also acquires autoyes_lock — avoid deadlock).
+        # Likewise collect the keystrokes to send: tmux subprocesses + sleep
+        # must not run under the lock.
         broadcast_event = None
+        fire_action = None  # (send_text, with_enter, prompt_type)
 
         with state.autoyes_lock:
             if not detected:
@@ -267,22 +314,16 @@ def _autoyes_scan_tick():
             if existing and existing["prompt_hash"] == phash:
                 if now >= existing["deadline"]:
                     prompt_type, send_text, with_enter, _summary = detected
-                    if send_text:
-                        tmux_send_text(target, send_text)
-                    if with_enter:
-                        time.sleep(0.05)
-                        tmux_send_keys(target, "Enter")
                     state.autoyes_answered[target] = (phash, now)
                     state.autoyes_countdowns.pop(target, None)
-                    log.info(
-                        "autoyes: FIRED %s on %s (send=%r enter=%r)",
-                        detected[0],
-                        target,
-                        send_text,
-                        with_enter,
-                    )
+                    fire_action = (send_text, with_enter, prompt_type)
                     broadcast_event = (target, "fired", detected[0])
             else:
+                # Re-check enablement: a toggle-off mid-tick must not
+                # recreate a phantom countdown that's never cleaned up.
+                if not state.autoyes_sessions.get(session_name):
+                    state.autoyes_countdowns.pop(target, None)
+                    continue
                 proj_delay = state.get_project_setting(session_name, "autoyes", "delay")
                 delay = state.autoyes_delays.get(session_name, proj_delay)
                 summary = detected[3] if len(detected) > 3 else None
@@ -295,6 +336,22 @@ def _autoyes_scan_tick():
                     "summary": summary,
                 }
                 broadcast_event = (target, "countdown", detected[0])
+
+        # Send keystrokes outside the lock (subprocess + sleep)
+        if fire_action:
+            send_text, with_enter, prompt_type = fire_action
+            if send_text:
+                tmux_send_text(target, send_text)
+            if with_enter:
+                time.sleep(0.05)
+                tmux_send_keys(target, "Enter")
+            log.info(
+                "autoyes: FIRED %s on %s (send=%r enter=%r)",
+                prompt_type,
+                target,
+                send_text,
+                with_enter,
+            )
 
         # Broadcast outside the lock
         if broadcast_event:
@@ -366,12 +423,17 @@ def autoyes_cancel():
     target = (data.get("target") or "").strip()
     if not target:
         return jsonify({"ok": False, "error": "No target"}), 400
+    # Collect the event to fire AFTER releasing the lock
+    # (broadcast_autoyes_event also acquires autoyes_lock — avoid deadlock).
+    broadcast_event = None
     with state.autoyes_lock:
         cd = state.autoyes_countdowns.get(target)
         if cd and not cd["cancelled"]:
             cd["cancelled"] = True
-            broadcast_autoyes_event(target, "cancelled", cd["prompt_type"])
-            return jsonify({"ok": True, "cancelled": True})
+            broadcast_event = (target, "cancelled", cd["prompt_type"])
+    if broadcast_event:
+        broadcast_autoyes_event(*broadcast_event)
+        return jsonify({"ok": True, "cancelled": True})
     return jsonify({"ok": True, "cancelled": False})
 
 

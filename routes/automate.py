@@ -31,10 +31,34 @@ def _build_automate_prompt(prompt, project_path):
 def _automate_save():
     """Persist automate state to disk (call while holding automate_lock)."""
     try:
-        st = {k: v for k, v in state.automate.items() if k != "last_output_hash"}
+        st = {
+            k: v
+            for k, v in state.automate.items()
+            if k not in ("last_output_hash", "run_id", "trust_answered")
+        }
         save_json(state.AUTOMATE_STATE_FILE, st)
     except Exception:
         pass
+
+
+def _next_run_id():
+    """Bump the monitor generation token (call while holding automate_lock).
+
+    Every start/reconnect/recover/stop increments it; a monitor thread exits
+    as soon as the stored token no longer matches the one it was spawned
+    with. This replaces the old stop_event set/sleep/clear dance, which
+    raced with monitors mid-iteration (soft relaunch sleeps 30s) and left
+    duplicate monitors running.
+    """
+    run_id = state.automate.get("run_id", 0) + 1
+    state.automate["run_id"] = run_id
+    return run_id
+
+
+def _run_id_current(run_id):
+    """True if this monitor generation is still the live one."""
+    with state.automate_lock:
+        return state.automate.get("run_id") == run_id
 
 
 def automate_recover():
@@ -76,6 +100,7 @@ def automate_recover():
 
     now = time.time()
     with state.automate_lock:
+        run_id = _next_run_id()
         state.automate.update(
             {
                 "active": True,
@@ -88,6 +113,8 @@ def automate_recover():
                 "started_at": now,
                 "last_output_at": now,
                 "last_output_hash": None,
+                "done_signal_at": None,
+                "trust_answered": None,
                 "status": "running",
                 "continuous": continuous,
                 "max_iterations": max_iterations,
@@ -97,10 +124,7 @@ def automate_recover():
             }
         )
 
-    state.automate_stop_event.set()
-    time.sleep(0.1)
-    state.automate_stop_event.clear()
-    threading.Thread(target=_automate_monitor, daemon=True).start()
+    threading.Thread(target=_automate_monitor, args=(run_id,), daemon=True).start()
 
 
 @automate_bp.route("/api/automate/start", methods=["POST"])
@@ -117,6 +141,21 @@ def automate_start():
             return jsonify({"ok": False, "error": "Automation already running"}), 409
         state.automate["active"] = True
 
+    # Anything that fails between claiming active=True and the final state
+    # update must release the claim — otherwise an early exception (e.g. a
+    # docker hang) leaves active=True stuck and every start returns 409.
+    try:
+        return _automate_start_inner(data, prompt)
+    except Exception as e:
+        with state.automate_lock:
+            state.automate["active"] = False
+            state.automate["status"] = "start_failed"
+        traceback.print_exc()
+        return jsonify({"ok": False, "error": f"start failed: {e}"}), 500
+
+
+def _automate_start_inner(data, prompt):
+    """Body of automate_start; runs with the active=True claim held."""
     if not state.CLAUDE_MOUNT_SCRIPT or not state.CLAUDE_MOUNT_SCRIPT.exists():
         with state.automate_lock:
             state.automate["active"] = False
@@ -225,6 +264,7 @@ def automate_start():
 
     now = time.time()
     with state.automate_lock:
+        run_id = _next_run_id()
         state.automate.update(
             {
                 "active": True,
@@ -237,6 +277,8 @@ def automate_start():
                 "started_at": now,
                 "last_output_at": now,
                 "last_output_hash": None,
+                "done_signal_at": None,
+                "trust_answered": None,
                 "status": "running",
                 "continuous": continuous,
                 "max_iterations": max_iterations,
@@ -247,10 +289,7 @@ def automate_start():
         )
         _automate_save()
 
-    state.automate_stop_event.set()
-    time.sleep(0.1)
-    state.automate_stop_event.clear()
-    threading.Thread(target=_automate_monitor, daemon=True).start()
+    threading.Thread(target=_automate_monitor, args=(run_id,), daemon=True).start()
 
     return jsonify(
         {
@@ -351,6 +390,7 @@ def automate_reconnect():
 
     now = time.time()
     with state.automate_lock:
+        run_id = _next_run_id()
         state.automate.update(
             {
                 "active": True,
@@ -363,6 +403,8 @@ def automate_reconnect():
                 "started_at": now,
                 "last_output_at": now,
                 "last_output_hash": None,
+                "done_signal_at": None,
+                "trust_answered": None,
                 "status": "running",
                 "continuous": saved.get("continuous", True),
                 "max_iterations": saved.get("max_iterations", 0),
@@ -373,10 +415,7 @@ def automate_reconnect():
         )
         _automate_save()
 
-    state.automate_stop_event.set()
-    time.sleep(0.1)
-    state.automate_stop_event.clear()
-    threading.Thread(target=_automate_monitor, daemon=True).start()
+    threading.Thread(target=_automate_monitor, args=(run_id,), daemon=True).start()
 
     return jsonify(
         {
@@ -424,11 +463,13 @@ def automate_stop():
             return jsonify({"ok": False, "error": "No automation running"}), 404
         container = state.automate["container"]
         session = state.automate["session"]
+        _next_run_id()  # invalidate any running monitor generation
         state.automate["active"] = False
         state.automate["status"] = "stopped"
+        state.automate["done_signal_at"] = None
+        state.automate["trust_answered"] = None
         _automate_save()
 
-    state.automate_stop_event.set()
     _automate_cleanup(container, session)
 
     return jsonify({"ok": True, "status": "stopped"})
@@ -458,7 +499,7 @@ def _automate_cleanup(container, session):
             print(f"[automate] tmux kill-session {session} failed: {e}")
 
 
-def _automate_soft_relaunch():
+def _automate_soft_relaunch(run_id):
     """Send /clear to existing Claude session, wait, then re-send the prompt."""
     with state.automate_lock:
         session = state.automate["session"]
@@ -478,6 +519,12 @@ def _automate_soft_relaunch():
     )
     time.sleep(wait)
 
+    # Long sleep — re-check the generation token before touching the pane;
+    # a stop/restart during the wait means this monitor is superseded.
+    if not _run_id_current(run_id):
+        print(f"[automate] Soft relaunch aborted — monitor superseded ({target})")
+        return
+
     full_prompt = _build_automate_prompt(prompt, project_path)
     full_prompt = full_prompt.replace("\n", " ").replace("\r", " ")
     tmux_send_text(target, full_prompt)
@@ -488,13 +535,14 @@ def _automate_soft_relaunch():
         state.automate["last_output_at"] = now
         state.automate["last_output_hash"] = None
         state.automate["done_signal_at"] = None
+        state.automate["trust_answered"] = None
         state.automate["status"] = "running"
         _automate_save()
 
     print(f"[automate] Soft relaunch complete — prompt re-sent to {target}")
 
 
-def _automate_relaunch():
+def _automate_relaunch(run_id):
     """Clean up old container/session and launch a fresh one with the same prompt."""
     with state.automate_lock:
         container = state.automate["container"]
@@ -513,6 +561,10 @@ def _automate_relaunch():
 
     _automate_cleanup(container, session)
     time.sleep(2)
+
+    if not _run_id_current(run_id):
+        print("[automate] Hard relaunch aborted — monitor superseded")
+        return False
 
     session_name = f"{project}-auto"
     session_id = hashlib.md5((str(project_path) + "\n").encode()).hexdigest()[:8]
@@ -584,6 +636,8 @@ def _automate_relaunch():
                 "started_at": now,
                 "last_output_at": now,
                 "last_output_hash": None,
+                "done_signal_at": None,
+                "trust_answered": None,
                 "status": "running",
             }
         )
@@ -609,16 +663,21 @@ def _past_stop_time(stop_after, started_at=None):
         return False
 
 
-def _automate_monitor():
-    """Background thread: watches container state + output staleness. Auto-relaunches."""
+def _automate_monitor(run_id):
+    """Background thread: watches container state + output staleness. Auto-relaunches.
+
+    `run_id` is the generation token captured at spawn; the thread exits as
+    soon as state.automate["run_id"] no longer matches (a newer start/
+    reconnect/recover/stop superseded this monitor).
+    """
     while True:
         time.sleep(5)
 
-        if state.automate_stop_event.is_set():
+        if not _run_id_current(run_id):
             return
 
         try:
-            result = _automate_monitor_iteration()
+            result = _automate_monitor_iteration(run_id)
             if result == "stop":
                 return
         except SystemExit:
@@ -628,7 +687,39 @@ def _automate_monitor():
             traceback.print_exc()
 
 
-def _automate_monitor_iteration():
+def _done_signal_present(output, done_signals):
+    """Line-anchored done-signal detection.
+
+    A plain substring match also hits the launch command line and Claude's
+    transcript echo of the prompt (both contain the signal text), causing
+    soft relaunches mid-work. Evaluate line by line: skip the launch wrapper
+    line and transcript-echo lines (> / ❯ prefixed), and require the signal
+    at/near the start of the stripped line — a genuinely printed
+    DONE_SIGNAL line still matches, a signal buried mid-sentence does not.
+    """
+    if not done_signals:
+        return False
+    wrapper = (
+        state.CLAUDE_MOUNT_SCRIPT.name
+        if state.CLAUDE_MOUNT_SCRIPT
+        else "claude-mount.sh"
+    )
+    for raw in output.split("\n"):
+        line = raw.strip()
+        if not line:
+            continue
+        if wrapper in line or "claude-mount.sh" in line:
+            continue
+        if line.startswith(">") or line.startswith("❯"):
+            continue
+        for sig in done_signals:
+            idx = line.find(sig)
+            if 0 <= idx <= 8:
+                return True
+    return False
+
+
+def _automate_monitor_iteration(run_id):
     """Single pass of the monitor loop. Wrapped by _automate_monitor for fault tolerance."""
     with state.automate_lock:
         if not state.automate["active"]:
@@ -677,19 +768,41 @@ def _automate_monitor_iteration():
             and proj["triggers"]["trust_auto_approve"]
         ):
             out = proc.stdout
+            trust_send = None  # (text_or_None, with_enter)
             if "Yes, I trust this folder" in out:
-                tmux_send_text(f"{session}:0.0", "1")
-                tmux_send_keys(f"{session}:0.0", "Enter")
+                trust_send = ("1", True)
             elif "trust the files" in out or "Yes, proceed" in out:
-                tmux_send_keys(f"{session}:0.0", "Enter")
+                trust_send = (None, True)
+            if trust_send:
+                # Fired-once guard: wrapper panes keep the trust-prompt text
+                # in stale cells, so a stateless handler re-sends 1+Enter
+                # every cycle. Key on a hash of the matched lines (mirrors
+                # autoyes_answered); cleared on relaunch/start/stop.
+                trust_lines = [
+                    l
+                    for l in out.split("\n")
+                    if "trust" in l.lower() or "Yes, proceed" in l
+                ]
+                trust_hash = hashlib.md5(
+                    "\n".join(trust_lines).encode()
+                ).hexdigest()
+                with state.automate_lock:
+                    already_fired = state.automate.get("trust_answered") == trust_hash
+                if not already_fired:
+                    if trust_send[0]:
+                        tmux_send_text(f"{session}:0.0", trust_send[0])
+                    tmux_send_keys(f"{session}:0.0", "Enter")
+                    with state.automate_lock:
+                        state.automate["trust_answered"] = trust_hash
     except Exception:
         pass
 
     try:
         if proc is not None and proc.returncode == 0:
             done_signals = proj["triggers"]["done_signals"]
+            signal_present = _done_signal_present(proc.stdout, done_signals)
             with state.automate_lock:
-                if any(sig in proc.stdout for sig in done_signals):
+                if signal_present:
                     if state.automate["done_signal_at"] is None:
                         state.automate["done_signal_at"] = time.time()
                         print(f"[automate] Done signal detected in {session}")
@@ -802,13 +915,13 @@ def _automate_monitor_iteration():
 
     if relaunch_type == "soft":
         try:
-            _automate_soft_relaunch()
+            _automate_soft_relaunch(run_id)
         except Exception as e:
             print(f"[automate] soft relaunch failed: {e}")
             traceback.print_exc()
     else:
         try:
-            _automate_relaunch()
+            _automate_relaunch(run_id)
         except Exception as e:
             print(f"[automate] hard relaunch failed: {e}")
             traceback.print_exc()

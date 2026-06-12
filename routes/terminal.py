@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -12,6 +13,7 @@ import shared.state as state
 from shared.tmux import (
     capture_pane,
     detect_venv,
+    pane_wants_ctrl_l_heal,
     tmux_send_keys,
     tmux_send_text,
     tmux_target_exists,
@@ -60,7 +62,10 @@ def terminal_launch():
         else:
             return jsonify({"ok": False, "error": "Project not found"}), 404
 
-    session_name = project
+    # Sanitize: tmux session names can't contain dots or colons — they break
+    # the session:window.pane target grammar everywhere downstream. Same rule
+    # as /terminal/rename and /terminal/duplicate.
+    session_name = project.replace(".", "-").replace(":", "-")
 
     check = subprocess.run(
         ["tmux", "has-session", "-t", f"={session_name}"],
@@ -82,7 +87,7 @@ def terminal_launch():
     rows = data.get("rows", state.get_setting("terminal", "default_rows"))
     # Clamp to sane range
     cols = max(40, min(int(cols), 400))
-    rows = max(30, min(int(rows), 200))
+    rows = max(60, min(int(rows), 200))
 
     proc = subprocess.run(
         [
@@ -321,140 +326,6 @@ def terminal_sessions():
     return jsonify({"sessions": panes, "active_target": state.tmux_target})
 
 
-@terminal_bp.route("/terminal/states")
-def terminal_states():
-    """Lightweight state detection for all panes (no content capture)."""
-    AGENT_COMMANDS = {
-        "claude",
-        "node",
-        "python",
-        "python3",
-        "npm",
-        "pip",
-        "pytest",
-        "make",
-        "cargo",
-        "go",
-        "docker",
-        "git",
-    }
-    SHELL_COMMANDS = {"bash", "zsh", "sh", "fish"}
-
-    proc = subprocess.run(
-        [
-            "tmux",
-            "list-panes",
-            "-a",
-            "-F",
-            "#{session_name}\t#{window_index}\t#{pane_index}\t"
-            "#{pane_current_command}\t#{pane_pid}\t#{session_activity}",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=5,
-    )
-    if proc.returncode != 0:
-        return jsonify({"states": {}})
-
-    states = {}
-    now = int(time.time())
-    for line in proc.stdout.strip().split("\n"):
-        if not line:
-            continue
-        parts = line.split("\t")
-        if len(parts) < 6:
-            continue
-        target = f"{parts[0]}:{parts[1]}.{parts[2]}"
-        command = parts[3]
-        pane_pid = parts[4]
-        activity = int(parts[5]) if parts[5].isdigit() else 0
-        idle_seconds = now - activity if activity else 0
-
-        idle_thresh = state.get_setting("terminal", "idle_threshold_sec")
-        if command in AGENT_COMMANDS:
-            st = "idle" if idle_seconds > idle_thresh else "running"
-        elif command in SHELL_COMMANDS:
-            if pane_pid:
-                try:
-                    child_check = subprocess.run(
-                        ["pgrep", "-P", pane_pid],
-                        capture_output=True,
-                        text=True,
-                        timeout=3,
-                    )
-                    if child_check.stdout.strip():
-                        st = "running"
-                    elif idle_seconds > idle_thresh:
-                        st = "idle"
-                    else:
-                        st = "shell"
-                except Exception:
-                    st = "idle" if idle_seconds > idle_thresh else "shell"
-            else:
-                st = "idle" if idle_seconds > idle_thresh else "shell"
-        else:
-            st = "running"
-
-        states[target] = {
-            "state": st,
-            "command": command,
-            "idle_seconds": idle_seconds,
-        }
-
-    return jsonify({"states": states})
-
-
-@terminal_bp.route("/terminal/scan")
-def terminal_scan():
-    """Capture the last 60 lines of every tmux pane for prompt detection."""
-    proc = subprocess.run(
-        [
-            "tmux",
-            "list-panes",
-            "-a",
-            "-F",
-            "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_current_command}",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=5,
-    )
-    if proc.returncode != 0:
-        return jsonify({"panes": []})
-
-    results = []
-    for line in proc.stdout.strip().split("\n"):
-        if not line:
-            continue
-        parts = line.split("\t")
-        if len(parts) < 4:
-            continue
-        target = f"{parts[0]}:{parts[1]}.{parts[2]}"
-        session_name = parts[0]
-        command = parts[3]
-
-        cap = subprocess.run(
-            ["tmux", "capture-pane", "-p", "-t", target, "-S", "-60"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if cap.returncode != 0:
-            continue
-        tail = cap.stdout.rstrip("\n")
-        if tail:
-            results.append(
-                {
-                    "target": target,
-                    "session": session_name,
-                    "command": command,
-                    "tail": tail,
-                }
-            )
-
-    return jsonify({"panes": results})
-
-
 @terminal_bp.route("/terminal/target", methods=["POST"])
 def terminal_set_target():
     """Set the active tmux target for input routing."""
@@ -486,7 +357,7 @@ def terminal_resize():
         return jsonify({"ok": False, "error": "cols and rows required"}), 400
 
     cols = max(40, min(int(cols), 400))
-    rows = max(30, min(int(rows), 200))
+    rows = max(60, min(int(rows), 200))
 
     proc = subprocess.run(
         [
@@ -509,6 +380,16 @@ def terminal_resize():
             500,
         )
 
+    # Resizes are the main trigger for stale-cell artifacts in claude/wrapper
+    # panes (reflow + diff redraw). Follow up with C-l so the TUI repaints
+    # from a clean model. The key queues behind the SIGWINCH event, so order
+    # is safe; harmless no-op visually when the screen is already clean.
+    if pane_wants_ctrl_l_heal(session):
+        subprocess.run(
+            ["tmux", "send-keys", "-t", f"={session}", "C-l"],
+            capture_output=True, timeout=2,
+        )
+
     return jsonify({"ok": True, "session": session, "cols": cols, "rows": rows})
 
 
@@ -528,7 +409,7 @@ def terminal_unpin():
         return jsonify({"ok": False, "error": "No session specified"}), 400
 
     proc = subprocess.run(
-        ["tmux", "set-option", "-t", session, "-w", "-u", "window-size"],
+        ["tmux", "set-option", "-t", f"={session}", "-w", "-u", "window-size"],
         capture_output=True,
         text=True,
         timeout=5,
@@ -551,7 +432,7 @@ def terminal_kill():
         return jsonify({"ok": False, "error": "No session specified"}), 400
 
     proc = subprocess.run(
-        ["tmux", "kill-session", "-t", session],
+        ["tmux", "kill-session", "-t", f"={session}"],
         capture_output=True,
         text=True,
         timeout=5,
@@ -586,11 +467,11 @@ def terminal_clear():
         return jsonify({"ok": False, "error": "No target specified"}), 400
 
     subprocess.run(
-        ["tmux", "clear-history", "-t", target],
+        ["tmux", "clear-history", "-t", f"={target}"],
         capture_output=True, timeout=5,
     )
     subprocess.run(
-        ["tmux", "send-keys", "-t", target, "C-l"],
+        ["tmux", "send-keys", "-t", f"={target}", "C-l"],
         capture_output=True, timeout=5,
     )
     return jsonify({"ok": True, "target": target})
@@ -638,7 +519,7 @@ def terminal_cwd():
     if not session:
         return jsonify({"ok": False, "error": "No session specified"}), 400
     proc = subprocess.run(
-        ["tmux", "display-message", "-t", session, "-p", "#{pane_current_path}"],
+        ["tmux", "display-message", "-t", f"={session}", "-p", "#{pane_current_path}"],
         capture_output=True,
         text=True,
         timeout=5,
@@ -660,7 +541,7 @@ def terminal_duplicate():
 
     # Get the CWD of the source session's active pane
     cwd_proc = subprocess.run(
-        ["tmux", "display-message", "-t", session, "-p", "#{pane_current_path}"],
+        ["tmux", "display-message", "-t", f"={session}", "-p", "#{pane_current_path}"],
         capture_output=True,
         text=True,
         timeout=5,
@@ -706,7 +587,7 @@ def terminal_duplicate():
     cols = data.get("cols", state.get_setting("terminal", "default_cols"))
     rows = data.get("rows", state.get_setting("terminal", "default_rows"))
     cols = max(40, min(int(cols), 400))
-    rows = max(30, min(int(rows), 200))
+    rows = max(60, min(int(rows), 200))
 
     proc = subprocess.run(
         [
@@ -809,7 +690,10 @@ def terminal_run_init():
     if check.returncode != 0:
         return jsonify({"ok": False, "error": f"Session '{session}' not found"}), 404
 
-    target = f"{session}:0.0"
+    # Exact-match the session here too — it could die between the has-session
+    # check above and the sends, and a bare name would prefix-match another
+    # live session.
+    target = f"={session}:0.0"
     tmux_send_text(target, init_cmd)
     tmux_send_keys(target, "Enter")
 
@@ -976,6 +860,17 @@ def session_history(project):
     if not project_path.is_dir():
         return jsonify({"ok": False, "error": "Project not found"}), 404
 
+    # Claude Code stores transcripts under a path-munged dir name built from
+    # the project's ABSOLUTE path, as {session_id}.jsonl. Current versions
+    # replace every non-alphanumeric char with "-" (e.g. /home/daniel/foo.bar
+    # -> -home-daniel-foo-bar); older versions kept underscores, so check
+    # both forms.
+    claude_projects = Path.home() / ".claude" / "projects"
+    munged_dirs = {
+        re.sub(r"[^A-Za-z0-9]", "-", str(project_path)),
+        re.sub(r"[/.:]", "-", str(project_path)),
+    }
+
     sessions = []
     try:
         conn = psycopg2.connect(
@@ -995,9 +890,10 @@ def session_history(project):
         )
         for row in cur.fetchall():
             session_id, started, ended, tokens, tools = row
-            # Check if session file exists for resume
-            session_file = (
-                Path.home() / ".claude" / "projects" / project / f"{session_id}.json"
+            # Check if a transcript file exists for resume
+            resumable = any(
+                (claude_projects / d / f"{session_id}.jsonl").exists()
+                for d in munged_dirs
             )
             sessions.append(
                 {
@@ -1006,7 +902,7 @@ def session_history(project):
                     "ended_at": ended.isoformat() if ended else None,
                     "total_tokens": tokens,
                     "tool_calls": tools,
-                    "resumable": session_file.exists(),
+                    "resumable": resumable,
                 }
             )
         cur.close()

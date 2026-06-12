@@ -6,8 +6,10 @@ App factory: imports all blueprints, registers them, starts background threads.
 import os
 import threading
 
-from flask import Flask
+from flask import Flask, jsonify, request
 from flask_sock import Sock
+
+from shared.security import origin_allowed
 
 os.environ.setdefault("DISPLAY", ":0")
 
@@ -23,12 +25,24 @@ def create_app():
     app = Flask(__name__)
     sock = Sock(app)
 
-    # Global CORS — applies to all routes across all blueprints
+    # Origin allowlist — reject cross-origin state-changing requests.
+    # GET/HEAD/OPTIONS pass through (OPTIONS must work for same-origin
+    # preflights; GETs gain nothing for an attacker without a readable ACAO).
+    @app.before_request
+    def _check_origin():
+        if request.method in ("POST", "DELETE", "PATCH", "PUT"):
+            if not origin_allowed(request.headers.get("Origin"), request.host):
+                return jsonify({"ok": False, "error": "Origin not allowed"}), 403
+
+    # CORS — reflect only allowed Origins, never emit a wildcard.
     @app.after_request
     def _cors(response):
-        response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        origin = request.headers.get("Origin")
+        if origin and origin_allowed(origin, request.host):
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, PATCH, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+            response.headers["Vary"] = "Origin"
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"

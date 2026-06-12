@@ -58,10 +58,16 @@ let _termWs = null;             // WebSocket instance
 let _termWsConnected = false;   // true when WS is active
 let _termWsReconnectTimer = null;
 
-// Smart actions state
-let _smartActionsKey = '';
-let _smartDismissed = null;
+// Smart actions state — per-target so background-pane scans can't reset
+// the active pane's dismissal, and vice versa.
+let _smartState = {};           // target -> { key, dismissedContent (ANSI-stripped) }
 let _smartActionTarget = null;  // which pane the smart action came from (main or split)
+
+function _getSmartState(target) {
+    const t = target || _termTarget || '';
+    if (!_smartState[t]) _smartState[t] = { key: '', dismissedContent: null };
+    return _smartState[t];
+}
 let _layoutShifting = false;    // true during smart-actions show/hide to suppress scroll-freeze
 
 // Input routing: when true, keyboard input goes to split pane instead of main

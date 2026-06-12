@@ -265,7 +265,8 @@ function connectSplitWs(session) {
     state.ws.onmessage = function (event) {
         try {
             const data = JSON.parse(event.data);
-            if (data.type !== 'capture') return;
+            // Streamer sends type:'full'; accept legacy 'capture' too
+            if (data.type !== 'full' && data.type !== 'capture') return;
             state.lastContent = data.content || '';
             const currentSession = _termTarget ? _termTarget.split(':')[0] : '';
             if (_cmdOutputOpen && currentSession === session) {
@@ -274,7 +275,7 @@ function connectSplitWs(session) {
                 pre.textContent = state.lastContent;
                 container.scrollTop = container.scrollHeight;
                 // Detect smart actions on split pane content
-                const detected = detectSmartActions(stripAnsi(state.lastContent));
+                const detected = detectSmartActions(stripAnsi(state.lastContent), state.target);
                 if (detected) renderSmartActions(detected, state.target);
             }
         } catch (e) {}

@@ -16,7 +16,6 @@ const _SETTINGS_SECTIONS = [
             { key: 'claude_mode', label: 'Claude Mode', type: 'toggle', options: ['npx', 'claude'] },
             { key: 'session_init_cmd', label: 'Session Init Cmd', type: 'text', restart: true },
             { key: 'projects_dir', label: 'Projects Dir', type: 'text', restart: true },
-            { key: 'port', label: 'Port', type: 'number', restart: true, min: 1024, max: 65535 },
             { key: 'restart_cmd', label: 'Restart Command', type: 'text', restart: true },
         ]
     },

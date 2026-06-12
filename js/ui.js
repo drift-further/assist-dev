@@ -93,7 +93,7 @@ function renderLists() {
                 const display = f.display || f.text;
                 html += `<div class="list-item" onclick="loadText(this)" data-text="${escHtml(f.text)}">
                     <span class="list-item-text">${highlightMatch(display, _filterText)}</span>
-                    <button class="list-item-star fav" onclick="toggleFavorite('${escHtml(f.text).replace(/'/g, "\\'")}', event)">&#9733;</button>
+                    <button class="list-item-star fav">&#9733;</button>
                 </div>`;
             }
         } else {
@@ -114,7 +114,7 @@ function renderLists() {
                 const display = h.display || h.text;
                 html += `<div class="list-item" onclick="loadText(this)" data-text="${escHtml(h.text)}">
                     <span class="list-item-text">${highlightMatch(display, _filterText)}</span>
-                    <button class="list-item-star unfav" onclick="toggleFavorite('${escHtml(h.text).replace(/'/g, "\\'")}', event)">&#9734;</button>
+                    <button class="list-item-star unfav">&#9734;</button>
                 </div>`;
             }
         } else {
@@ -126,6 +126,18 @@ function renderLists() {
 
     listArea.innerHTML = html;
 }
+
+// Delegated star clicks — inline onclick broke on multi-line/backslash
+// history entries (raw text injected into a JS string literal). Capture
+// phase so the parent .list-item's loadText onclick never fires.
+listArea.addEventListener('click', function(e) {
+    const star = e.target.closest('.list-item-star');
+    if (!star) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const item = star.closest('.list-item');
+    if (item && item.dataset.text !== undefined) toggleFavorite(item.dataset.text);
+}, true);
 
 function loadText(el) {
     input.value = el.dataset.text;
