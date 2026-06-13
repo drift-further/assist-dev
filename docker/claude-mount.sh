@@ -283,8 +283,10 @@ fi
 # Database host override: inside the container, "localhost" is the container itself.
 # Point to the host machine so project .env files with MP_DB_HOST=localhost still work.
 DOCKER_CMD="$DOCKER_CMD -e MP_DB_HOST=$GATEWAY_HOST"
-# CLI proxy points at the host Assist server
+# CLI proxy points at the host Assist server. Pass the command name at runtime too
+# (not just as a build-arg) so entrypoint.sh can re-link the shim even on a stale image.
 DOCKER_CMD="$DOCKER_CMD -e ASSIST_PROXY_HOST=$GATEWAY_HOST"
+DOCKER_CMD="$DOCKER_CMD -e CLI_PROXY_NAME=$CLI_PROXY_NAME"
 # Don't hardcode Flutter path - let entrypoint.sh handle it based on what's actually mounted
 # Include Claude's install dir so the native binary and its runtime are on PATH
 DOCKER_CMD="$DOCKER_CMD -e PATH=\"/home/developer/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\""
