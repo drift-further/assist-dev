@@ -775,6 +775,8 @@
 .tab-ctx-item:active { background: rgba(0, 255, 65, 0.1); }
 .tab-ctx-kill { color: var(--red); }
 .tab-ctx-kill:active { background: rgba(255, 0, 64, 0.1); }
+.tab-ctx-snooze { color: var(--purple); }
+.tab-ctx-snooze:active { background: rgba(191, 90, 242, 0.12); }
 
 /* Reorder mode — click-to-place */
 .reorder-source {
@@ -972,6 +974,14 @@
     font-family: var(--font);
     font-size: 9px;
     color: rgba(140,140,140,0.6);
+    margin-left: auto;
+}
+.stale-sheet-row .row-snooze {
+    font-family: var(--font);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--purple);
     margin-left: auto;
 }
 .stale-sheet-row .row-dot {

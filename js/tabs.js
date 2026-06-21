@@ -7,6 +7,9 @@ let _tabContextTarget = null;
 // Persisted state
 let _pinnedTabs = JSON.parse(localStorage.getItem('assist_pinned_tabs') || '[]');
 let _tabOrder = JSON.parse(localStorage.getItem('assist_tab_order') || '[]');
+// Manually-snoozed tabs: forced into the zZ (idle) sheet regardless of idle
+// time, until tapped or until the session shows running activity again.
+let _snoozedTabs = JSON.parse(localStorage.getItem('assist_snoozed_tabs') || '[]');
 
 let _staleSheetOpen = false;
 let _lastStaleCount = 0;  // for new-stale flash detection
@@ -46,6 +49,12 @@ function _staleRowDotClass(tab) {
 
 function _onStaleRowTap(target) {
     closeStaleSheet();
+    // Tapping a snoozed row wakes it immediately (no one-poll lag waiting for
+    // the active-tab exclusion in _applyStaleGroup to clear the flag).
+    if (_snoozedTabs.includes(target)) {
+        _snoozedTabs = _snoozedTabs.filter(t => t !== target);
+        _saveSnoozedTabs();
+    }
     if (typeof selectTab === 'function') selectTab(target);
     // _applyStaleGroup will re-evaluate on the next poll and the freshly
     // active tab will leave the sheet automatically (active tabs are excluded).
@@ -57,6 +66,9 @@ function _savePinnedTabs() {
 function _saveTabOrder() {
     try { localStorage.setItem('assist_tab_order', JSON.stringify(_tabOrder)); } catch(e) {}
 }
+function _saveSnoozedTabs() {
+    try { localStorage.setItem('assist_snoozed_tabs', JSON.stringify(_snoozedTabs)); } catch(e) {}
+}
 
 // --- Context menu ---
 
@@ -65,6 +77,7 @@ function _createContextMenu(tab, x, y) {
     const target = tab.dataset.target;
     const session = target.split(':')[0];
     const isPinned = _pinnedTabs.includes(target);
+    const isSnoozed = _snoozedTabs.includes(target);
 
     const menu = document.createElement('div');
     menu.className = 'tab-context-menu';
@@ -107,6 +120,8 @@ function _createContextMenu(tab, x, y) {
                 _savePinnedTabs();
                 _tabOrder = _tabOrder.map(t => t.startsWith(oldPrefix) ? newPrefix + t.slice(oldPrefix.length) : t);
                 _saveTabOrder();
+                _snoozedTabs = _snoozedTabs.map(t => t.startsWith(oldPrefix) ? newPrefix + t.slice(oldPrefix.length) : t);
+                _saveSnoozedTabs();
                 // Update active target
                 if (_termTarget && _termTarget.startsWith(oldPrefix)) {
                     _termTarget = newPrefix + _termTarget.slice(oldPrefix.length);
@@ -187,10 +202,26 @@ function _createContextMenu(tab, x, y) {
         _enterReorderMode(tab);
     };
 
+    const snoozeBtn = document.createElement('button');
+    snoozeBtn.className = 'tab-ctx-item tab-ctx-snooze';
+    snoozeBtn.textContent = isSnoozed ? 'Unsnooze' : 'Snooze';
+    snoozeBtn.onclick = function(e) {
+        e.stopPropagation();
+        if (isSnoozed) {
+            _snoozedTabs = _snoozedTabs.filter(t => t !== target);
+        } else {
+            _snoozedTabs.push(target);
+        }
+        _saveSnoozedTabs();
+        if (typeof _applyStaleGroup === 'function') _applyStaleGroup();
+        _removeContextMenu();
+    };
+
     menu.appendChild(pinBtn);
     menu.appendChild(renameBtn);
     menu.appendChild(reorderBtn);
     menu.appendChild(dupeBtn);
+    menu.appendChild(snoozeBtn);
     menu.appendChild(killBtn);
     document.body.appendChild(menu);
 
@@ -587,18 +618,31 @@ function _applyStaleGroup() {
         sessionHasRunning[s] = bySession[s].some(t => t.classList.contains('running'));
     });
 
+    // Auto-wake: a snoozed tab that is now active (selected) or running
+    // (new activity) leaves ZZ and gets un-snoozed. Collect the targets here
+    // and clear them in one batch after the filter so we don't thrash
+    // localStorage mid-pass.
+    const woken = [];
     const staleTabs = allTabs.filter(t => {
-        if (t.classList.contains('active')) return false;
-        if (t.classList.contains('running')) return false;
-        if (_pinnedTabs.includes(t.dataset.target)) return false;
+        const target = t.dataset.target;
+        const isSnoozed = _snoozedTabs.includes(target);
+        if (t.classList.contains('active')) { if (isSnoozed) woken.push(target); return false; }
+        if (t.classList.contains('running')) { if (isSnoozed) woken.push(target); return false; }
+        if (_pinnedTabs.includes(target)) return false;
+        // Manual snooze forces the tab into ZZ regardless of idle time.
+        if (isSnoozed) return true;
         const idle = parseInt(t.dataset.idleSeconds || '0', 10);
         if (idle < threshold) return false;
         // Team-lead/agent unit: if the session has any running child, keep
         // the whole group in the strip.
-        const session = (t.dataset.target || '').split(':')[0];
+        const session = (target || '').split(':')[0];
         if (sessionHasRunning[session]) return false;
         return true;
     });
+    if (woken.length) {
+        _snoozedTabs = _snoozedTabs.filter(t => !woken.includes(t));
+        _saveSnoozedTabs();
+    }
 
     // Sort by idle-time descending (most-recently-stale first)
     staleTabs.sort((a, b) => {
@@ -639,10 +683,17 @@ function _applyStaleGroup() {
 
         const idleSec = parseInt(tab.dataset.idleSeconds || '0', 10);
         const idle = document.createElement('span');
-        idle.className = 'row-idle';
-        idle.textContent = (typeof _formatIdleTime === 'function')
-            ? _formatIdleTime(idleSec)
-            : Math.floor(idleSec / 60) + 'm';
+        if (_snoozedTabs.includes(target)) {
+            // Manually snoozed — a real idle time would read misleadingly low
+            // (e.g. "0m") in an idle list, so show the snooze glyph instead.
+            idle.className = 'row-snooze';
+            idle.textContent = 'zZ';
+        } else {
+            idle.className = 'row-idle';
+            idle.textContent = (typeof _formatIdleTime === 'function')
+                ? _formatIdleTime(idleSec)
+                : Math.floor(idleSec / 60) + 'm';
+        }
         row.appendChild(idle);
 
         row.onclick = () => _onStaleRowTap(target);
