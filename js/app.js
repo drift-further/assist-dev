@@ -299,7 +299,11 @@ function _applyScanData(scanPanes) {
         if (tab && !tab.classList.contains('active') && prev !== undefined && prev !== pane.tail && !detected) {
             const wasRunning = tab.classList.contains('running');
             tab.classList.add('running');
-            if (!wasRunning && typeof _applyStaleGroup === 'function') _applyStaleGroup();
+            if (!wasRunning) {
+                // NEW activity wakes a snoozed tab (see _applyStaleGroup).
+                if (typeof _wakeSnoozed === 'function') _wakeSnoozed(pane.target);
+                if (typeof _applyStaleGroup === 'function') _applyStaleGroup();
+            }
             if (_activityDecayTimers[pane.target]) clearTimeout(_activityDecayTimers[pane.target]);
             _activityDecayTimers[pane.target] = setTimeout(() => {
                 tab.classList.remove('running');

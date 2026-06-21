@@ -535,6 +535,8 @@ function selectTab(target) {
     }
     _lastTabTapTime = Date.now();
     _termTarget = target;
+    // Selecting a snoozed tab wakes it (covers any selection path).
+    if (typeof _wakeSnoozed === 'function') _wakeSnoozed(target);
     markActiveTab(target);
     _termPaused = false;
     _tabSwitchScrollLock = true;  // suppress scroll-freeze until content renders
@@ -674,7 +676,11 @@ function _doRender(content, info, target) {
         if (tab && !tab.classList.contains('active')) {
             const wasRunning = tab.classList.contains('running');
             tab.classList.add('running');
-            if (!wasRunning && typeof _applyStaleGroup === 'function') _applyStaleGroup();
+            if (!wasRunning) {
+                // NEW activity wakes a snoozed tab (see _applyStaleGroup).
+                if (typeof _wakeSnoozed === 'function') _wakeSnoozed(target);
+                if (typeof _applyStaleGroup === 'function') _applyStaleGroup();
+            }
             if (_activityDecayTimers[target]) clearTimeout(_activityDecayTimers[target]);
             _activityDecayTimers[target] = setTimeout(() => {
                 tab.classList.remove('running');

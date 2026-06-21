@@ -49,12 +49,8 @@ function _staleRowDotClass(tab) {
 
 function _onStaleRowTap(target) {
     closeStaleSheet();
-    // Tapping a snoozed row wakes it immediately (no one-poll lag waiting for
-    // the active-tab exclusion in _applyStaleGroup to clear the flag).
-    if (_snoozedTabs.includes(target)) {
-        _snoozedTabs = _snoozedTabs.filter(t => t !== target);
-        _saveSnoozedTabs();
-    }
+    // Tapping a snoozed row wakes it immediately (no one-poll lag).
+    _wakeSnoozed(target);
     if (typeof selectTab === 'function') selectTab(target);
     // _applyStaleGroup will re-evaluate on the next poll and the freshly
     // active tab will leave the sheet automatically (active tabs are excluded).
@@ -68,6 +64,13 @@ function _saveTabOrder() {
 }
 function _saveSnoozedTabs() {
     try { localStorage.setItem('assist_snoozed_tabs', JSON.stringify(_snoozedTabs)); } catch(e) {}
+}
+// Wake a snoozed tab (idempotent): called on tap/select and on NEW activity.
+function _wakeSnoozed(target) {
+    if (_snoozedTabs.includes(target)) {
+        _snoozedTabs = _snoozedTabs.filter(t => t !== target);
+        _saveSnoozedTabs();
+    }
 }
 
 // --- Context menu ---
@@ -618,19 +621,19 @@ function _applyStaleGroup() {
         sessionHasRunning[s] = bySession[s].some(t => t.classList.contains('running'));
     });
 
-    // Auto-wake: a snoozed tab that is now active (selected) or running
-    // (new activity) leaves ZZ and gets un-snoozed. Collect the targets here
-    // and clear them in one batch after the filter so we don't thrash
-    // localStorage mid-pass.
-    const woken = [];
     const staleTabs = allTabs.filter(t => {
         const target = t.dataset.target;
-        const isSnoozed = _snoozedTabs.includes(target);
-        if (t.classList.contains('active')) { if (isSnoozed) woken.push(target); return false; }
-        if (t.classList.contains('running')) { if (isSnoozed) woken.push(target); return false; }
         if (_pinnedTabs.includes(target)) return false;
-        // Manual snooze forces the tab into ZZ regardless of idle time.
-        if (isSnoozed) return true;
+        // Manual snooze forces the tab into ZZ even when it's the active or a
+        // running tab — snoozing the tab you're looking at is the main use
+        // case. A snoozed tab leaves ZZ only when tapped/selected
+        // (_onStaleRowTap / selectTab) or when NEW activity arrives
+        // (_wakeSnoozed, fired from the running-transition hooks in
+        // app.js / terminal.js) — NOT from its active/running state at the
+        // moment it was snoozed.
+        if (_snoozedTabs.includes(target)) return true;
+        if (t.classList.contains('active')) return false;
+        if (t.classList.contains('running')) return false;
         const idle = parseInt(t.dataset.idleSeconds || '0', 10);
         if (idle < threshold) return false;
         // Team-lead/agent unit: if the session has any running child, keep
@@ -639,10 +642,6 @@ function _applyStaleGroup() {
         if (sessionHasRunning[session]) return false;
         return true;
     });
-    if (woken.length) {
-        _snoozedTabs = _snoozedTabs.filter(t => !woken.includes(t));
-        _saveSnoozedTabs();
-    }
 
     // Sort by idle-time descending (most-recently-stale first)
     staleTabs.sort((a, b) => {
