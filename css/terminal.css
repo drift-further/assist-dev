@@ -344,7 +344,11 @@
 .fit-follow { flex-basis: 100%; color: var(--amber); border-color: rgba(255, 149, 0, 0.4); }
 .fit-follow:active { background: rgba(255, 149, 0, 0.15); }
 .fit-custom {
-    display: flex; gap: 4px; flex: 1.5; min-width: 140px;
+    display: flex; gap: 4px; flex-basis: 100%; align-items: center;
+}
+.fit-custom-x {
+    flex: 0 0 auto; color: rgba(0, 212, 255, 0.5);
+    font-family: var(--font); font-size: 13px; font-weight: 700;
 }
 .fit-custom-input {
     flex: 1; min-width: 0;

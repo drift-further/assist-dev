@@ -1110,13 +1110,14 @@ function _calcTermSize() {
 }
 
 /** Resize the current tmux session.
- *  cols=null → fit to viewport (Auto). cols=number → use that width, height from viewport. */
-async function termFitToScreen(cols = null) {
+ *  cols=null → auto width (fit viewport). cols=number → that width.
+ *  rows=null → auto height (viewport, 60-row floor). rows=number → that exact height (min 10). */
+async function termFitToScreen(cols = null, rows = null) {
     if (!_termTarget) return;
     const session = _termTarget.split(':')[0];
     const calc = _calcTermSize();
     const targetCols = cols == null ? calc.cols : Math.max(40, Math.min(parseInt(cols), 400));
-    const targetRows = calc.rows;
+    const targetRows = rows == null ? calc.rows : Math.max(10, Math.min(parseInt(rows), 600));
     try {
         const resp = await fetch('/terminal/resize', {
             method: 'POST',
@@ -1138,10 +1139,13 @@ function toggleFitMenu() {
     menu.classList.toggle('visible', !visible);
     btn.classList.toggle('active', !visible);
     if (!visible) {
-        // Pre-fill custom input with last value, highlight last preset
+        // Pre-fill custom inputs with last values, highlight last preset
         const last = localStorage.getItem('assist_fit_last') || 'auto';
         const input = document.getElementById('fit-custom-input');
         if (input && /^\d+$/.test(last)) input.value = last;
+        const lastRows = localStorage.getItem('assist_fit_rows');
+        const rowsInput = document.getElementById('fit-custom-rows');
+        if (rowsInput && lastRows && /^\d+$/.test(lastRows)) rowsInput.value = lastRows;
         document.querySelectorAll('.fit-item').forEach(el => {
             el.classList.toggle('active', el.dataset.cols === String(last));
         });
@@ -1159,16 +1163,33 @@ function fitMenuPick(choice) {
     toggleFitMenu();
 }
 
-/** Apply the custom column count from the Fit menu input. */
+/** Apply the custom width and/or height from the Fit menu inputs.
+ *  Each axis is independent: blank → auto for that dimension, filled → exact value. */
 function fitMenuApplyCustom() {
-    const input = document.getElementById('fit-custom-input');
-    const v = parseInt(input.value);
-    if (!v || v < 40 || v > 400) {
-        showFlash('error', 'Width must be 40–400');
+    const colsRaw = document.getElementById('fit-custom-input').value.trim();
+    const rowsRaw = document.getElementById('fit-custom-rows').value.trim();
+    if (!colsRaw && !rowsRaw) {
+        showFlash('error', 'Enter a width and/or height');
         return;
     }
-    localStorage.setItem('assist_fit_last', String(v));
-    termFitToScreen(v);
+    let cols = null, rows = null;
+    if (colsRaw) {
+        cols = parseInt(colsRaw);
+        if (!cols || cols < 40 || cols > 400) {
+            showFlash('error', 'Width must be 40–400');
+            return;
+        }
+        localStorage.setItem('assist_fit_last', String(cols));
+    }
+    if (rowsRaw) {
+        rows = parseInt(rowsRaw);
+        if (!rows || rows < 10 || rows > 600) {
+            showFlash('error', 'Height must be 10–600');
+            return;
+        }
+        localStorage.setItem('assist_fit_rows', String(rows));
+    }
+    termFitToScreen(cols, rows);
     toggleFitMenu();
 }
 
