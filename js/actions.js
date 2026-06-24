@@ -24,8 +24,7 @@ function showAutoYesPicker() {
     const on = isAutoYes(session);
     // Prefill with the session's active delay when running, else last-used value
     if (on && _autoyesDelays[session]) _autoyesDelay = _autoyesDelays[session];
-    const valEl = document.getElementById('ay-pick-val');
-    if (valEl) valEl.textContent = _autoyesDelay;
+    _renderAyPickVal();
     const goBtn = document.getElementById('ay-pick-go');
     if (goBtn) goBtn.textContent = on ? 'Update' : 'Start';
     const offBtn = document.getElementById('ay-pick-off');
@@ -36,10 +35,28 @@ function showAutoYesPicker() {
     _autoyesPickerVisible = true;
 }
 
+// Step by 1s at/above 1s, by 100ms below it (min 100ms, max 30s).
 function ayPickAdjust(delta) {
-    _autoyesDelay = Math.max(1, Math.min(30, _autoyesDelay + delta));
+    let v = _autoyesDelay;
+    if (delta < 0) v -= (v <= 1) ? 0.1 : 1;
+    else           v += (v < 1) ? 0.1 : 1;
+    _autoyesDelay = Math.max(0.1, Math.min(30, Math.round(v * 10) / 10));
+    _renderAyPickVal();
+}
+
+// Render the picker value + unit: seconds at/above 1s, milliseconds below.
+function _renderAyPickVal() {
     const valEl = document.getElementById('ay-pick-val');
-    if (valEl) valEl.textContent = _autoyesDelay;
+    const unitEl = document.querySelector('#autoyes-picker .ay-pick-unit');
+    if (valEl) valEl.textContent = _autoyesDelay < 1
+        ? String(Math.round(_autoyesDelay * 1000))
+        : String(_autoyesDelay);
+    if (unitEl) unitEl.textContent = _autoyesDelay < 1 ? 'ms' : 'sec';
+}
+
+// Format a delay (seconds, possibly fractional) for flash messages.
+function _fmtDelay(d) {
+    return d < 1 ? `${Math.round(d * 1000)}ms` : `${d}s`;
 }
 
 function ayPickConfirm() {
@@ -79,7 +96,7 @@ async function _setAutoYesDelay(session, delay) {
         const data = await resp.json();
         if (data.ok) {
             _autoyesDelays[session] = data.delay;
-            showFlash('sent', `Auto-Yes delay → ${data.delay}s`);
+            showFlash('sent', `Auto-Yes delay → ${_fmtDelay(data.delay)}`);
         } else {
             showFlash('error', data.error || 'Failed to update');
         }
@@ -102,7 +119,7 @@ async function _enableAutoYes(session, delay) {
             _autoyesState[session] = data.enabled;
             if (data.enabled && delay !== null) _autoyesDelays[session] = delay;
             else if (!data.enabled) delete _autoyesDelays[session];
-            showFlash('sent', data.enabled ? `Auto-Yes ON (${delay}s)` : 'Auto-Yes OFF');
+            showFlash('sent', data.enabled ? `Auto-Yes ON (${_fmtDelay(delay)})` : 'Auto-Yes OFF');
             updateAutoYesUI(session);
             _getSmartState(_termTarget).key = '';  // force re-render (toggle label changed)
             if (_termLatestContent) {

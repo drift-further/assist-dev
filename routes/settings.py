@@ -138,7 +138,7 @@ def patch_project_settings_api(project):
             if "delay" in autoyes_patch:
                 try:
                     state.autoyes_delays[project] = max(
-                        1, min(30, int(autoyes_patch["delay"]))
+                        0.1, min(30.0, round(float(autoyes_patch["delay"]), 1))
                     )
                 except (ValueError, TypeError):
                     pass

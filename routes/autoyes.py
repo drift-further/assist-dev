@@ -197,14 +197,41 @@ def _prompt_hash(tail):
     return hash(tail[-500:])
 
 
+def _clamp_delay(value):
+    """Clamp a requested auto-yes delay to [0.1, 30]s at 0.1s resolution."""
+    return max(0.1, min(30.0, round(float(value), 1)))
+
+
+def _scan_interval():
+    """Seconds to sleep between scan ticks.
+
+    Defaults to 1s. When an enabled session carries a sub-second delay, tick at
+    that resolution (floored at 0.1s) so 100ms delays fire ~100ms after a
+    prompt appears instead of waiting for the next 1s boundary — without
+    scanning every 100ms when only second-scale delays are in use.
+    """
+    with state.autoyes_lock:
+        active = [
+            d for s, d in state.autoyes_delays.items() if state.autoyes_sessions.get(s)
+        ]
+    if not active:
+        return 1.0
+    return max(0.1, min(1.0, min(active)))
+
+
 def autoyes_scanner():
-    """Background thread: scans all tmux panes every 1s, manages countdowns."""
+    """Background thread: scans tmux panes, managing countdowns.
+
+    Tick interval adapts to the smallest active delay (see _scan_interval) so
+    sub-second delays fire promptly without a fixed 100ms scan when only
+    second-scale delays are configured.
+    """
     while True:
         try:
             _autoyes_scan_tick()
         except Exception:
             pass
-        time.sleep(1.0)
+        time.sleep(_scan_interval())
 
 
 def _autoyes_scan_tick():
@@ -419,7 +446,7 @@ def autoyes_toggle():
         if not current and delay is not None:
             # Enabling — store per-session delay
             try:
-                delay = max(1, min(30, int(delay)))
+                delay = _clamp_delay(delay)
             except (ValueError, TypeError):
                 delay = state.AUTOYES_DELAY
             state.autoyes_delays[session] = delay
@@ -473,7 +500,7 @@ def autoyes_set_delay():
     if not session:
         return jsonify({"ok": False, "error": "No session"}), 400
     try:
-        delay = max(1, min(30, int(data.get("delay"))))
+        delay = _clamp_delay(data.get("delay"))
     except (ValueError, TypeError):
         return jsonify({"ok": False, "error": "Invalid delay"}), 400
 
@@ -499,7 +526,7 @@ def autoyes_set_delay():
     for target, prompt_type in rebroadcast:
         broadcast_autoyes_event(target, "countdown", prompt_type)
 
-    log.info("autoyes: delay updated for %s -> %ds", session, delay)
+    log.info("autoyes: delay updated for %s -> %ss", session, delay)
     return jsonify({"ok": True, "session": session, "delay": delay})
 
 
@@ -526,5 +553,5 @@ def restore_autoyes_from_settings():
                 state.autoyes_sessions[session_name] = True
                 state.autoyes_delays[session_name] = delay
             log.info(
-                "autoyes: restored for session %s (delay=%ds)", session_name, delay
+                "autoyes: restored for session %s (delay=%ss)", session_name, delay
             )
