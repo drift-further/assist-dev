@@ -33,7 +33,13 @@ _NUMBERED_YES_RE = re.compile(
 # Detect highlighted/selected "Yes" option (arrow-key style, no number)
 # Matches lines like: ❯ Yes, ❯ Yes   (with optional trailing comma/text)
 _SELECTED_YES_RE = re.compile(r"(?:^|\n)\s*❯\s*Yes\b", re.IGNORECASE)
-_NUMBERED_FOOTER_RE = re.compile(r"(?:Enter to select|Esc to cancel)\s*[·•]")
+# Footer line that closes an arrow/number selection menu. Claude Code uses
+# "Enter to select · Esc to cancel"; Antigravity (Gemini) CLI uses
+# "↑/↓ Navigate · tab Amend · e edit command · ctrl+r Review". Both end the
+# interactive option block, with the volatile status/cost line sitting below.
+_NUMBERED_FOOTER_RE = re.compile(
+    r"(?:Enter to select|Esc to cancel|Navigate)\s*[·•]"
+)
 
 
 def _detect_autoyes_prompt(tail):
@@ -68,7 +74,18 @@ def _detect_autoyes_prompt(tail):
     if last_footer:
         footer_line = tail.count("\n", 0, last_footer.start())
         if (len(lines) - 1 - footer_line) <= depth * 4:
-            region_start = max(0, footer_line - 6)
+            # Bound the option region by the last ──── separator above the
+            # footer (Antigravity prints one under its "Command" header).
+            # Long options ("Yes, and always allow…") wrap across several rows
+            # on narrow phone panes, so a fixed lookback can push option 1 out
+            # of view; the separator is a stable top anchor. Fall back to a
+            # generous fixed window when there is no separator.
+            search_floor = max(0, footer_line - depth * 4)
+            region_start = max(0, footer_line - 14)
+            for i in range(footer_line - 1, search_floor - 1, -1):
+                if re.match(r"^\s*─{10,}", lines[i]):
+                    region_start = i + 1
+                    break
             region = "\n".join(lines[region_start:footer_line + 1])
             if _NUMBERED_YES_RE.search(region):
                 return ("numbered-yes", "", True, _extract_summary(tail, "numbered"))
@@ -112,6 +129,13 @@ def _extract_summary(tail, prompt_type):
                 text = re.sub(r"\s*\(y/n\)|\[Y/n\]|\(yes/no\)\s*", "", text).strip()
                 return text[:80] if len(text) > 80 else text
     elif prompt_type == "numbered":
+        # Antigravity (Gemini) CLI prints "Requesting permission for: <cmd>"
+        # just above its proceed prompt — the command is the clearest summary.
+        for line in reversed(lines):
+            m = re.search(r"Requesting permission for:\s*(.+)", line)
+            if m:
+                text = m.group(1).strip()
+                return text[:80] if len(text) > 80 else text
         # Look for tool invocation above the numbered options (prefer over generic question)
         for i in range(len(lines) - 1, -1, -1):
             if re.match(r"\s*(?:[^\d\s]\s*)?1[\.\)]\s", lines[i]):
@@ -145,7 +169,7 @@ def _extract_summary(tail, prompt_type):
 # (Vibing… timer, token counts, tips) which animates every second — hashing
 # it would reset the countdown each tick and the prompt would never fire.
 _PROMPT_TERMINATOR_RE = re.compile(
-    r"(?:Enter to select|Esc to cancel)\s*[·•]"
+    r"(?:Enter to select|Esc to cancel|Navigate)\s*[·•]"
     r"|\(y/n(?:/a)?\)"
     r"|\[Y/n(?:/a)?\]"
     r"|\[y/N\]"

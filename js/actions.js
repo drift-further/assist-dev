@@ -295,7 +295,7 @@ const SMART_PATTERNS = [
             const FOOTER_DEPTH_MAX = 30;
             let footerIdx = -1;
             for (let i = lines.length - 1; i >= 0; i--) {
-                if (/(?:Enter to select|Esc to cancel)\s*[·•]/.test(lines[i])) { footerIdx = i; break; }
+                if (/(?:Enter to select|Esc to cancel|Navigate)\s*[·•]/.test(lines[i])) { footerIdx = i; break; }
             }
             const optPattern = /^\s*(?:[^\d\s]\s*)?(\d+)[\.\)]\s+\S/;
             if (footerIdx >= 0 && (lines.length - 1 - footerIdx) <= FOOTER_DEPTH_MAX) {
@@ -324,7 +324,7 @@ const SMART_PATTERNS = [
             // Find footer line
             let endIdx = lines.length;
             for (let i = lines.length - 1; i >= 0; i--) {
-                if (/(?:Enter to select|Esc to cancel)\s*[·•]/.test(lines[i])) { endIdx = i; break; }
+                if (/(?:Enter to select|Esc to cancel|Navigate)\s*[·•]/.test(lines[i])) { endIdx = i; break; }
             }
             // Find last ──── separator before footer (bounds the prompt region)
             let startIdx = 0;
