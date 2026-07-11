@@ -178,7 +178,7 @@ function _projButton(p) {
     let badges = '';
     if (p.venv) badges += '<span class="proj-badge venv">venv</span>';
     if (p.has_git) badges += '<span class="proj-badge git">git</span>';
-    return `<button class="proj-btn" data-project="${escHtml(p.name)}" onclick="launchProject('${escHtml(p.name).replace(/'/g, "\\'")}', this)">
+    return `<button class="proj-btn" data-project="${escHtml(p.name)}">
         <span class="proj-name">${escHtml(shortName(p.name))}</span>
         <span class="proj-badges">${badges}</span>
     </button>`;
@@ -222,8 +222,8 @@ function renderProjects() {
         if (recents.length > 0) {
             html += '<div class="proj-section-label">Recent Folders</div><div class="proj-section-grid">';
             for (const r of recents.slice(0, 12)) {
-                const p = escHtml(r.path), n = escHtml(r.folderName || r.path.split('/').pop());
-                html += `<button class="proj-btn" onclick="_launchFromPath(${escHtml(JSON.stringify(r.path))}, ${escHtml(JSON.stringify(r.folderName || r.path.split('/').pop()))})">
+                const n = escHtml(r.folderName || r.path.split('/').pop());
+                html += `<button class="proj-btn" data-path="${escHtml(r.path)}" data-folder="${escHtml(r.folderName || r.path.split('/').pop())}">
                     <span class="proj-name">${n}</span>
                     <span class="proj-badges"><span class="proj-badge" style="color:var(--text-muted);border-color:rgba(255,255,255,0.1)">${escHtml(r.path.replace(/\/[^/]+$/, '') || '/')}</span></span>
                 </button>`;
@@ -234,6 +234,27 @@ function renderProjects() {
         }
     }
     grid.innerHTML = html;
+
+    // One delegated click handler for every button in the grid — project
+    // launch, path launch, and resume — so untrusted names/paths live only
+    // in data-* attributes, never in interpolated inline handlers (XSS).
+    if (!grid.dataset.delegated) {
+        grid.dataset.delegated = '1';
+        grid.addEventListener('click', (e) => {
+            const resume = e.target.closest('.proj-session-btn');
+            if (resume && grid.contains(resume)) {
+                resumeSession(resume.dataset.sessionId, resume.dataset.project);
+                return;
+            }
+            const btn = e.target.closest('.proj-btn');
+            if (!btn || !grid.contains(btn)) return;
+            if (btn.dataset.path !== undefined) {
+                _launchFromPath(btn.dataset.path, btn.dataset.folder);
+            } else if (btn.dataset.project !== undefined) {
+                launchProject(btn.dataset.project, btn);
+            }
+        });
+    }
 
     // Load session history for visible projects (non-blocking)
     const visibleProjects = [...recentProjects, ...otherProjects];
@@ -270,7 +291,7 @@ async function loadProjectSessions(projectName) {
         let html = '<div class="proj-sessions">';
         for (const s of resumable) {
             const ago = _timeAgo(new Date(s.started_at));
-            html += `<button class="proj-session-btn" onclick="resumeSession('${s.session_id}', '${projectName.replace(/'/g, "\\'")}')">
+            html += `<button class="proj-session-btn" data-session-id="${escHtml(s.session_id)}" data-project="${escHtml(projectName)}">
                 Resume: ${ago}
             </button>`;
         }
@@ -813,18 +834,27 @@ function connectTerminalWs() {
     if (!_termTarget) return;
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = `${proto}//${location.host}/terminal/stream`;
+    let ws;
     try {
-        _termWs = new WebSocket(url);
+        ws = new WebSocket(url);
     } catch(e) {
         _fallbackToHttp();
         return;
     }
-    _termWs.onopen = function() {
+    _termWs = ws;
+    // Handlers fire asynchronously — disconnect/reconnect (stopPolling →
+    // startPolling) can replace _termWs before this socket's onclose runs.
+    // Each handler bails unless it still owns the global, so a superseded
+    // socket can't null the live one, start HTTP fallback, or schedule a
+    // duplicate reconnect. disconnectTerminalWs() nulls _termWs before the
+    // close event lands, which makes intentional closes stale here too.
+    ws.onopen = function() {
+        if (ws !== _termWs) return;
         _termWsConnected = true;
         _wsReconnectDelay = _WS_RECONNECT_MIN;  // reset backoff on success
         updateConnIndicator();
         // Send subscribe message
-        _termWs.send(JSON.stringify({
+        ws.send(JSON.stringify({
             type: 'subscribe',
             target: _termTarget,
             lines: _termLines,
@@ -843,11 +873,13 @@ function connectTerminalWs() {
         }
         _resetWsInactivityTimer();
     };
-    _termWs.onmessage = function(event) {
+    ws.onmessage = function(event) {
+        if (ws !== _termWs) return;
         _resetWsInactivityTimer();
         onWsMessage(event);
     };
-    _termWs.onclose = function() {
+    ws.onclose = function() {
+        if (ws !== _termWs) return;
         _termWsConnected = false;
         _termWs = null;
         if (_wsInactivityTimer) { clearTimeout(_wsInactivityTimer); _wsInactivityTimer = null; }
@@ -866,7 +898,7 @@ function connectTerminalWs() {
             _fallbackToHttp();
         }
     };
-    _termWs.onerror = function() {
+    ws.onerror = function() {
         // onclose will fire after this
     };
 }

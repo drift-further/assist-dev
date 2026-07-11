@@ -229,12 +229,14 @@ async function automateRun() {
             showFlash('sent', 'Automation started');
             promptEl.value = '';
             _updateAutoUI({ active: true, status: 'running', session: data.session });
-            // Auto-switch to the new session tab
+            // Auto-switch through the canonical tab transition — selectTab
+            // owns the WS re-subscribe (or HTTP fallback), target persistence,
+            // and tab state. The old manual switch set _termTarget + one HTTP
+            // capture but never re-subscribed the stream, so a healthy socket
+            // kept feeding the previous pane and the new pane never updated.
             if (data.target) {
-                _termTarget = data.target;
-                updateTmuxIndicator();
                 await loadSessions();
-                await captureTerminal();
+                selectTab(data.target);
             }
         } else {
             showFlash('error', data.error || 'Failed to start');

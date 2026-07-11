@@ -49,7 +49,9 @@ function renderSkills() {
     const project = _currentSkills.filter(s => s.source !== 'global').sort((a, b) => a.name.localeCompare(b.name));
     const global = _currentSkills.filter(s => s.source === 'global').sort((a, b) => a.name.localeCompare(b.name));
     let html = '';
-    const renderItem = (s) => `<button class="skill-item" onclick="selectSkill('${escHtml(s.name).replace(/'/g, "\\'")}')">
+    // data-skill carries the (attribute-escaped) name; a delegated listener
+    // reads it — never interpolate the name into an inline handler (XSS).
+    const renderItem = (s) => `<button class="skill-item" data-skill="${escHtml(s.name)}">
             <span class="skill-slash">/</span>
             <div class="skill-info">
                 <span class="skill-name">${escHtml(s.name)}</span>
@@ -65,6 +67,13 @@ function renderSkills() {
         for (const s of global) html += renderItem(s);
     }
     list.innerHTML = html;
+    if (!list.dataset.delegated) {
+        list.dataset.delegated = '1';
+        list.addEventListener('click', (e) => {
+            const btn = e.target.closest('.skill-item');
+            if (btn && list.contains(btn)) selectSkill(btn.dataset.skill);
+        });
+    }
 }
 
 function selectSkill(name) {

@@ -11,10 +11,18 @@ function showFlash(type, text) {
     setTimeout(() => flash.classList.remove('show'), 1200);
 }
 
+// Escapes for HTML text and quoted-attribute contexts (both ' and " quotes).
+// NOT sufficient for a value interpolated into a JS string inside an inline
+// handler (onclick="f('...')"): the HTML parser decodes entities BEFORE the
+// JS parser runs, so &#39; becomes a live quote again. For dynamic values use
+// a data-* attribute (escaped here) + a delegated listener, never onclick.
 function escHtml(s) {
     const d = document.createElement('div');
     d.textContent = s;
-    return d.innerHTML.replace(/"/g, '&quot;');
+    return d.innerHTML
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/`/g, '&#96;');
 }
 
 function formatFileSize(bytes) {

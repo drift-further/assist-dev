@@ -436,7 +436,7 @@ function _enterReorderMode(tab) {
     // Show cancel banner
     const banner = document.createElement('div');
     banner.className = 'reorder-banner';
-    banner.innerHTML = 'Tap a slot to place <b>' + (tab.textContent || '').trim().split('\n')[0] +
+    banner.innerHTML = 'Tap a slot to place <b>' + escHtml((tab.textContent || '').trim().split('\n')[0]) +
         '</b> &mdash; <span class="reorder-cancel">cancel</span>';
     banner.querySelector('.reorder-cancel').onclick = () => _exitReorderMode();
     container.parentElement.insertBefore(banner, container);
