@@ -17,14 +17,29 @@ git_bp = Blueprint("git_bp", __name__)
 
 # Characters that must never appear in any git argument — the command is
 # ultimately typed into a shell-backed tmux pane, so anything the shell
-# could interpret is rejected outright.
+# could interpret is rejected outright. `!` stays allowed: it only bites
+# inside a `-c alias.*=!cmd` definition (unreachable — options before the
+# subcommand are rejected below) and banning it would break commit
+# messages; shlex.quote's single quotes keep it inert in the shell.
 _FORBIDDEN_CHARS = set(";|&$`(){}<>\n\r")
+
+# Builtin subcommands only. Git never alias-expands a name that shadows a
+# builtin, so an allowlist also closes the `git <alias>` → `!cmd` path.
+_ALLOWED_SUBCOMMANDS = {
+    "add", "branch", "checkout", "commit", "diff", "fetch", "log",
+    "pull", "push", "restore", "stash", "status", "switch",
+}
+
+# Options that make git execute an arbitrary program, wherever they appear.
+_FORBIDDEN_OPTIONS = ("--upload-pack", "--receive-pack", "--exec")
 
 
 def _validate_git_command(command):
     """Validate a (possibly &&-chained) git command and rebuild it safely.
 
-    Each &&-segment must shlex-parse, have argv[0] == "git", and contain
+    Each &&-segment must shlex-parse, be `git <allowed-subcommand> …` with
+    no options between "git" and the subcommand (blocks -c/-C/--exec-path/
+    --config-env config and cwd injection), no exec-capable options, and
     no shell metacharacters in any token. Returns (rebuilt_cmd, None) on
     success or (None, error_message) on rejection.
     """
@@ -40,9 +55,17 @@ def _validate_git_command(command):
             return None, f"Unparseable command: {e}"
         if not tokens or tokens[0] != "git":
             return None, "Only git commands allowed"
+        if len(tokens) < 2 or tokens[1].startswith("-"):
+            return None, "Options before the git subcommand are not allowed"
+        if tokens[1] not in _ALLOWED_SUBCOMMANDS:
+            return None, f"Git subcommand not allowed: {tokens[1]}"
         for tok in tokens:
             if any(ch in _FORBIDDEN_CHARS for ch in tok):
                 return None, "Shell metacharacters not allowed"
+            if tok in _FORBIDDEN_OPTIONS or any(
+                tok.startswith(opt + "=") for opt in _FORBIDDEN_OPTIONS
+            ):
+                return None, "Git option not allowed"
         rebuilt.append(" ".join(shlex.quote(tok) for tok in tokens))
     return " && ".join(rebuilt), None
 

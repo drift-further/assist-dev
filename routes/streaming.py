@@ -251,9 +251,7 @@ def register_streaming(sock_instance):
         """WebSocket endpoint for real-time terminal streaming."""
         # WS handshakes bypass CORS entirely — enforce the same Origin
         # allowlist as the HTTP before_request hook (shared/security.py).
-        if not origin_allowed(
-            ws.environ.get("HTTP_ORIGIN"), ws.environ.get("HTTP_HOST")
-        ):
+        if not origin_allowed(ws.environ.get("HTTP_ORIGIN")):
             try:
                 ws.close()
             except Exception:

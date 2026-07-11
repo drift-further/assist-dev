@@ -446,36 +446,15 @@ def cli_proxy():
         return jsonify({"error": "missing args"}), 400
 
     allowed_env = os.environ.get("ASSIST_CLI_ALLOWED", "")
-    ALLOWED = set(allowed_env.split(",")) if allowed_env else set()
-    if ALLOWED and args[0] not in ALLOWED:
+    allowed = {s.strip() for s in allowed_env.split(",") if s.strip()}
+    # Fail closed: no allowlist means the proxy is disabled, not wide open.
+    if not allowed:
+        return (
+            jsonify({"error": "CLI proxy disabled (ASSIST_CLI_ALLOWED not set)"}),
+            403,
+        )
+    if args[0] not in allowed:
         return jsonify({"error": f"subcommand '{args[0]}' not allowed"}), 403
-
-    tmp_files = []
-    proxy_files = data.get("files", [])
-    if proxy_files:
-        import base64
-        import tempfile
-
-        tmp_dir = tempfile.mkdtemp(prefix="assist-proxy-")
-        for i, fobj in enumerate(proxy_files):
-            fname = fobj.get("name", f"file_{i}")
-            fdata = base64.b64decode(fobj.get("data", ""))
-            fpath = os.path.join(tmp_dir, fname)
-            with open(fpath, "wb") as f:
-                f.write(fdata)
-            tmp_files.append(fpath)
-
-        resolved_args = []
-        for arg in args:
-            if arg.startswith("__PROXY_FILE_") and arg.endswith("__"):
-                try:
-                    idx = int(arg[len("__PROXY_FILE_") : -2])
-                    resolved_args.append(tmp_files[idx])
-                except (ValueError, IndexError):
-                    resolved_args.append(arg)
-            else:
-                resolved_args.append(arg)
-        args = resolved_args
 
     cli_bin = os.environ.get("ASSIST_CLI_BIN")
     if not cli_bin:
@@ -484,46 +463,80 @@ def cli_proxy():
             500,
         )
 
-    cmd_timeout = 30
-    if "--wait-reply" in args or "-w" in args:
-        cmd_timeout = 330
-        for i, a in enumerate(args):
-            if a == "--timeout" and i + 1 < len(args):
-                try:
-                    cmd_timeout = int(args[i + 1]) + 30
-                except ValueError:
-                    pass
-
+    tmp_dir = None
+    tmp_files = []
     try:
-        result = subprocess.run(
-            [cli_bin] + args,
-            capture_output=True,
-            text=True,
-            timeout=cmd_timeout,
-            cwd=os.environ.get("ASSIST_CLI_DIR", os.path.expanduser("~")),
-        )
-        return jsonify(
-            {
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "returncode": result.returncode,
-            }
-        )
-    except subprocess.TimeoutExpired:
-        return (
-            jsonify({"error": f"timeout ({cmd_timeout}s)", "returncode": -1}),
-            504,
-        )
-    except FileNotFoundError:
-        return jsonify({"error": "CLI binary not found", "returncode": -1}), 500
+        proxy_files = data.get("files", [])
+        if proxy_files:
+            import base64
+            import re
+            import tempfile
+
+            tmp_dir = tempfile.mkdtemp(prefix="assist-proxy-")
+            for i, fobj in enumerate(proxy_files):
+                # Client names are untrusted (absolute or ../ names escape
+                # the temp dir via os.path.join) — generate names server-side
+                # and keep only a plain extension so the CLI can sniff type.
+                ext = os.path.splitext(os.path.basename(fobj.get("name", "")))[1]
+                if not re.fullmatch(r"\.[A-Za-z0-9]{1,10}", ext):
+                    ext = ""
+                fpath = os.path.join(tmp_dir, f"file_{i}{ext}")
+                with open(fpath, "wb") as f:
+                    f.write(base64.b64decode(fobj.get("data", "")))
+                tmp_files.append(fpath)
+
+            resolved_args = []
+            for arg in args:
+                if arg.startswith("__PROXY_FILE_") and arg.endswith("__"):
+                    try:
+                        idx = int(arg[len("__PROXY_FILE_") : -2])
+                        resolved_args.append(tmp_files[idx])
+                    except (ValueError, IndexError):
+                        resolved_args.append(arg)
+                else:
+                    resolved_args.append(arg)
+            args = resolved_args
+
+        cmd_timeout = 30
+        if "--wait-reply" in args or "-w" in args:
+            cmd_timeout = 330
+            for i, a in enumerate(args):
+                if a == "--timeout" and i + 1 < len(args):
+                    try:
+                        cmd_timeout = int(args[i + 1]) + 30
+                    except ValueError:
+                        pass
+
+        try:
+            result = subprocess.run(
+                [cli_bin] + args,
+                capture_output=True,
+                text=True,
+                timeout=cmd_timeout,
+                cwd=os.environ.get("ASSIST_CLI_DIR", os.path.expanduser("~")),
+            )
+            return jsonify(
+                {
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "returncode": result.returncode,
+                }
+            )
+        except subprocess.TimeoutExpired:
+            return (
+                jsonify({"error": f"timeout ({cmd_timeout}s)", "returncode": -1}),
+                504,
+            )
+        except FileNotFoundError:
+            return jsonify({"error": "CLI binary not found", "returncode": -1}), 500
     finally:
         for f in tmp_files:
             try:
                 os.unlink(f)
             except OSError:
                 pass
-        if tmp_files:
+        if tmp_dir:
             try:
-                os.rmdir(os.path.dirname(tmp_files[0]))
+                os.rmdir(tmp_dir)
             except OSError:
                 pass

@@ -31,14 +31,14 @@ def create_app():
     @app.before_request
     def _check_origin():
         if request.method in ("POST", "DELETE", "PATCH", "PUT"):
-            if not origin_allowed(request.headers.get("Origin"), request.host):
+            if not origin_allowed(request.headers.get("Origin")):
                 return jsonify({"ok": False, "error": "Origin not allowed"}), 403
 
-    # CORS — reflect only allowed Origins, never emit a wildcard.
+    # CORS — echo only fixed-allowlist Origins, never emit a wildcard.
     @app.after_request
     def _cors(response):
         origin = request.headers.get("Origin")
-        if origin and origin_allowed(origin, request.host):
+        if origin and origin_allowed(origin):
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, PATCH, OPTIONS"
             response.headers["Access-Control-Allow-Headers"] = "Content-Type"
@@ -46,6 +46,8 @@ def create_app():
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
         return response
 
     # Register blueprints
@@ -102,6 +104,11 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Claude Assist server")
     parser.add_argument("--port", type=int, default=8089, help="Port to listen on")
+    # Bind all interfaces: LAN clients reach Flask DIRECTLY at
+    # http://<lan-ip>:8089 (nginx only serves the assist.drift hostname, not
+    # a bare IP). Pass --host 127.0.0.1 to lock down to loopback — but only
+    # once LAN clients are moved onto an nginx vhost that serves the IP.
+    parser.add_argument("--host", default="0.0.0.0", help="Interface to bind")
     args = parser.parse_args()
 
-    app.run(host="0.0.0.0", port=args.port)
+    app.run(host=args.host, port=args.port)
