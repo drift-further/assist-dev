@@ -58,6 +58,7 @@ def create_app():
     from routes.automate import automate_bp
     from routes.container import container_bp
     from routes.poll import poll_bp
+    from routes.completion import completion_bp
 
     app.register_blueprint(static_bp)
     app.register_blueprint(input_bp)
@@ -68,6 +69,7 @@ def create_app():
     app.register_blueprint(automate_bp)
     app.register_blueprint(container_bp)
     app.register_blueprint(poll_bp)
+    app.register_blueprint(completion_bp)
 
     from routes.settings import settings_bp, init_start_time
 

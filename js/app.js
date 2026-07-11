@@ -14,6 +14,9 @@ setInterval(function() {
     const val = input.value;
     if (val.endsWith('\n') || val.endsWith('\r')) {
         input.value = val.replace(/[\r\n]+$/, '');
+        // Autocomplete open: a mobile "send" keystroke accepts the highlighted
+        // suggestion instead of submitting the message.
+        if (typeof acConsumeEnter === 'function' && acConsumeEnter()) return;
         if (input.value.trim() && !_sending) doPaste();
     }
 }, 150);

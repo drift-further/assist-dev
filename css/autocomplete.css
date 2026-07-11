@@ -1,0 +1,76 @@
+/* autocomplete.css — Inline @file / /skill typeahead popup above the composer */
+
+.ac-popup {
+    display: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: calc(100% + 6px);
+    z-index: 60;
+    max-height: 40vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 6px;
+    background: linear-gradient(180deg, rgba(8, 14, 18, 0.98) 0%, rgba(6, 10, 13, 0.97) 100%);
+    border: 1px solid rgba(0, 212, 255, 0.25);
+    box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.6);
+    animation: fadeSlide 0.15s ease-out;
+}
+.ac-popup.visible { display: block; }
+
+/* Skills variant tints green to match the / namespace */
+.ac-popup.ac-skills { border-color: rgba(48, 209, 88, 0.3); }
+
+.ac-section {
+    font-size: 8px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--cyan);
+    opacity: 0.6;
+    padding: 2px 8px 6px;
+}
+.ac-popup.ac-skills .ac-section { color: var(--green); }
+
+.ac-item {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: 40px;
+    padding: 8px 10px;
+    border: 1px solid transparent;
+    border-left: 2px solid transparent;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.1s, border-color 0.1s;
+}
+.ac-primary {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--cyan);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ac-secondary {
+    font-size: 9px;
+    color: var(--text-dim);
+    margin-top: 2px;
+    line-height: 1.35;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ac-folder .ac-primary { color: var(--amber); }
+.ac-skill .ac-primary { color: var(--green); }
+
+.ac-item.ac-active {
+    background: rgba(0, 212, 255, 0.12);
+    border-left-color: var(--cyan);
+}
+.ac-folder.ac-active { background: rgba(255, 149, 0, 0.12); border-left-color: var(--amber); }
+.ac-skill.ac-active { background: rgba(48, 209, 88, 0.12); border-left-color: var(--green); }
+.ac-item:active { background: rgba(0, 212, 255, 0.18); }
+
+.ac-popup::-webkit-scrollbar { width: 4px; }
+.ac-popup::-webkit-scrollbar-track { background: transparent; }
+.ac-popup::-webkit-scrollbar-thumb { background: rgba(0, 212, 255, 0.25); border-radius: 2px; }
