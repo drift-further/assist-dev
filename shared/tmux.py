@@ -343,8 +343,12 @@ def capture_pane(target, lines=2000):
     info["is_native_tui"] = (not alternate_on) and info.get("command") in _NATIVE_TUI_COMMS
 
     capture_args = ["tmux", "capture-pane", "-e", "-p", "-t", target]
-    if alternate_on:
-        capture_args += ["-S", "0"]  # current screen only (no scrollback)
+    # Claude writes its transcript into tmux scrollback even while on the
+    # alternate screen (unlike a true TUI such as opencode), so keep full
+    # scrollback for it — mirrors the frontend's never-TUI exemption.
+    claude_pane = prettify_command(info.get("command", "")) == "claude"
+    if alternate_on and not claude_pane:
+        capture_args += ["-S", "0"]  # true TUI: visible viewport only
     else:
         capture_args += ["-S", f"-{lines}"]
 
