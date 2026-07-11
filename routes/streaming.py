@@ -85,7 +85,7 @@ def _force_redraw(target):
         exact = tmux_exact_target(target)
         info = subprocess.run(
             ["tmux", "display-message", "-t", exact, "-p",
-             "#{pane_width}\t#{pane_height}\t#{session_attached}\t#{pane_pid}\t#{pane_current_command}"],
+             "#{pane_width}\t#{pane_height}\t#{session_attached}\t#{pane_pid}\t#{pane_current_command}\t#{alternate_on}"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=2,
         )
@@ -109,9 +109,17 @@ def _force_redraw(target):
             except ValueError:
                 pass
         cmd = parts[4] if len(parts) >= 5 else ""
+        alt_on = len(parts) >= 6 and parts[5] == "1"
 
-        target_w = max(w, _MIN_REDRAW_COLS)
-        target_h = max(h, _MIN_REDRAW_ROWS)
+        if alt_on:
+            # A fitted alt-screen TUI's size is deliberate (frontend auto-fit).
+            # Healing it up to the 40x60 floors would undo the fit — toggle at
+            # the pane's current size instead. The floors exist for Claude's
+            # 60-row main-screen convention.
+            target_w, target_h = w, h
+        else:
+            target_w = max(w, _MIN_REDRAW_COLS)
+            target_h = max(h, _MIN_REDRAW_ROWS)
 
         with state._activity_lock:
             saved_activity = state.pane_last_activity.get(target)

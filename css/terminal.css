@@ -269,6 +269,14 @@
 .session-tab.agent-tab.active {
     background: rgba(255, 255, 255, 0.06);
 }
+/* Unnamed sibling agent panes (no team config): neutral accent.
+   !important keeps the identity accent through the running/active states,
+   whose border-color rules + runningBorderPulse animation would otherwise
+   repaint the left edge green (animations beat normal declarations). */
+.session-tab.subpane-tab {
+    border-left: 3px solid #8b949e;
+    border-left-color: #8b949e !important;
+}
 /* Team lead tab: subtle indicator it has children */
 .session-tab.team-lead-tab {
     border-right: none;
@@ -997,3 +1005,15 @@
 .stale-sheet-row .row-dot.cyan { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
 .stale-sheet-row .row-dot.amber { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
 .stale-sheet-row .row-dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+
+/* TUI-mode chip: pane is a full-screen alternate-screen app */
+.term-tui-chip {
+    color: var(--purple);
+    border: 1px solid var(--purple);
+    border-radius: 3px;
+    padding: 0 4px;
+    margin-right: 6px;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+}
+.term-tui-chip.hidden { display: none; }

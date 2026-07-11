@@ -2,6 +2,7 @@
 
 import os
 import platform
+import re
 import subprocess
 import time
 import uuid
@@ -115,7 +116,21 @@ TMUX_KEY_MAP = {
     "Left": "Left",
     "Right": "Right",
     "Tab": "Tab",
+    "Page_Up": "PPage",
+    "Page_Down": "NPage",
+    "End": "End",
+    "Home": "Home",
 }
+
+# Claude Code native installs run as version-named binaries (e.g. `2.1.206`).
+_VERSION_CMD_RE = re.compile(r"\d+(?:\.\d+){1,3}")
+
+
+def prettify_command(cmd):
+    """Human-readable pane command: version-named binaries render as `claude`."""
+    if cmd and _VERSION_CMD_RE.fullmatch(cmd):
+        return "claude"
+    return cmd
 
 
 def set_clipboard(text):
@@ -282,7 +297,7 @@ def capture_pane(target, lines=2000):
             "-t",
             target,
             "-p",
-            "#{pane_current_command}\t#{pane_width}\t#{pane_height}\t#{cursor_y}\t#{alternate_on}\t#{pane_pid}",
+            "#{pane_current_command}\t#{pane_width}\t#{pane_height}\t#{cursor_y}\t#{alternate_on}\t#{pane_pid}\t#{session_attached}",
         ],
         capture_output=True,
         text=True,
@@ -310,6 +325,12 @@ def capture_pane(target, lines=2000):
                     pane_pid = int(parts[5])
                 except ValueError:
                     pass
+            if len(parts) >= 7:
+                try:
+                    info["session_attached"] = int(parts[6])
+                except ValueError:
+                    info["session_attached"] = 0
+            info["command_display"] = prettify_command(info.get("command", ""))
             info["alternate_on"] = alternate_on
 
     # Wrapper detection exposed to the streamer so periodic self-heal can

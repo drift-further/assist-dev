@@ -14,6 +14,7 @@ from shared.tmux import (
     capture_pane,
     detect_venv,
     pane_wants_ctrl_l_heal,
+    prettify_command,
     tmux_exact_target,
     tmux_send_keys,
     tmux_send_text,
@@ -297,6 +298,7 @@ def terminal_sessions():
         return jsonify({"sessions": [], "active_target": state.tmux_target})
 
     panes = []
+    seen_sessions = set()
     for line in proc.stdout.strip().split("\n"):
         if not line:
             continue
@@ -307,6 +309,8 @@ def terminal_sessions():
             idle_seconds = int(time.time()) - activity if activity else 0
             pane_pid = parts[7] if len(parts) >= 8 else ""
             pane_id = parts[8] if len(parts) >= 9 else ""
+            is_subpane = parts[0] in seen_sessions
+            seen_sessions.add(parts[0])
             panes.append(
                 {
                     "target": target,
@@ -319,6 +323,8 @@ def terminal_sessions():
                     "idle_seconds": idle_seconds,
                     "pane_pid": pane_pid,
                     "pane_id": pane_id,
+                    "is_subpane": is_subpane,
+                    "command_display": prettify_command(parts[3]),
                 }
             )
 
@@ -358,7 +364,10 @@ def terminal_resize():
         return jsonify({"ok": False, "error": "cols and rows required"}), 400
 
     cols = max(40, min(int(cols), 400))
-    rows = max(60, min(int(rows), 200))
+    # Floor is 10, not 60: the 60-row convention for claude panes lives in the
+    # frontend _calcTermSize; TUI auto-fit needs exact viewport rows (claude
+    # panes are excluded from TUI fit).
+    rows = max(10, min(int(rows), 200))
 
     proc = subprocess.run(
         [

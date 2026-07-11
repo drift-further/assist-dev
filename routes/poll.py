@@ -3,6 +3,7 @@
 import hashlib
 import json as json_mod
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -11,15 +12,88 @@ from flask import Blueprint, jsonify, request
 
 import shared.state as state
 from routes.terminal import enrich_panes_with_agents
+from shared.tmux import prettify_command
 
 poll_bp = Blueprint("poll_bp", __name__)
 
+# Claude Code native installs run as version-named binaries (e.g. `2.1.206`),
+# so pane_current_command for a spawned subagent pane is a bare version string.
+_VERSION_CMD_RE = re.compile(r"\d+(?:\.\d+){1,3}")
+
+
+def _find_project_dir(cwd):
+    """Find the nearest project root for a tmux pane cwd."""
+    check_dir = cwd
+    for _ in range(6):
+        if (check_dir / ".git").is_dir() or (check_dir / ".claude").is_dir() or (check_dir / ".opencode").is_dir():
+            return check_dir
+        parent = check_dir.parent
+        if parent == check_dir:
+            break
+        check_dir = parent
+    return cwd
+
+
+def _run_git(project_dir, args, timeout=2):
+    """Run a read-only git command without taking optional index locks.
+
+    Claude/OpenCode status polling runs frequently from Assist. Plain `git status`
+    may refresh the index and race an interactive `git commit`, producing the
+    lock error shown in terminal panes. `GIT_OPTIONAL_LOCKS=0` asks git to avoid
+    optional index refresh locks for status-ish reads.
+    """
+    env = os.environ.copy()
+    env["GIT_OPTIONAL_LOCKS"] = "0"
+    return subprocess.run(
+        ["git", *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=str(project_dir),
+        env=env,
+    )
+
+
+def _read_json(path):
+    try:
+        if path.exists():
+            return json_mod.loads(path.read_text())
+    except Exception:
+        pass
+    return None
+
+
+def _merge_opencode_meta(result, project_dir):
+    """Merge optional OpenCode plugin cache into the Assist metadata payload."""
+    candidates = [
+        project_dir / ".claude" / "state" / "opencode-status.json",
+        project_dir / ".opencode" / "status.json",
+    ]
+    for path in candidates:
+        oc = _read_json(path)
+        if not oc:
+            continue
+        result.setdefault("agent", "opencode")
+        if oc.get("model"):
+            result["model"] = oc.get("model")
+        if oc.get("status"):
+            result["session_status"] = oc.get("status")
+        if oc.get("session_id"):
+            result["session_id"] = oc.get("session_id")
+        if oc.get("todos") is not None:
+            result["open_tasks"] = oc.get("todos")
+        if oc.get("updated"):
+            result["agent_updated"] = oc.get("updated")
+        return
+
 
 def get_claude_meta(target):
-    """Read Claude session metadata from .claude/state/ files near the pane's cwd.
+    """Read Claude/OpenCode session metadata near the pane's cwd.
 
-    Returns a dict with context usage, cost, task, branch, etc.
-    Returns {} if no .claude/state/ directory is found or on any error.
+    Returns a dict with context usage, cost, task, branch, edit counts, etc.
+    Claude Code populates `.claude/state/context-usage.json` via DAIC's
+    statusline script. OpenCode can populate `.claude/state/opencode-status.json`
+    via a lightweight plugin. Git metadata is gathered independently for both.
     """
     try:
         if not target:
@@ -36,26 +110,11 @@ def get_claude_meta(target):
             return {}
 
         cwd = Path(proc.stdout.strip())
-
-        # Walk up from cwd looking for .claude/state/ (max 3 levels)
-        state_dir = None
-        project_dir = None
-        check_dir = cwd
-        for _ in range(4):  # cwd + 3 parents
-            candidate = check_dir / ".claude" / "state"
-            if candidate.is_dir():
-                state_dir = candidate
-                project_dir = check_dir
-                break
-            parent = check_dir.parent
-            if parent == check_dir:
-                break
-            check_dir = parent
-
-        if not state_dir:
-            return {}
+        project_dir = _find_project_dir(cwd)
+        state_dir = project_dir / ".claude" / "state"
 
         result = {}
+        _merge_opencode_meta(result, project_dir)
 
         # Read context-usage.json
         try:
@@ -93,35 +152,37 @@ def get_claude_meta(target):
 
         # Git branch
         try:
-            git_proc = subprocess.run(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                capture_output=True,
-                text=True,
-                timeout=3,
-                cwd=str(project_dir),
-            )
+            git_proc = _run_git(project_dir, ["rev-parse", "--abbrev-ref", "HEAD"])
             if git_proc.returncode == 0:
                 result["branch"] = git_proc.stdout.strip()
         except Exception:
             pass
 
-        # Edited files (git status --porcelain, count M/A lines)
+        # Edited files. Use lock-free status polling so Assist does not race the
+        # interactive agent for .git/index.lock.
         try:
-            gs_proc = subprocess.run(
-                ["git", "status", "--porcelain"],
-                capture_output=True,
-                text=True,
-                timeout=3,
-                cwd=str(project_dir),
-            )
+            gs_proc = _run_git(project_dir, ["status", "--porcelain=v1", "--untracked-files=all"])
             if gs_proc.returncode == 0:
-                count = 0
+                edited = staged = untracked = deleted = 0
                 for line in gs_proc.stdout.strip().split("\n"):
                     if not line:
                         continue
-                    if len(line) >= 2 and (line[0] in "MA" or line[1] in "MA"):
-                        count += 1
-                result["edited_files"] = count
+                    x = line[0] if len(line) > 0 else " "
+                    y = line[1] if len(line) > 1 else " "
+                    if x == "?" and y == "?":
+                        untracked += 1
+                        edited += 1
+                        continue
+                    if x != " ":
+                        staged += 1
+                    if x == "D" or y == "D":
+                        deleted += 1
+                    if x in "MADRCU" or y in "MADRCU":
+                        edited += 1
+                result["edited_files"] = edited
+                result["staged_files"] = staged
+                result["untracked_files"] = untracked
+                result["deleted_files"] = deleted
         except Exception:
             pass
 
@@ -184,6 +245,7 @@ def consolidated_poll():
     )
 
     panes = []
+    seen_sessions = set()
     now = time.time()
     if proc.returncode == 0:
         for line in proc.stdout.strip().split("\n"):
@@ -194,6 +256,8 @@ def consolidated_poll():
                 target = f"{parts[0]}:{parts[1]}.{parts[2]}"
                 pane_pid = parts[7] if len(parts) >= 8 else ""
                 pane_id = parts[8] if len(parts) >= 9 else ""
+                is_subpane = parts[0] in seen_sessions
+                seen_sessions.add(parts[0])
                 panes.append(
                     {
                         "target": target,
@@ -205,6 +269,8 @@ def consolidated_poll():
                         "height": int(parts[5]),
                         "pane_pid": pane_pid,
                         "pane_id": pane_id,
+                        "is_subpane": is_subpane,
+                        "command_display": prettify_command(parts[3]),
                     }
                 )
 
@@ -260,6 +326,7 @@ def consolidated_poll():
     # --- States ---
     AGENT_COMMANDS = {
         "claude",
+        "opencode",
         "node",
         "python",
         "python3",
@@ -284,7 +351,7 @@ def consolidated_poll():
         idle_seconds = now - last_active
 
         idle_thresh = state.get_setting("terminal", "idle_threshold_sec")
-        if command in AGENT_COMMANDS:
+        if command in AGENT_COMMANDS or _VERSION_CMD_RE.fullmatch(command):
             st = "idle" if idle_seconds > 30 else "running"
         elif command in SHELL_COMMANDS:
             if pane_pid:

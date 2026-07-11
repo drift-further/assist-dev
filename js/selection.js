@@ -9,6 +9,15 @@ let _selStartX = 0;
 let _selStartY = 0;
 
 const _SEL_HOLD_MS = 1200;
+// TUI panes page via swipe, so contact time is long and read-pauses (finger
+// resting between swipes) kept firing the 1.2s hold. Demand a much more
+// deliberate hold there. (_paneTui lives in terminal.js; typeof-guarded per
+// the cross-file idiom.)
+function _selHoldMs() {
+    if (typeof _paneTui !== 'undefined' && typeof _termTarget !== 'undefined'
+        && _paneTui[_termTarget]) return 2500;
+    return _SEL_HOLD_MS;
+}
 
 function _selLineFromY(clientY) {
     const pre = document.getElementById('term-content');
@@ -158,7 +167,7 @@ function _copySelected() {
             _selDragging = true;
             _selSetScrollLock(true);  // prevent scroll while dragging
             applySelectionHighlights();
-        }, _SEL_HOLD_MS);
+        }, _selHoldMs());
     }, {passive: true});
 
     // Drag to extend selection (scroll is locked during drag)

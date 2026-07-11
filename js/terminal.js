@@ -450,6 +450,8 @@ async function loadSessions() {
         let prevSession = null;
         for (const p of panes) {
             const isAgent = !!p.agent_name;
+            // Mirrors _applySessionsData() in app.js — keep the two in sync.
+            const isSubpane = !isAgent && !!p.is_subpane;
             const isTeamLead = !isAgent && teamSessions.has(p.session);
             const aName = agentDisplayName(p);
             const aColor = _agentColors[p.agent_color] || '';
@@ -462,12 +464,13 @@ async function loadSessions() {
             const tab = document.createElement('button');
             tab.className = 'session-tab';
             if (isAgent) tab.classList.add('agent-tab');
+            if (isSubpane) tab.classList.add('agent-tab', 'subpane-tab');
             if (isTeamLead) tab.classList.add('team-lead-tab');
             tab.dataset.target = p.target;
             if (p.agent_name) tab.dataset.agentName = p.agent_name;
 
-            // Label: agent name (short) or session name
-            const label = aName || shortName(p.session);
+            // Label: agent name (short) or session·pane for unnamed sibling panes
+            const label = aName || (isSubpane ? shortName(p.session) + '·' + p.pane : shortName(p.session));
             tab.textContent = label;
 
             // Agent color: left border accent
@@ -494,6 +497,14 @@ async function loadSessions() {
         // Auto-select if we have a saved target
         if (current && panes.some(p => p.target === current)) {
             _termTarget = current;
+        } else if (current && panes.length > 0) {
+            // Viewed pane vanished (e.g. a subagent pane exited): fall back to
+            // that session's first surviving pane rather than a dead target.
+            // Mirrors _applySessionsData() in app.js — keep the two in sync.
+            const sess = current.split(':')[0];
+            const fallback = panes.find(p => p.session === sess) || panes[0];
+            selectTab(fallback.target);
+            return;
         } else if (panes.length > 0 && !_termTarget) {
             _termTarget = panes[0].target;
         }
@@ -573,8 +584,14 @@ function selectTab(target) {
         disconnectTerminalWs();
         connectTerminalWs();
     }
-    // No auto-resize on tab click (per user) — the pane keeps whatever size
-    // it was launched/last fit at. Use the Fit menu to resize explicitly.
+    // No auto-resize on tab click (per user) for normal panes — the pane keeps
+    // whatever size it was launched/last fit at. Use the Fit menu to resize.
+    // TUI panes are the exception: reset the per-target fit flag and try to
+    // auto-fit to the viewport. _autoFitTui no-ops until a frame marks the pane
+    // TUI (frame-driven mode-on hook covers the not-yet-known case), and its
+    // four guards keep this from tugging attached/keyboard-open/settled panes.
+    _tuiFitDone[target] = false;
+    _autoFitTui('tab-open');
     // Scroll the active tab into view
     const activeTab = document.querySelector('.session-tab.active');
     if (activeTab) activeTab.scrollIntoView({behavior: 'smooth', inline: 'nearest', block: 'nearest'});
@@ -618,6 +635,23 @@ let _lastRenderTime = 0;
 let _pendingRender = null;  // latest content waiting for throttle to expire
 const RENDER_MIN_INTERVAL = 200;   // ms — max ~5 renders/sec during streaming
 
+// TUI mode: pane is on the alternate screen running a real app (not a shell
+// left stuck on the alt screen by an uncleanly-exited TUI).
+const _TUI_SHELLS = ['bash', 'zsh', 'sh', 'fish'];
+let _paneTui = {};   // target -> bool
+let _paneInfo = {};  // target -> last full-frame info dict
+
+function _isTuiInfo(info) {
+    if (!info || !info.alternate_on || !info.command) return false;
+    if (_TUI_SHELLS.includes(info.command)) return false;
+    // Claude Code panes are never TUI-managed even when they flip to the
+    // alternate screen — deliberately-sized claude panes must not be auto-fit
+    // (user decision 2026-07-10). command_display folds version-named
+    // binaries (e.g. 2.1.206) into 'claude'.
+    if ((info.command_display || info.command) === 'claude') return false;
+    return true;
+}
+
 function _scheduleRender(content, info, target) {
     const now = Date.now();
     const elapsed = now - _lastRenderTime;
@@ -644,9 +678,26 @@ function _doRender(content, info, target) {
 
     // Update info bar
     if (info) {
-        document.getElementById('term-info-cmd').textContent = info.command || '';
+        _paneInfo[target] = info;
+        document.getElementById('term-info-cmd').textContent = info.command_display || info.command || '';
         document.getElementById('term-info-dim').textContent =
             (info.width && info.height) ? `${info.width}x${info.height}` : '';
+        const isTui = _isTuiInfo(info);
+        const wasTui = !!_paneTui[target];
+        _paneTui[target] = isTui;
+        if (target === _termTarget) {
+            document.getElementById('term-tui-chip').classList.toggle('hidden', !isTui);
+            // Task 6 defines _autoFitTui; keep the typeof guard permanently (script load order safety).
+            // Retry on EVERY TUI frame, not just the mode-on edge: the fit is
+            // silently dropped while the soft keyboard is open (the common
+            // phone case — `opencode` was just typed in the composer), so a
+            // one-shot trigger leaves the pane at launch size forever.
+            // _tuiFitDone makes repeat calls free once a fit lands.
+            if (isTui && typeof _autoFitTui === 'function') _autoFitTui(wasTui ? 'frame' : 'mode-on');
+            // Leaving TUI mode (app exited back to shell): clear the fit
+            // latch so relaunching a TUI in the same pane fits again.
+            if (!isTui && wasTui) _tuiFitDone[target] = false;
+        }
     }
 
     // Update toggle status
@@ -1109,10 +1160,160 @@ function _calcTermSize() {
     return { cols, rows };
 }
 
+/** Exact viewport size for TUI panes — no 60-row floor (that floor exists
+ *  for claude's diff renderer; a full-screen TUI must match the screen). */
+function _calcTuiSize() {
+    const el = document.getElementById('term-content');
+    const container = el.parentElement;
+    const charW = _measureCharWidth();
+    const lineH = _termFontSize * 1.35;
+    const availW = (container && container.clientWidth > 0 ? container.clientWidth : window.innerWidth) - 16;
+    const availH = (container && container.clientHeight > 0 ? container.clientHeight : window.innerHeight * 0.6) - 16;
+    return {
+        cols: Math.max(40, Math.floor(availW / charW)),
+        rows: Math.max(10, Math.floor(availH / lineH)),
+    };
+}
+
+// Auto-fit for TUI panes. History: naive auto-resize was removed (see comments
+// at lines ~576/781) because reconnects fired resizes off transient viewport
+// measurements. Four guards prevent a recurrence: settled double measurement,
+// soft-keyboard skip, ≤1 cell delta skip, attached-client skip.
+let _autoFitPending = false;
+let _tuiFitDone = {};   // target -> bool, reset on tab select / rotation
+
+function _kbOpen() {
+    if (document.activeElement === document.getElementById('text-input')) return true;
+    return !!(window.visualViewport && window.visualViewport.height < window.innerHeight * 0.75);
+}
+
+function _autoFitTui(reason) {
+    const target = _termTarget;
+    if (!target || !_paneTui[target] || _autoFitPending || _tuiFitDone[target]) return;
+    if (_kbOpen()) return;
+    const first = _calcTuiSize();
+    _autoFitPending = true;
+    setTimeout(async function() {
+        _autoFitPending = false;
+        if (_termTarget !== target || !_paneTui[target] || _kbOpen()) return;
+        const second = _calcTuiSize();
+        if (second.cols !== first.cols || second.rows !== first.rows) return;  // not settled
+        const info = _paneInfo[target] || {};
+        if ((info.session_attached || 0) > 0) return;  // real terminal attached — don't tug
+        _tuiFitDone[target] = true;
+        if (Math.abs((info.width || 0) - second.cols) <= 1 &&
+            Math.abs((info.height || 0) - second.rows) <= 1) return;  // already fits
+        await termFitToScreen(second.cols, second.rows, { quiet: true });
+    }, 250);
+}
+
+window.addEventListener('orientationchange', function() {
+    _tuiFitDone = {};
+    setTimeout(function() { _autoFitTui('rotate'); }, 400);
+});
+
+// Keyboard-close retrigger: a static TUI (e.g. opencode idle at its home
+// screen) streams no frames, so the per-frame retry above never runs. When
+// the composer blurs or the visual viewport grows back (soft keyboard
+// dismissed), retry the deferred fit directly. 350ms lets the viewport
+// settle before _autoFitTui takes its own double measurement.
+(function _wireTuiKbRefit() {
+    function retry() { setTimeout(function() { _autoFitTui('kb-close'); }, 350); }
+    const input = document.getElementById('text-input');
+    if (input) input.addEventListener('blur', retry);
+    if (window.visualViewport) {
+        let _vvLastH = window.visualViewport.height;
+        window.visualViewport.addEventListener('resize', function() {
+            const h = window.visualViewport.height;
+            if (h > _vvLastH + 50) retry();  // grew ≥50px = keyboard went away
+            _vvLastH = h;
+        });
+    }
+})();
+
+// TUI scroll forwarding: the capture is exactly one screen, so browser
+// scrolling is meaningless — swipes/wheel page the TUI's own transcript.
+// Taps and long-presses (text selection) pass through untouched.
+let _tuiTouchY = null;
+let _tuiWheelAcc = 0;
+let _tuiLastScrollSend = 0;
+
+function _tuiSendScroll(pageUp) {
+    const now = Date.now();
+    if (now - _tuiLastScrollSend < 120) return;  // cap the POST rate
+    _tuiLastScrollSend = now;
+    fetch('/key', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ keys: pageUp ? 'Page_Up' : 'Page_Down', target: _termTarget }),
+    }).catch(function() {});
+}
+
+(function _wireTuiScroll() {
+    const display = document.getElementById('term-display');
+    display.addEventListener('wheel', function(e) {
+        if (!_paneTui[_termTarget]) return;
+        e.preventDefault();
+        _tuiWheelAcc += e.deltaY;
+        if (Math.abs(_tuiWheelAcc) >= 120) {
+            _tuiSendScroll(_tuiWheelAcc < 0);
+            _tuiWheelAcc = 0;
+        }
+    }, { passive: false });
+    display.addEventListener('touchstart', function(e) {
+        if (!_paneTui[_termTarget]) return;
+        _tuiTouchY = e.touches[0].clientY;
+        _tuiTapStartX = e.touches[0].clientX;
+        _tuiTapStartY = e.touches[0].clientY;
+    }, { passive: true });
+    display.addEventListener('touchmove', function(e) {
+        if (!_paneTui[_termTarget] || _tuiTouchY === null) return;
+        // Don't page the transcript while selection.js is extending a
+        // long-press selection: a completed hold sets _selDragging, and the
+        // drag-to-extend gesture moves >80px, which would otherwise scroll.
+        // (typeof guard matches the defensive cross-file idiom used above.)
+        if (typeof _selDragging !== 'undefined' && _selDragging) return;
+        e.preventDefault();
+        const dy = e.touches[0].clientY - _tuiTouchY;
+        if (Math.abs(dy) >= 80) {
+            _tuiSendScroll(dy > 0);  // finger moving down = read older = PageUp
+            _tuiTouchY = e.touches[0].clientY;
+        }
+    }, { passive: false });
+    // Double-tap = jump to the end of the TUI's transcript (opencode binds
+    // End to messages-last; verified live 2026-07-10). Swipe-paging back down
+    // through a long transcript one page at a time was the phone pain point.
+    let _tuiLastTap = 0, _tuiLastTapX = 0, _tuiLastTapY = 0;
+    let _tuiTapStartX = 0, _tuiTapStartY = 0;
+    display.addEventListener('touchend', function(e) {
+        _tuiTouchY = null;
+        if (!_paneTui[_termTarget]) return;
+        if (typeof _selDragging !== 'undefined' && _selDragging) return;
+        const t = e.changedTouches && e.changedTouches[0];
+        if (!t) return;
+        // A swipe is not a tap: the contact must have stayed put.
+        if (Math.abs(t.clientX - _tuiTapStartX) > 20 ||
+            Math.abs(t.clientY - _tuiTapStartY) > 20) { _tuiLastTap = 0; return; }
+        const now = Date.now();
+        const isDoubleTap = (now - _tuiLastTap) < 350 &&
+            Math.abs(t.clientX - _tuiLastTapX) < 40 &&
+            Math.abs(t.clientY - _tuiLastTapY) < 40;
+        _tuiLastTap = now; _tuiLastTapX = t.clientX; _tuiLastTapY = t.clientY;
+        if (!isDoubleTap) return;
+        _tuiLastTap = 0;  // consume — a triple tap shouldn't fire twice
+        fetch('/key', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ keys: 'End', target: _termTarget }),
+        }).catch(function() {});
+        if (typeof showFlash === 'function') showFlash('sent', 'Jump to end');
+    });
+})();
+
 /** Resize the current tmux session.
  *  cols=null → auto width (fit viewport). cols=number → that width.
  *  rows=null → auto height (viewport, 60-row floor). rows=number → that exact height (min 10). */
-async function termFitToScreen(cols = null, rows = null) {
+async function termFitToScreen(cols = null, rows = null, opts = {}) {
     if (!_termTarget) return;
     const session = _termTarget.split(':')[0];
     const calc = _calcTermSize();
@@ -1125,7 +1326,7 @@ async function termFitToScreen(cols = null, rows = null) {
             body: JSON.stringify({ session, cols: targetCols, rows: targetRows }),
         });
         const data = await resp.json();
-        if (data.ok) {
+        if (data.ok && !opts.quiet) {
             showFlash('ok', `Resized to ${targetCols}×${targetRows}`);
         }
     } catch(e) {}

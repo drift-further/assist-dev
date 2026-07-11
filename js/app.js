@@ -110,6 +110,8 @@ function _applySessionsData(panes, activeTarget) {
     let prevSession = null;
     for (const p of panes) {
         const isAgent = !!p.agent_name;
+        // Mirrors loadSessions() in terminal.js — keep the two in sync.
+        const isSubpane = !isAgent && !!p.is_subpane;
         const isTeamLead = !isAgent && teamSessions.has(p.session);
         const aName = agentDisplayName(p);
         const aColor = _agentColors[p.agent_color] || '';
@@ -117,11 +119,13 @@ function _applySessionsData(panes, activeTarget) {
         const tab = document.createElement('button');
         tab.className = 'session-tab';
         if (isAgent) tab.classList.add('agent-tab');
+        if (isSubpane) tab.classList.add('agent-tab', 'subpane-tab');
         if (isTeamLead) tab.classList.add('team-lead-tab');
         tab.dataset.target = p.target;
         if (p.agent_name) tab.dataset.agentName = p.agent_name;
 
-        const label = aName || shortName(p.session);
+        // Label: agent name (short) or session·pane for unnamed sibling panes
+        const label = aName || (isSubpane ? shortName(p.session) + '·' + p.pane : shortName(p.session));
         tab.textContent = label;
 
         if (isAgent && aColor) {
@@ -148,6 +152,17 @@ function _applySessionsData(panes, activeTarget) {
     const hadTarget = !!_termTarget;
     if (current && panes.some(p => p.target === current)) {
         _termTarget = current;
+    } else if (current && panes.length > 0) {
+        // Viewed pane vanished (e.g. a subagent pane exited): fall back to
+        // that session's first surviving pane rather than a dead target.
+        // Mirrors loadSessions() in terminal.js — keep the two in sync.
+        const sess = current.split(':')[0];
+        const fallback = panes.find(p => p.session === sess) || panes[0];
+        selectTab(fallback.target);
+        // selectTab covers markActiveTab/indicator/unhide; still run the
+        // reorder hook on the freshly rebuilt strip before bailing out.
+        if (typeof _postTabRender === 'function') _postTabRender();
+        return;
     } else if (panes.length > 0 && !_termTarget) {
         _termTarget = panes[0].target;
     }
