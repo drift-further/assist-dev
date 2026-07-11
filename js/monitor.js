@@ -647,7 +647,16 @@ function updateClaudeInfo(meta) {
 
     // Edited files
     const filesEl = document.getElementById('ci-files');
-    filesEl.textContent = '\u270e ' + (meta.edited_files || 0);
+    const edited = meta.edited_files || 0;
+    const bits = ['\u270e ' + edited];
+    if (meta.staged_files) bits.push('+' + meta.staged_files);
+    if (meta.untracked_files) bits.push('?' + meta.untracked_files);
+    if (meta.deleted_files) bits.push('-' + meta.deleted_files);
+    filesEl.textContent = bits.join(' ');
+    filesEl.title = 'Edited files' +
+        (meta.staged_files ? ' · staged ' + meta.staged_files : '') +
+        (meta.untracked_files ? ' · untracked ' + meta.untracked_files : '') +
+        (meta.deleted_files ? ' · deleted ' + meta.deleted_files : '');
 
     // Open tasks
     const tasksEl = document.getElementById('ci-tasks-count');
