@@ -1,7 +1,24 @@
 // app.js — Init: DOMContentLoaded, event listeners, startup sequence
 
-// Enter key → Send
+// Empty composer: physical arrow keys control the terminal.
+const terminalArrowKeys = {
+    ArrowUp: 'Up',
+    ArrowDown: 'Down',
+    ArrowLeft: 'Left',
+    ArrowRight: 'Right',
+};
+
 input.addEventListener('keydown', function(e) {
+    const arrowKey = terminalArrowKeys[e.key];
+    const hasModifier = e.altKey || e.ctrlKey || e.metaKey || e.shiftKey;
+    if (!e.defaultPrevented && !e.isComposing && !_sending && !input.value &&
+        !hasModifier && arrowKey) {
+        e.preventDefault();
+        sendKey(arrowKey);
+        return;
+    }
+
+    // Enter key → Send
     if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         if (!_sending) doPaste();
