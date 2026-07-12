@@ -353,6 +353,19 @@ PY
 }
 
 # ---- help ------------------------------------------------------------------
+cmd_studio() {
+    # Delegate to Studio's own operator command — never reimplement Studio ops here
+    # (effort-138 decision 463). Prefer the standalone 'studio' command; fall back to
+    # 'karen studio' until Studio ships it (Phase-1 T6).
+    if command -v studio >/dev/null 2>&1; then
+        exec studio "$@"
+    elif command -v karen >/dev/null 2>&1; then
+        exec karen studio "$@"
+    else
+        err "No 'studio' or 'karen' command on PATH to delegate to"
+    fi
+}
+
 cmd_help() {
     cat <<EOF
 assist — control the Claude Assist web terminal
@@ -377,6 +390,10 @@ Container:
   container extensions   List registered extensions
   container kill <name>  Kill a running claude-session-* container
 
+Studio (design hub):
+  studio [args]          Delegate to the Studio operator command
+                         (falls back to 'karen studio' until 'studio' ships)
+
 Misc:
   help                   Show this message
 
@@ -398,6 +415,7 @@ case "$cmd" in
     config)      cmd_config "$@" ;;
     doctor)      cmd_doctor "$@" ;;
     container)   cmd_container "$@" ;;
+    studio)      cmd_studio "$@" ;;
     help|-h|--help) cmd_help ;;
     *)           err "Unknown command: $cmd (try: assist help)" ;;
 esac

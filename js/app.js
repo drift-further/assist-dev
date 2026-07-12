@@ -46,6 +46,26 @@ document.getElementById('git-commit-msg').addEventListener('keydown', function(e
     }
 });
 
+// Open the current project in Studio (the design hub). The server resolves the
+// active pane's cwd -> Studio project and returns a deep-link (#/p/<id>) or the
+// Studio home; on any failure we still open home so the button never dead-ends.
+async function openStudio() {
+    let url = null, name = null;
+    try {
+        const target = (typeof _termTarget !== 'undefined' && _termTarget) ? _termTarget : '';
+        const resp = await fetch('/studio/link?target=' + encodeURIComponent(target));
+        const data = await resp.json();
+        url = data && data.url;
+        name = data && data.project_name;
+    } catch (e) {}
+    if (!url) {
+        const base = (window.SETTINGS && SETTINGS.studio && SETTINGS.studio.web_base) || 'https://studio.drift';
+        url = base.replace(/\/$/, '') + '/#/';
+    }
+    if (typeof showFlash === 'function') showFlash('ok', name ? ('Studio → ' + name) : 'Studio');
+    window.open(url, '_blank', 'noopener');
+}
+
 // ================================================================
 // Consolidated polling — replaces 5 separate intervals with 2
 // ================================================================

@@ -61,6 +61,7 @@ def create_app():
     from routes.container import container_bp
     from routes.poll import poll_bp
     from routes.completion import completion_bp
+    from routes.studio import studio_bp
 
     app.register_blueprint(static_bp)
     app.register_blueprint(input_bp)
@@ -72,6 +73,7 @@ def create_app():
     app.register_blueprint(container_bp)
     app.register_blueprint(poll_bp)
     app.register_blueprint(completion_bp)
+    app.register_blueprint(studio_bp)
 
     from routes.settings import settings_bp, init_start_time
 

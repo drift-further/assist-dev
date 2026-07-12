@@ -53,6 +53,12 @@ DEFAULT_SETTINGS = {
         "max_upload_mb": 50,
         "max_capture_lines": 20000,
     },
+    "studio": {
+        # web_base: what the browser opens (nginx-proxied Studio SPA).
+        # api_base: server->server, loopback (Assist reads /api/projects read-only).
+        "web_base": "https://studio.drift",
+        "api_base": "http://127.0.0.1:8090",
+    },
 }
 
 _settings = {}

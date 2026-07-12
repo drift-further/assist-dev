@@ -60,6 +60,25 @@
     max-width: 120px;
 }
 .tmux-indicator.active { opacity: 1; }
+.status-studio {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--purple);
+    background: rgba(191, 90, 242, 0.10);
+    border: 1px solid rgba(191, 90, 242, 0.45);
+    border-radius: 5px;
+    padding: 3px 8px;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: all 0.2s;
+    -webkit-tap-highlight-color: transparent;
+}
+.status-studio:hover, .status-studio:active {
+    background: rgba(191, 90, 242, 0.22);
+    box-shadow: 0 0 8px rgba(191, 90, 242, 0.35);
+}
 .status-time {
     font-size: 9px;
     color: var(--text-muted);
