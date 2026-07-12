@@ -205,6 +205,20 @@ function _createContextMenu(tab, x, y) {
         _enterReorderMode(tab);
     };
 
+    // Deliberate fit — TUI panes only (they're the ones that used to auto-shrink).
+    const isTui = !!(typeof _paneTui !== 'undefined' && _paneTui[target]);
+    let fitBtn = null;
+    if (isTui) {
+        fitBtn = document.createElement('button');
+        fitBtn.className = 'tab-ctx-item';
+        fitBtn.textContent = 'Fit to screen';
+        fitBtn.onclick = function(e) {
+            e.stopPropagation();
+            _removeContextMenu();
+            if (typeof fitTuiToScreen === 'function') fitTuiToScreen(target);
+        };
+    }
+
     const snoozeBtn = document.createElement('button');
     snoozeBtn.className = 'tab-ctx-item tab-ctx-snooze';
     snoozeBtn.textContent = isSnoozed ? 'Unsnooze' : 'Snooze';
@@ -223,6 +237,7 @@ function _createContextMenu(tab, x, y) {
     menu.appendChild(pinBtn);
     menu.appendChild(renameBtn);
     menu.appendChild(reorderBtn);
+    if (fitBtn) menu.appendChild(fitBtn);
     menu.appendChild(dupeBtn);
     menu.appendChild(snoozeBtn);
     menu.appendChild(killBtn);

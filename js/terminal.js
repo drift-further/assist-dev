@@ -605,14 +605,10 @@ function selectTab(target) {
         disconnectTerminalWs();
         connectTerminalWs();
     }
-    // No auto-resize on tab click (per user) for normal panes — the pane keeps
-    // whatever size it was launched/last fit at. Use the Fit menu to resize.
-    // TUI panes are the exception: reset the per-target fit flag and try to
-    // auto-fit to the viewport. _autoFitTui no-ops until a frame marks the pane
-    // TUI (frame-driven mode-on hook covers the not-yet-known case), and its
-    // four guards keep this from tugging attached/keyboard-open/settled panes.
-    _tuiFitDone[target] = false;
-    _autoFitTui('tab-open');
+    // No auto-resize on tab click (per user): panes — TUI included — keep whatever
+    // size they were launched/last fit at, so switching between devices never tugs a
+    // shared tmux session. Fit deliberately via the tab's "Fit to screen" menu item
+    // or the Fit button.
     // Scroll the active tab into view
     const activeTab = document.querySelector('.session-tab.active');
     if (activeTab) activeTab.scrollIntoView({behavior: 'smooth', inline: 'nearest', block: 'nearest'});
@@ -704,20 +700,9 @@ function _doRender(content, info, target) {
         document.getElementById('term-info-dim').textContent =
             (info.width && info.height) ? `${info.width}x${info.height}` : '';
         const isTui = _isTuiInfo(info);
-        const wasTui = !!_paneTui[target];
         _paneTui[target] = isTui;
         if (target === _termTarget) {
             document.getElementById('term-tui-chip').classList.toggle('hidden', !isTui);
-            // Task 6 defines _autoFitTui; keep the typeof guard permanently (script load order safety).
-            // Retry on EVERY TUI frame, not just the mode-on edge: the fit is
-            // silently dropped while the soft keyboard is open (the common
-            // phone case — `opencode` was just typed in the composer), so a
-            // one-shot trigger leaves the pane at launch size forever.
-            // _tuiFitDone makes repeat calls free once a fit lands.
-            if (isTui && typeof _autoFitTui === 'function') _autoFitTui(wasTui ? 'frame' : 'mode-on');
-            // Leaving TUI mode (app exited back to shell): clear the fit
-            // latch so relaunching a TUI in the same pane fits again.
-            if (!isTui && wasTui) _tuiFitDone[target] = false;
         }
     }
 
@@ -1207,61 +1192,30 @@ function _calcTuiSize() {
     };
 }
 
-// Auto-fit for TUI panes. History: naive auto-resize was removed (see comments
-// at lines ~576/781) because reconnects fired resizes off transient viewport
-// measurements. Four guards prevent a recurrence: settled double measurement,
-// soft-keyboard skip, ≤1 cell delta skip, attached-client skip.
-let _autoFitPending = false;
-let _tuiFitDone = {};   // target -> bool, reset on tab select / rotation
-
-function _kbOpen() {
-    if (document.activeElement === document.getElementById('text-input')) return true;
-    return !!(window.visualViewport && window.visualViewport.height < window.innerHeight * 0.75);
-}
-
-function _autoFitTui(reason) {
-    const target = _termTarget;
-    if (!target || !_paneTui[target] || _autoFitPending || _tuiFitDone[target]) return;
-    if (_kbOpen()) return;
-    const first = _calcTuiSize();
-    _autoFitPending = true;
-    setTimeout(async function() {
-        _autoFitPending = false;
-        if (_termTarget !== target || !_paneTui[target] || _kbOpen()) return;
-        const second = _calcTuiSize();
-        if (second.cols !== first.cols || second.rows !== first.rows) return;  // not settled
-        const info = _paneInfo[target] || {};
-        if ((info.session_attached || 0) > 0) return;  // real terminal attached — don't tug
-        _tuiFitDone[target] = true;
-        if (Math.abs((info.width || 0) - second.cols) <= 1 &&
-            Math.abs((info.height || 0) - second.rows) <= 1) return;  // already fits
-        await termFitToScreen(second.cols, second.rows, { quiet: true });
-    }, 250);
-}
-
-window.addEventListener('orientationchange', function() {
-    _tuiFitDone = {};
-    setTimeout(function() { _autoFitTui('rotate'); }, 400);
-});
-
-// Keyboard-close retrigger: a static TUI (e.g. opencode idle at its home
-// screen) streams no frames, so the per-frame retry above never runs. When
-// the composer blurs or the visual viewport grows back (soft keyboard
-// dismissed), retry the deferred fit directly. 350ms lets the viewport
-// settle before _autoFitTui takes its own double measurement.
-(function _wireTuiKbRefit() {
-    function retry() { setTimeout(function() { _autoFitTui('kb-close'); }, 350); }
-    const input = document.getElementById('text-input');
-    if (input) input.addEventListener('blur', retry);
-    if (window.visualViewport) {
-        let _vvLastH = window.visualViewport.height;
-        window.visualViewport.addEventListener('resize', function() {
-            const h = window.visualViewport.height;
-            if (h > _vvLastH + 50) retry();  // grew ≥50px = keyboard went away
-            _vvLastH = h;
+// Deliberate TUI fit. TUI panes never auto-fit — switching between devices must
+// not tug a shared tmux session (an auto-fit on the phone would shrink the size the
+// desktop is using). The user asks for a fit via the tab's "Fit to screen" menu item
+// or the Fit button. Uses _calcTuiSize (exact viewport, no 60-row floor) and acts on
+// the given tab's session even if a real client is attached — it's an explicit ask.
+async function fitTuiToScreen(target) {
+    target = target || _termTarget;
+    if (!target || !_paneTui[target]) return;
+    const session = target.split(':')[0];
+    const { cols, rows } = _calcTuiSize();
+    const targetCols = Math.max(40, Math.min(cols, 400));
+    const targetRows = Math.max(10, Math.min(rows, 600));
+    try {
+        const resp = await fetch('/terminal/resize', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ session, cols: targetCols, rows: targetRows }),
         });
-    }
-})();
+        const data = await resp.json();
+        if (data && data.ok && typeof showFlash === 'function') {
+            showFlash('ok', `Fit to ${targetCols}×${targetRows}`);
+        }
+    } catch(e) {}
+}
 
 // TUI scroll forwarding: the capture is exactly one screen, so browser
 // scrolling is meaningless — swipes/wheel page the TUI's own transcript.
