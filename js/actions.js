@@ -239,7 +239,9 @@ function _renderAutoYesCountdown() {
 // Check if a detected result qualifies for auto-yes (first option starts with "Yes")
 function _isAutoYesCandidate(result) {
     if (!result) return false;
-    if (result.id === 'permission-yna' || result.id === 'confirm-yn') return true;
+    if (result.id === 'permission-yna' || result.id === 'confirm-yn' ||
+        result.id === 'opencode-permission' || result.id === 'cursor-permission' ||
+        result.id === 'cursor-trust') return true;
     if (result.id !== 'numbered-options') return false;
     const first = result.actions[0];
     return first && first.isOption && /^1\.\s*Yes/i.test(first.label);
@@ -280,6 +282,73 @@ const SMART_PATTERNS = [
             { label: 'Allow (y)', send: 'y', enter: false, color: 'green' },
             { label: 'Always (a)', send: 'a', enter: false, color: 'cyan' },
             { label: 'Deny (n)', send: 'n', enter: false, color: 'red' },
+        ]
+    },
+    {
+        id: 'opencode-permission',
+        desc: 'OpenCode permission',
+        // OpenCode TUI dialog (verified on 1.18.4): opens with "Allow once"
+        // selected; Left/Right cycle the selection WITH WRAPAROUND and Enter
+        // confirms. y/n keys (and Tab) do nothing — answers are key sequences.
+        // Mirrors routes/autoyes.py:_OPENCODE_PERMISSION_RE.
+        match: (tail) => {
+            const bottom = tail.split('\n').slice(-8).join('\n');
+            return /Allow once\s+Allow always\s+Reject/.test(bottom) &&
+                   /Permission required/.test(tail);
+        },
+        actions: [
+            { label: 'Allow once', send: '', enter: true, color: 'green' },
+            { label: 'Allow always', keys: ['Right'], enter: true, color: 'cyan' },
+            { label: 'Reject', keys: ['Left'], enter: true, color: 'red' },
+        ]
+    },
+    {
+        id: 'cursor-permission',
+        desc: 'Cursor: run command',
+        // Cursor CLI shell approval (verified live on cursor-agent
+        // 2026.07.23-e383d2b). Its TUI gates only two things — this and the
+        // workspace-trust dialog below; file edits/writes are never gated.
+        //   Run this command?
+        //   Not in allowlist: cat, head
+        //    → Run (once) (y)
+        //      Add Shell(cat), Shell(head) to allowlist? (tab)
+        //      Run Everything (shift+tab)
+        //      Skip & tell the agent what to do instead (esc or n)
+        // The dialog is 8-11 rows tall and an optional "ctrl+r to review
+        // changed files" hint can sit BELOW it, so the window gets a fixed
+        // 14-line floor instead of the 8 used elsewhere. Requiring the header
+        // and the option row together rules out a match on displayed text.
+        // Mirrors routes/autoyes.py:_CURSOR_PERMISSION_*.
+        match: (tail) => {
+            const bottom = tail.split('\n').slice(-14).join('\n');
+            return /Run this command\?/.test(bottom) &&
+                   /Run \(once\)\s*\(y\)/.test(bottom);
+        },
+        actions: [
+            { label: 'Run once (y)', send: 'y', enter: false, color: 'green' },
+            { label: 'Allowlist (tab)', keys: ['Tab'], enter: false, color: 'cyan' },
+            { label: 'Run all (⇧tab)', keys: ['shift+Tab'], enter: false, color: 'amber' },
+            { label: 'Skip (n)', send: 'n', enter: false, color: 'red' },
+        ]
+    },
+    {
+        id: 'cursor-trust',
+        desc: 'Cursor: trust workspace',
+        // Cursor's launch gate. Unlike every other prompt handled here it is
+        // NOT erased when answered — the box stays on screen with the ▶ marker
+        // gone and the footer replaced by "⏳ Trusting workspace…". The footer
+        // is therefore the liveness signal: matching the "[a] Trust this
+        // workspace" row alone would keep matching after the answer and fire a
+        // stray "a" into the TUI's input box.
+        // Mirrors routes/autoyes.py:_CURSOR_TRUST_*.
+        match: (tail) => {
+            const bottom = tail.split('\n').slice(-8).join('\n');
+            return /\[a\] Trust this workspace/.test(bottom) &&
+                   /Use arrow keys to navigate/.test(bottom);
+        },
+        actions: [
+            { label: 'Trust (a)', send: 'a', enter: false, color: 'green' },
+            { label: 'Quit (q)', send: 'q', enter: false, color: 'red' },
         ]
     },
     {
@@ -464,6 +533,10 @@ function renderSmartActions(result, targetOverride) {
         } else if (action.isOption) {
             const num = action.optNum;
             btn.addEventListener('click', () => sendSmartAction(num, true));
+        } else if (action.keys) {
+            const keys = action.keys;
+            const kEnter = action.enter;
+            btn.addEventListener('click', () => sendSmartKeyAction(keys, kEnter));
         } else {
             const send = action.send;
             const enter = action.enter;
@@ -508,6 +581,25 @@ function dismissSmartActions() {
     // would reappear on the next poll.
     _getSmartState(target).dismissedContent = content ? stripAnsi(content) : null;
     hideSmartActions();
+}
+
+// Send a sequence of named keys (e.g. arrow keys to move a TUI dialog's
+// selection), then optionally Enter — for prompts that don't take typed text
+// (OpenCode's permission dialog). Keys must be in the server's TMUX_KEY_MAP.
+async function sendSmartKeyAction(keys, withEnter) {
+    try {
+        const target = _smartActionTarget || getInputTarget();
+        for (const k of keys) {
+            await fetch('/key', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ keys: k, target: target }),
+            });
+        }
+        await sendSmartAction('', withEnter);
+    } catch (e) {
+        showFlash('error', 'Offline');
+    }
 }
 
 async function sendSmartAction(text, withEnter) {

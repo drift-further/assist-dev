@@ -23,6 +23,54 @@ _PERMISSION_YNA_RE = re.compile(
     re.IGNORECASE,
 )
 _CONFIRM_YN_RE = re.compile(r"\(y/n\)|\[Y/n\]|\[y/N\]|\(yes/no\)", re.IGNORECASE)
+# OpenCode's TUI permission dialog (verified live on 1.18.4): a
+# "△ Permission required" header with an "Allow once  Allow always  Reject"
+# button row. The dialog opens with "Allow once" selected; Left/Right cycle
+# the selection WITH WRAPAROUND and Enter confirms it. It does NOT react to
+# y/n keys (and Tab does nothing despite the ⇆ hint) — so the answer is a
+# bare Enter, never "y". Require the header too: the button row alone could
+# appear in displayed code/docs.
+_OPENCODE_PERMISSION_RE = re.compile(r"Allow once\s+Allow always\s+Reject")
+# Cursor CLI (cursor-agent, verified live on 2026.07.23-e383d2b). Its TUI gates
+# exactly two things: a one-time workspace-trust dialog and a per-command shell
+# approval. File edits/writes/reads are NOT gated, so these are the only two
+# prompts Assist ever sees from a cursor pane.
+#
+# Shell approval:
+#     ────────────────────────────────────────────
+#      $  cat /etc/os-release | head -3 in .
+#
+#      Run this command?
+#      Not in allowlist: cat, head
+#       → Run (once) (y)
+#         Add Shell(cat), Shell(head) to allowlist? (tab)
+#         Run Everything (shift+tab)
+#         Skip & tell the agent what to do instead (esc or n)
+#
+#                              ctrl+r to review changed files   (only after edits)
+#
+# Require BOTH the header and the option row: either alone could plausibly show
+# up in displayed code/docs, together they cannot. Answered with a bare "y"
+# (no Enter); the dialog is erased on answer, so it never lingers.
+_CURSOR_PERMISSION_HDR_RE = re.compile(r"Run this command\?")
+_CURSOR_PERMISSION_OPT_RE = re.compile(r"Run \(once\)\s*\(y\)")
+# The dialog is 8-11 rows tall and the optional "ctrl+r" hint pushes its header
+# past the default detection depth of 8. Its height is fixed and known, so the
+# window gets a fixed floor rather than scaling with the user's depth setting.
+_CURSOR_PERMISSION_LINES = 14
+# Workspace trust gate (blocks the session until answered), answered with "a":
+#     │  ⚠ Workspace Trust Required
+#     │  ▶ [a] Trust this workspace
+#     │    [q] Quit
+#     │  Use arrow keys to navigate, Enter to select, or press the key shown
+#
+# Unlike every other prompt handled here, cursor does NOT erase this dialog when
+# it is answered — the box stays on screen with the ▶ marker gone and the footer
+# replaced by "⏳ Trusting workspace...". So the FOOTER is the liveness signal:
+# matching the option row alone would keep firing "a" into the TUI afterwards.
+_CURSOR_TRUST_OPT_RE = re.compile(r"\[a\] Trust this workspace")
+_CURSOR_TRUST_FOOTER_RE = re.compile(r"Use arrow keys to navigate")
+_CURSOR_TRUST_LINES = 8
 # Bracket/word-style prompts ([Y/n], [y/N], (yes/no)) are readline prompts
 # that wait for Enter — a bare "y" just echoes and re-triggers a fresh
 # countdown each tick (yyy…). TUI-style (y/n) prompts react to the bare key.
@@ -51,6 +99,23 @@ def _detect_autoyes_prompt(tail):
     bottom = "\n".join(lines[-depth:])
     if _PERMISSION_YNA_RE.search(bottom):
         return ("permission-yna", "y", False, _extract_summary(tail, "permission"))
+    if _OPENCODE_PERMISSION_RE.search(bottom) and "Permission required" in tail:
+        # Enter confirms the default "Allow once" — no text to type.
+        return ("opencode-permission", "", True, _extract_summary(tail, "opencode"))
+    # Cursor CLI dialogs use their own bottom windows — both are taller than the
+    # generic detection depth (see the pattern definitions above).
+    cursor_bottom = "\n".join(lines[-max(depth, _CURSOR_PERMISSION_LINES):])
+    if _CURSOR_PERMISSION_HDR_RE.search(cursor_bottom) and _CURSOR_PERMISSION_OPT_RE.search(
+        cursor_bottom
+    ):
+        # "y" runs once, no Enter. (Tab would also allowlist the binary — that
+        # is a smart-action choice, never an automatic one.)
+        return ("cursor-permission", "y", False, _extract_summary(tail, "cursor"))
+    trust_bottom = "\n".join(lines[-max(depth, _CURSOR_TRUST_LINES):])
+    if _CURSOR_TRUST_OPT_RE.search(trust_bottom) and _CURSOR_TRUST_FOOTER_RE.search(
+        trust_bottom
+    ):
+        return ("cursor-trust", "a", False, "Trust workspace")
     # confirm-yn must sit on the LAST non-empty line — a real interactive
     # prompt waits at the bottom of the pane. A (y/n) merely *displayed*
     # mid-screen (e.g. Claude printing code containing prompts) is not one.
@@ -120,6 +185,54 @@ def _extract_summary(tail, prompt_type):
             if "Allow" in line:
                 text = line.strip()
                 return text[:80] if len(text) > 80 else text
+    elif prompt_type == "opencode":
+        # The line after the LAST "Permission required" header describes the
+        # request, e.g. "←  Access external directory ~/.cargo" (behind the ┃
+        # message-block gutter). OpenCode's two-column layout can append
+        # right-sidebar text after a wide gap — keep only the left column.
+        header_idx = None
+        for i in range(len(lines) - 1, -1, -1):
+            if "Permission required" in lines[i]:
+                header_idx = i
+                break
+        if header_idx is not None:
+            for j in range(header_idx + 1, min(header_idx + 4, len(lines))):
+                text = re.sub(r"^[\s┃│]*[←→]?\s*", "", lines[j])
+                text = re.split(r"\s{4,}", text)[0].strip()
+                if text:
+                    return text[:80]
+    elif prompt_type == "cursor":
+        # The command sits on the " $  <cmd> … in <dir>" line just above the
+        # "Run this command?" header. Long commands hard-wrap onto indented
+        # continuation rows, breaking MID-TOKEN — so the rows are joined with
+        # no separator, not with a space.
+        hdr = None
+        for i in range(len(lines) - 1, -1, -1):
+            if _CURSOR_PERMISSION_HDR_RE.search(lines[i]):
+                hdr = i
+                break
+        if hdr is not None:
+            start = None
+            for i in range(hdr - 1, max(hdr - 8, -1), -1):
+                if re.match(r"\s*\$\s", lines[i]):
+                    start = i
+                    break
+            if start is not None:
+                parts = [re.sub(r"^\s*\$\s*", "", lines[start]).rstrip()]
+                for j in range(start + 1, hdr):
+                    if not lines[j].strip():
+                        break
+                    parts.append(lines[j].strip())
+                text = re.sub(
+                    r"\s+in\s+(?:current dir|\S+)$", "", "".join(parts)
+                ).strip()
+                if text:
+                    return text[:80]
+        # Fallback: the "Not in allowlist: cat, head" line names the binaries.
+        for line in reversed(lines):
+            m = re.search(r"Not in allowlist:\s*(.+)", line)
+            if m:
+                return m.group(1).strip()[:80]
     elif prompt_type == "confirm":
         # Look for the question line above (y/n)
         for i, line in enumerate(lines):
@@ -170,6 +283,9 @@ def _extract_summary(tail, prompt_type):
 # it would reset the countdown each tick and the prompt would never fire.
 _PROMPT_TERMINATOR_RE = re.compile(
     r"(?:Enter to select|Esc to cancel|Navigate)\s*[·•]"
+    r"|Allow once\s+Allow always\s+Reject"
+    r"|Skip & tell the agent what to do instead"
+    r"|Use arrow keys to navigate"
     r"|\(y/n(?:/a)?\)"
     r"|\[Y/n(?:/a)?\]"
     r"|\[y/N\]"
