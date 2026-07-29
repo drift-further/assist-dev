@@ -18,6 +18,7 @@ project_settings.json
 container_config.json
 extensions.json
 sudo_pw.dat
+auth_token
 
 # Environment
 .env
