@@ -72,3 +72,8 @@ def serve_fonts(filename):
     return send_from_directory(
         DATA_DIR / "fonts", filename, max_age=31536000
     )  # 1 year cache — font files are immutable
+
+
+@static_bp.route("/icons/<path:filename>")
+def serve_icons(filename):
+    return send_from_directory(DATA_DIR / "icons", filename, max_age=31536000)

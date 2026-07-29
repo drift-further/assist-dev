@@ -1,8 +1,9 @@
 // sw.js — Service worker for Assist (network-first for static assets, cache fallback when offline)
-const VERSION = 'assist-v3-001';
+const VERSION = 'assist-v3-004';
 const STATIC_CACHE = 'assist-static-' + VERSION;
 const STATIC_URLS = [
     '/',
+    '/icons/assist-dev-a.png?v=1',
     '/css/fonts.css',
     '/css/base.css',
     '/css/status-bar.css',
