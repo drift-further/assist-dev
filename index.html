@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Assist // Claude Code</title>
+    <link rel="icon" type="image/png" href="/icons/assist-dev-a.png?v=1">
+    <link rel="apple-touch-icon" href="/icons/assist-dev-a.png?v=1">
     <link rel="stylesheet" href="/css/fonts.css">
     <link rel="stylesheet" href="/css/base.css">
     <link rel="stylesheet" href="/css/status-bar.css">
@@ -15,10 +17,10 @@
     <link rel="stylesheet" href="/css/autocomplete.css">
     <link rel="stylesheet" href="/css/container.css">
     <link rel="stylesheet" href="/css/studio.css?v=3">
+    <link rel="stylesheet" href="/css/access.css?v=1">
     <link rel="stylesheet" href="/css/notifications.css">
 </head>
 <body>
-
     <div class="status-bar">
         <div id="status-dot" class="status-dot"></div>
         <div class="status-title">Assist <span>// Claude Code</span></div>
@@ -26,6 +28,9 @@
         <button id="btn-studio" class="status-studio" onclick="openStudio()" title="Open the current project in Studio">&#9671; Studio<span id="studio-lock" class="studio-lock hidden" title="Studio rejected the API token">&#128274;</span><span id="studio-badge" class="studio-badge hidden"></span></button>
         <div id="status-time" class="status-time"></div>
     </div>
+
+    <!-- Open-access alarm strip: in flow, so it pushes the app down. -->
+    <div class="access-strip" id="access-strip" aria-hidden="true" onclick="accessClose()"></div>
 
     <!-- Edge tab: left drawer trigger (extended keys) -->
     <button class="edge-tab-left" id="edge-tab-left" onclick="toggleLeftDrawer()">More</button>
@@ -73,6 +78,10 @@
         <div class="hk-group-label">Session</div>
         <div class="hk-grid">
             <button class="hk-btn hk-red" id="term-kill-btn" onclick="killSession(); closeLeftDrawer();"><span class="hk-label">End</span><span class="hk-sub">kill tmux</span></button>
+        </div>
+        <div class="hk-group-label">Access</div>
+        <div class="hk-grid">
+            <button class="hk-btn hk-red" onclick="toggleAccessSheet(true); closeLeftDrawer();"><span class="hk-label">Open</span><span class="hk-sub">add a device</span></button>
         </div>
     </div>
 
@@ -127,6 +136,24 @@
             </div>
             <button class="studio-cta" onclick="studioConnectSave()">Test connection &amp; save</button>
             <div class="studio-connect-result" id="studio-connect-result"></div>
+        </div>
+    </div>
+
+    <!-- Temporary open access: pick how long the window stays open. -->
+    <div class="access-sheet" id="access-sheet" aria-hidden="true">
+        <div class="access-sheet-header">
+            <span class="access-sheet-title">&#9888; Open access temporarily</span>
+            <button class="drawer-close" onclick="toggleAccessSheet(false)">&times;</button>
+        </div>
+        <div class="access-sheet-body">
+            <p class="access-sheet-copy">The next device on <code id="access-networks">&mdash;</code>
+               that loads this page gets signed in and stays signed in. The window then closes
+               &mdash; it admits <strong>one</strong> device, and only the sign-in page.</p>
+            <div class="access-presets">
+                <button class="access-preset" onclick="accessOpen(1)">1 min</button>
+                <button class="access-preset" onclick="accessOpen(5)">5 min</button>
+                <button class="access-preset" onclick="accessOpen(15)">15 min</button>
+            </div>
         </div>
     </div>
 
@@ -475,11 +502,12 @@
     <script src="/js/commands.js?v=3"></script>
     <script src="/js/container.js"></script>
     <script src="/js/studio.js?v=2"></script>
+    <script src="/js/access.js?v=2"></script>
     <script src="/js/monitor.js?v=3"></script>
     <script src="/js/notifications.js"></script>
     <script src="/js/tabs.js?v=3"></script>
-    <script src="/js/settings.js?v=4"></script>
-    <script src="/js/app.js?v=5"></script>
+    <script src="/js/settings.js?v=5"></script>
+    <script src="/js/app.js?v=6"></script>
     <script src="/js/selection.js?v=2"></script>
     <script>
     if ('serviceWorker' in navigator) {

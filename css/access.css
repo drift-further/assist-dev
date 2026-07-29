@@ -1,0 +1,69 @@
+/* access.css — temporary open-access window: alarm strip + duration sheet. */
+
+/* The strip sits in flow directly under the status bar, so it pushes the app
+   down rather than covering it. It is deliberately loud: it means the LAN can
+   walk in, and it lives for seconds at a time. */
+.access-strip {
+    display: none;
+    padding: 7px 10px;
+    background: var(--red);
+    color: #12060b;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-align: center;
+    text-transform: uppercase;
+    cursor: pointer;
+    user-select: none;
+    animation: accessPulse 1.6s ease-in-out infinite;
+}
+
+.access-strip.visible { display: block; }
+
+@keyframes accessPulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.72; }
+}
+
+/* Sheet geometry mirrors .studio-sheet so the two read as one system. */
+.access-sheet {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+    background: var(--bg); border-top: 1px solid rgba(255, 0, 64, 0.35);
+    box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.6);
+    transform: translateY(100%); transition: transform 0.22s ease-out;
+    max-height: 85vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
+}
+
+.access-sheet.visible { transform: translateY(0); }
+
+.access-sheet-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 12px; border-bottom: 1px solid rgba(255, 0, 64, 0.2);
+}
+
+.access-sheet-title {
+    color: var(--red); font-size: 12px; font-weight: 700; letter-spacing: 0.5px;
+}
+
+.access-sheet-body { padding: 14px; }
+
+.access-sheet-copy {
+    font-size: 11px; line-height: 1.55; color: var(--text); margin: 0 0 14px;
+}
+
+.access-sheet-copy code {
+    color: var(--amber); font-size: 10.5px; overflow-wrap: anywhere;
+}
+
+.access-presets {
+    display: flex; gap: 8px;
+}
+
+.access-preset {
+    flex: 1; min-width: 0;
+    background: transparent; color: var(--amber);
+    border: 1px solid var(--amber); border-radius: 6px;
+    padding: 13px 4px; font: inherit; font-size: 13px; font-weight: 600;
+}
+
+.access-preset:active { background: rgba(255, 149, 0, 0.16); }

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
+import shared.auth as auth
 import shared.state as state
 from routes.terminal import enrich_panes_with_agents
 from shared.tmux import prettify_command
@@ -426,6 +427,12 @@ def consolidated_poll():
     from routes.studio import studio_poll_block
 
     result["studio"] = studio_poll_block(state.tmux_target, result.get("claude_meta"))
+
+    # --- Open-access window ---
+    # Every client gets the onboard report until it expires; each browser
+    # de-duplicates on its id. Reads must not consume it — a poll that dies in
+    # flight would take the operator's only warning with it.
+    result["access"] = auth.window_state()
 
     return jsonify(result)
 

@@ -127,6 +127,12 @@ async function consolidatedPoll() {
             _applyStudioData(data.studio || null);
         }
 
+        // Open-access window — authoritative countdown; the strip interpolates
+        // locally between polls.
+        if (typeof _applyAccessData === 'function') {
+            _applyAccessData(data.access || null);
+        }
+
         // Orphaned split pane check
         for (const session of Object.keys(_splitPanes)) {
             checkSplitPaneAlive(session);

@@ -66,6 +66,15 @@ DEFAULT_SETTINGS = {
         # ONLY — masked in GET /api/settings, never shipped to the browser.
         "api_token": "",
     },
+    "access": {
+        # Temporary open-access window. A live window lets ONE client from
+        # these networks fetch `/` and walk away with the auth cookie.
+        # Comma-separated CIDRs; an unparseable entry is dropped, and an
+        # empty list means the window can never admit anyone.
+        "open_networks": "10.0.0.0/8",
+        "open_default_minutes": 5,
+        "open_max_minutes": 60,
+    },
 }
 
 _settings = {}

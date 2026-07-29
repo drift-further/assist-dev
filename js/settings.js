@@ -69,6 +69,13 @@ const _SETTINGS_SECTIONS = [
               onClick: () => studioTestConnection() },
         ]
     },
+    {
+        key: 'access', label: 'Open Access', fields: [
+            { key: 'open_networks', label: 'Allowed Networks', type: 'text' },
+            { key: 'open_default_minutes', label: 'Default Duration', type: 'number', min: 1, max: 1440, suffix: ' min' },
+            { key: 'open_max_minutes', label: 'Max Duration', type: 'number', min: 1, max: 1440, suffix: ' min' },
+        ]
+    },
 ];
 
 function _formatUptime(sec) {
