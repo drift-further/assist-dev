@@ -54,10 +54,17 @@ DEFAULT_SETTINGS = {
         "max_capture_lines": 20000,
     },
     "studio": {
-        # web_base: what the browser opens (nginx-proxied Studio SPA).
-        # api_base: server->server, loopback (Assist reads /api/projects read-only).
-        "web_base": "https://studio.drift",
+        # web_base: what the BROWSER opens (the Studio SPA). Empty means
+        # "derive from api_base" — Studio serves its SPA on the same origin as
+        # its API, so a self-hosted or hosted install needs one URL, not two.
+        # Host-neutral by default: a fresh clone must not point at studio.drift.
+        "web_base": "",
+        # api_base: server->server only. Loopback default suits a Studio running
+        # beside Assist; a hosted/self-hosted Studio is an https URL.
         "api_base": "http://127.0.0.1:8090",
+        # api_token: sent as `Authorization: Bearer` when non-empty. SERVER-SIDE
+        # ONLY — masked in GET /api/settings, never shipped to the browser.
+        "api_token": "",
     },
 }
 
@@ -115,7 +122,13 @@ def atomic_write_json(path, data, indent=2):
     """
     path = Path(path)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
+    # settings.json now holds the Studio API token; every file written through
+    # this helper is single-user state, so 0600 across the board. The mode is set
+    # at CREATE time, not after the write: open(..., "w") makes the file 0644
+    # under a normal umask, so the token would be world-readable for the length
+    # of the write.
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=indent)
         f.write("\n")
         f.flush()

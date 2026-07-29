@@ -46,10 +46,14 @@ document.getElementById('git-commit-msg').addEventListener('keydown', function(e
     }
 });
 
-// Open the current project in Studio (the design hub). The server resolves the
-// active pane's cwd -> Studio project and returns a deep-link (#/p/<id>) or the
-// Studio home; on any failure we still open home so the button never dead-ends.
+// The ◇ button is the whole doorway: connected, it deep-links the active
+// pane's project; anything else, it opens the connect sheet. The server
+// resolves cwd -> Studio project; on any failure we still open Studio home so
+// the button never dead-ends.
 async function openStudio() {
+    if (typeof _studioState !== 'undefined' && _studioState !== 'connected') {
+        if (typeof openStudioConnect === 'function') { openStudioConnect(); return; }
+    }
     let url = null, name = null;
     try {
         const target = (typeof _termTarget !== 'undefined' && _termTarget) ? _termTarget : '';
@@ -59,7 +63,8 @@ async function openStudio() {
         name = data && data.project_name;
     } catch (e) {}
     if (!url) {
-        const base = (window.SETTINGS && SETTINGS.studio && SETTINGS.studio.web_base) || 'https://studio.drift';
+        const base = (typeof _studioWebBase !== 'undefined' && _studioWebBase) ? _studioWebBase : '';
+        if (!base) { if (typeof openStudioConnect === 'function') openStudioConnect(); return; }
         url = base.replace(/\/$/, '') + '/#/';
     }
     if (typeof showFlash === 'function') showFlash('ok', name ? ('Studio → ' + name) : 'Studio');
@@ -115,6 +120,11 @@ async function consolidatedPoll() {
         // Claude info bar
         if (typeof updateClaudeInfo === 'function') {
             updateClaudeInfo(data.claude_meta || null);
+        }
+
+        // Studio attention — snapshot from the server refresher, no Studio I/O
+        if (typeof _applyStudioData === 'function') {
+            _applyStudioData(data.studio || null);
         }
 
         // Orphaned split pane check

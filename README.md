@@ -99,11 +99,46 @@ All configuration is environment-variable based, via `.env` in the repo. See `en
 | `ASSIST_MOUNT_SCRIPT` | Path to `claude-direct-mount.sh` for Automate | (none — required for Automate) |
 | `ASSIST_CLI_BIN` | Host CLI exposed to containers via `/api/cli-proxy` | (none — proxy disabled) |
 | `ASSIST_CLI_DIR` | Working directory used when invoking `ASSIST_CLI_BIN` | `~` |
-| `ASSIST_CLI_ALLOWED` | Comma-separated allowlist of subcommands (empty = allow all) | (empty) |
+| `ASSIST_CLI_ALLOWED` | Comma-separated allowlist of subcommands (**empty = proxy disabled**) | (empty) |
 | `ASSIST_DB_NAME` | PostgreSQL DB for session history | `claude_archives` |
 | `DISPLAY` | X11 display for clipboard/key-send | `:1` |
 
 Changes to `.env` require `assist restart` to take effect.
+
+## Connect to Studio
+
+[Studio](https://studio.drift) is the design hub agents report into — specs, plans, blocking questions, tasks and QA gates. Assist works standalone; connecting it to a Studio adds an attention inbox you can answer from your phone, a badge on the ◇ button, and a project/effort chip on the active session.
+
+> **Loopback only for now.** Point `api_base` at a Studio on this machine (`http://127.0.0.1:8090`). **Do not expose Studio to a network and point Assist at it yet:** Studio does not enforce its API token, so a remote Studio would answer anyone who can reach it, and the `api_token` below would give you no protection you could rely on. Remote/hosted Studio is supported once Studio ships bearer enforcement.
+
+Connect from the phone: tap **◇ Studio** while disconnected and fill the sheet. Or set it directly in `settings.json`:
+
+```json
+{
+  "studio": {
+    "web_base": "https://studio.drift",
+    "api_base": "http://127.0.0.1:8090",
+    "api_token": ""
+  }
+}
+```
+
+(`web_base` is what your browser opens — an nginx name, a LAN address, or empty to derive it from `api_base`. `api_base` is server-to-server and stays on loopback.)
+
+| Key | Purpose | Default |
+|-----|---------|---------|
+| `studio.web_base` | What the browser opens (the Studio SPA). Empty derives it from `api_base`. | (empty) |
+| `studio.api_base` | Server-to-server API base. Assist's Flask process is the only thing that calls it. | `http://127.0.0.1:8090` |
+| `studio.api_token` | Sent as `Authorization: Bearer`. Stored server-side only; `GET /api/settings` returns it as `***`. | (empty) |
+
+The connection is the whole feature switch — there is no license check in Assist. The panel shows four states: **connected**, **unreachable** (Studio down; the last known queue is still shown), **unauthorized** (token rejected), **unconfigured** (no Studio set up).
+
+Notes:
+- All Studio traffic is server-proxied. The token never reaches the browser, and Studio needs no CORS changes.
+- A slow or dead Studio never slows Assist: a background thread does the polling and `/poll` reads its snapshot.
+- `settings.json` is written `0600` because it holds the token.
+- Settings → **Reset All to Defaults** clears `studio.api_token` along with everything else.
+- Anyone who can reach Assist's port can answer your Studio questions — the same trust boundary as every other Assist endpoint. Keep it on a trusted network.
 
 ## Host CLI proxy
 
@@ -111,7 +146,7 @@ Containers launched by Assist run on an isolated network with no LAN access, but
 
 Two pieces:
 
-1. **Host-side** (`.env`) — `ASSIST_CLI_BIN`, `ASSIST_CLI_DIR`, `ASSIST_CLI_ALLOWED`. The Flask server's `/api/cli-proxy` endpoint runs `ASSIST_CLI_BIN <args>` on the host and returns stdout/stderr/exit code. `ASSIST_CLI_ALLOWED` (comma-separated) restricts which first-arg subcommands are accepted; leave empty to allow all.
+1. **Host-side** (`.env`) — `ASSIST_CLI_BIN`, `ASSIST_CLI_DIR`, `ASSIST_CLI_ALLOWED`. The Flask server's `/api/cli-proxy` endpoint runs `ASSIST_CLI_BIN <args>` on the host and returns stdout/stderr/exit code. `ASSIST_CLI_ALLOWED` (comma-separated) restricts which first-arg subcommands are accepted; **leaving it empty disables the proxy (403)**.
 2. **Container-side** (`container_config.json` → `cli_proxy`) — set `enabled: true` and `container_command: "<name>"`. The image build installs a thin bash wrapper at `/usr/local/bin/<name>` that POSTs to the proxy.
 
 Example — exposing a host CLI called `mycli`:

@@ -58,6 +58,17 @@ const _SETTINGS_SECTIONS = [
             { key: 'max_capture_lines', label: 'Max Capture Lines', type: 'number', min: 1000, max: 100000 },
         ]
     },
+    {
+        key: 'studio', label: 'Studio', fields: [
+            { key: 'web_base', label: 'Studio URL (web)', type: 'text' },
+            { key: 'api_base', label: 'API URL', type: 'text' },
+            { key: 'api_token', label: 'API Token', type: 'secret' },
+            // studio.js is loaded before settings.js, and the arrow defers the
+            // lookup to click time regardless.
+            { key: '_test', label: 'Connection', type: 'button', text: 'Test',
+              onClick: () => studioTestConnection() },
+        ]
+    },
 ];
 
 function _formatUptime(sec) {
@@ -104,6 +115,10 @@ function renderSettings() {
                 row.appendChild(_renderToggle(section.key, field, val));
             } else if (field.type === 'stepper') {
                 row.appendChild(_renderStepper(section.key, field, val));
+            } else if (field.type === 'secret') {
+                row.appendChild(_renderSecret(section.key, field, val));
+            } else if (field.type === 'button') {
+                row.appendChild(_renderActionButton(field));
             } else if (field.type === 'number') {
                 row.appendChild(_renderTappableValue(section.key, field, val, 'number'));
             } else {
@@ -162,6 +177,47 @@ function _renderTappableValue(sectionKey, field, current, inputType) {
     span.textContent = displayVal;
     span.onclick = () => _startInlineEdit(span, sectionKey, field, current, inputType);
     return span;
+}
+
+// A secret never round-trips through the browser: the server sends '***' when
+// one is stored, and an edit always starts from an empty box, so leaving the
+// field untouched can't blank or re-save the real value.
+function _renderSecret(sectionKey, field, current) {
+    const span = document.createElement('span');
+    span.className = 'settings-value';
+    span.textContent = current ? '••••••••' : 'not set';
+    span.onclick = () => {
+        const input = document.createElement('input');
+        input.className = 'settings-input';
+        input.type = 'password';
+        input.value = '';
+        input.placeholder = 'paste token';
+        input.style.width = '140px';
+        span.parentNode.replaceChild(input, span);
+        input.focus();
+        let done = false;
+        const commit = () => {
+            if (done) return;
+            done = true;
+            const val = input.value.trim();
+            if (val) _saveSetting(sectionKey, field.key, val);
+            else renderSettings();
+        };
+        input.onkeydown = (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            if (e.key === 'Escape') { e.preventDefault(); done = true; renderSettings(); }
+        };
+        input.onblur = commit;
+    };
+    return span;
+}
+
+function _renderActionButton(field) {
+    const btn = document.createElement('button');
+    btn.className = 'settings-toggle-opt';
+    btn.textContent = field.text || 'Run';
+    btn.onclick = () => field.onClick();
+    return btn;
 }
 
 function _startInlineEdit(span, sectionKey, field, current, inputType) {

@@ -14,6 +14,7 @@
     <link rel="stylesheet" href="/css/commands.css">
     <link rel="stylesheet" href="/css/autocomplete.css">
     <link rel="stylesheet" href="/css/container.css">
+    <link rel="stylesheet" href="/css/studio.css?v=3">
     <link rel="stylesheet" href="/css/notifications.css">
 </head>
 <body>
@@ -22,7 +23,7 @@
         <div id="status-dot" class="status-dot"></div>
         <div class="status-title">Assist <span>// Claude Code</span></div>
         <div id="tmux-ind" class="tmux-indicator"></div>
-        <button id="btn-studio" class="status-studio" onclick="openStudio()" title="Open the current project in Studio">◇ Studio</button>
+        <button id="btn-studio" class="status-studio" onclick="openStudio()" title="Open the current project in Studio">&#9671; Studio<span id="studio-lock" class="studio-lock hidden" title="Studio rejected the API token">&#128274;</span><span id="studio-badge" class="studio-badge hidden"></span></button>
         <div id="status-time" class="status-time"></div>
     </div>
 
@@ -102,6 +103,33 @@
         <div class="stale-sheet-body" id="stale-sheet-body"></div>
     </div>
 
+    <!-- Connect-to-Studio sheet (◇ when not connected) -->
+    <div class="studio-sheet" id="studio-sheet" aria-hidden="true">
+        <div class="studio-sheet-header">
+            <span class="studio-sheet-title">&#9671; Connect to Studio</span>
+            <button class="drawer-close" onclick="closeStudioConnect()">&times;</button>
+        </div>
+        <div class="studio-sheet-body">
+            <p class="studio-sheet-copy">Studio is the design hub your agents report into &mdash; specs,
+               blocking questions, tasks and QA gates, reviewable from anywhere. Connect Assist to
+               answer your agents' questions right from this screen.</p>
+            <div class="studio-field">
+                <label for="studio-web-base">Studio URL (web)</label>
+                <input id="studio-web-base" type="url" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://studio.drift">
+            </div>
+            <div class="studio-field">
+                <label for="studio-api-base">API URL</label>
+                <input id="studio-api-base" type="url" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="http://127.0.0.1:8090">
+            </div>
+            <div class="studio-field">
+                <label for="studio-api-token">API token</label>
+                <input id="studio-api-token" type="password" autocomplete="off" placeholder="leave blank to keep the saved token">
+            </div>
+            <button class="studio-cta" onclick="studioConnectSave()">Test connection &amp; save</button>
+            <div class="studio-connect-result" id="studio-connect-result"></div>
+        </div>
+    </div>
+
     <div class="content">
         <!-- Terminal header (always visible) -->
         <div class="term-toggle" id="term-toggle">
@@ -151,6 +179,7 @@
                 <button class="plus-item plus-proj" onclick="toggleProjects(); togglePlusMenu();">Projects</button>
                 <button class="plus-item plus-git" id="btn-git" onclick="toggleGitPanel(); togglePlusMenu();">Git</button>
                 <button class="plus-item plus-container" onclick="toggleContainerPanel(); togglePlusMenu();">Container</button>
+                <button class="plus-item plus-studio" onclick="toggleStudioPanel(); togglePlusMenu();">Studio</button>
                 <button class="plus-item plus-skills" onclick="toggleSkillsPanel(); togglePlusMenu();">/Skills</button>
                 <button class="plus-item plus-autoyes" id="btn-autoyes" onclick="toggleAutoYes(); togglePlusMenu();">Auto-Yes</button>
                 <button class="plus-item plus-auto" id="btn-auto" onclick="toggleAutoPanel(); togglePlusMenu();">Automate</button>
@@ -172,6 +201,7 @@
                     <span class="ci-tasks-count" id="ci-tasks-count"></span>
                     <span class="ci-sep">·</span>
                     <span class="ci-branch" id="ci-branch"></span>
+                    <span class="ci-effort hidden" id="ci-effort" title="Studio project / effort for this pane"></span>
                     <span class="ci-model" id="ci-model"></span>
                 </div>
             </div>
@@ -275,6 +305,15 @@
                     </button>
                     <div class="ctr-section-body hidden" id="ctr-body-build"></div>
                 </div>
+            </div>
+
+            <div class="studio-panel" id="studio-panel">
+                <div class="studio-panel-header">
+                    <span class="studio-panel-title">&#9671; Studio &mdash; Attention</span>
+                    <span class="studio-state" id="studio-state"></span>
+                    <button class="studio-panel-close" onclick="toggleStudioPanel()">&#x2715;</button>
+                </div>
+                <div class="studio-panel-body" id="studio-body"></div>
             </div>
 
             <div class="settings-panel" id="settings-panel">
@@ -435,11 +474,12 @@
     <script src="/js/actions.js?v=5"></script>
     <script src="/js/commands.js?v=3"></script>
     <script src="/js/container.js"></script>
+    <script src="/js/studio.js?v=2"></script>
     <script src="/js/monitor.js?v=3"></script>
     <script src="/js/notifications.js"></script>
     <script src="/js/tabs.js?v=3"></script>
-    <script src="/js/settings.js?v=2"></script>
-    <script src="/js/app.js?v=4"></script>
+    <script src="/js/settings.js?v=4"></script>
+    <script src="/js/app.js?v=5"></script>
     <script src="/js/selection.js?v=2"></script>
     <script>
     if ('serviceWorker' in navigator) {

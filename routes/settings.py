@@ -18,6 +18,19 @@ _API_BLOCKED_KEYS = {"server.restart_cmd", "server.session_init_cmd"}
 # now that it is executed list-form (no shell to interpret them anyway).
 _SHELL_OPERATORS = set(";|&$`<>")
 
+# What the browser sees instead of the Studio API token. A PATCH carrying this
+# exact value is the browser echoing back what it was shown — never a new
+# token — so it is dropped rather than written over the real one.
+_MASK = "***"
+
+
+def _masked(settings):
+    """Settings safe to hand the browser: secrets replaced with _MASK."""
+    studio = settings.get("studio")
+    if isinstance(studio, dict) and studio.get("api_token"):
+        studio["api_token"] = _MASK
+    return settings
+
 
 def _filter_patch(patch, defaults, blocked=frozenset(), _prefix=""):
     """Keep only keys that exist in the defaults structure (recursively).
@@ -69,7 +82,7 @@ def get_settings():
     return jsonify(
         {
             "ok": True,
-            "settings": state.get_settings(),
+            "settings": _masked(state.get_settings()),
             "defaults": state.DEFAULT_SETTINGS,
             "pid": pid,
             "uptime": uptime,
@@ -83,13 +96,25 @@ def patch_settings():
     data = request.get_json(silent=True) or {}
     if not data:
         return jsonify({"ok": False, "error": "No data"}), 400
+    studio_patch = data.get("studio")
+    if isinstance(studio_patch, dict) and studio_patch.get("api_token") == _MASK:
+        studio_patch.pop("api_token")
+        if not studio_patch:
+            data.pop("studio")
+    if not data:
+        # The mask was the entire patch — the browser saved a form whose only
+        # secret field it never edited. Nothing to write, but that is a no-op,
+        # not the "No data" failure the next guard would report.
+        return jsonify(
+            {"ok": True, "settings": _masked(state.get_settings()), "rejected": []}
+        )
     filtered, rejected = _filter_patch(
         data, state.DEFAULT_SETTINGS, blocked=_API_BLOCKED_KEYS
     )
     if not filtered:
         return jsonify({"ok": False, "error": "No valid keys", "rejected": rejected}), 400
     updated = state.patch_settings(filtered)
-    return jsonify({"ok": True, "settings": updated, "rejected": rejected})
+    return jsonify({"ok": True, "settings": _masked(updated), "rejected": rejected})
 
 
 @settings_bp.route("/api/project-settings/<project>")

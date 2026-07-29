@@ -114,6 +114,9 @@ def get_claude_meta(target):
         state_dir = project_dir / ".claude" / "state"
 
         result = {}
+        # The Studio resolver needs this path; computing it here means /poll
+        # never spawns a second `tmux display-message` for the same pane.
+        result["project_dir"] = str(project_dir)
         _merge_opencode_meta(result, project_dir)
 
         # Read context-usage.json
@@ -415,6 +418,14 @@ def consolidated_poll():
     # --- Claude session metadata ---
     if state.tmux_target:
         result["claude_meta"] = get_claude_meta(state.tmux_target)
+
+    # --- Studio ---
+    # Imported here, not at module scope: routes.studio imports this module for
+    # _find_project_dir, so a top-level import would be circular. Reads the
+    # refresher's snapshot only — /poll must never block on Studio.
+    from routes.studio import studio_poll_block
+
+    result["studio"] = studio_poll_block(state.tmux_target, result.get("claude_meta"))
 
     return jsonify(result)
 

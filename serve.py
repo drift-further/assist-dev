@@ -95,8 +95,10 @@ app = create_app()
 # mode (direct execution, WSGI, flask run) — not just __main__.
 from routes.autoyes import autoyes_scanner, restore_autoyes_from_settings  # noqa: E402
 from routes.automate import automate_recover  # noqa: E402
+from routes.studio import studio_refresher  # noqa: E402
 
 threading.Thread(target=autoyes_scanner, daemon=True).start()
+threading.Thread(target=studio_refresher, daemon=True).start()
 restore_autoyes_from_settings()
 automate_recover()
 
