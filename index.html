@@ -18,9 +18,24 @@
     <link rel="stylesheet" href="/css/container.css">
     <link rel="stylesheet" href="/css/studio.css?v=3">
     <link rel="stylesheet" href="/css/access.css?v=1">
+    <link rel="stylesheet" href="/css/chrome.css?v=1">
     <link rel="stylesheet" href="/css/notifications.css">
 </head>
 <body>
+    <script>
+      // Before first paint: applying this from js/chrome.js instead would flash
+      // the full chrome for ~100ms on every load, which reads as a fault.
+      try { if (localStorage.getItem('assist.chromeCollapsed'))
+              document.body.classList.add('chrome-collapsed'); } catch (e) {}
+    </script>
+
+    <!-- Collapsed-chrome grabber: takes over the safe-area inset the status bar holds. -->
+    <div id="chrome-grabber" onclick="toggleChrome(false)" title="Show status bar">
+        <span class="grab-dot" id="grab-dot"></span>
+        <span class="grab-handle"></span>
+        <span class="grab-badge" id="grab-badge"></span>
+    </div>
+
     <div class="status-bar">
         <div id="status-dot" class="status-dot"></div>
         <div class="status-title">Assist <span>// Claude Code</span></div>
@@ -166,6 +181,7 @@
             <button class="term-font-btn" onclick="termFontSmaller()">A-</button>
             <button class="term-font-btn" onclick="termFontLarger()">A+</button>
             <button class="term-font-btn" id="btn-fit" onclick="toggleFitMenu()" title="Fit terminal to screen">Fit</button>
+            <button class="term-chrome-btn" id="term-chrome-btn" onclick="toggleChrome()" title="Hide status bar">&#9652;</button>
             <button class="term-search-toggle" onclick="toggleTermSearch()" title="Search">&#128269;</button>
         </div>
         <div class="term-panel" id="term-panel">
@@ -503,11 +519,12 @@
     <script src="/js/container.js"></script>
     <script src="/js/studio.js?v=2"></script>
     <script src="/js/access.js?v=2"></script>
+    <script src="/js/chrome.js?v=1"></script>
     <script src="/js/monitor.js?v=3"></script>
     <script src="/js/notifications.js"></script>
     <script src="/js/tabs.js?v=3"></script>
     <script src="/js/settings.js?v=5"></script>
-    <script src="/js/app.js?v=6"></script>
+    <script src="/js/app.js?v=7"></script>
     <script src="/js/selection.js?v=2"></script>
     <script>
     if ('serviceWorker' in navigator) {

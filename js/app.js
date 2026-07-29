@@ -133,6 +133,9 @@ async function consolidatedPoll() {
             _applyAccessData(data.access || null);
         }
 
+        // Collapsed-chrome grabber mirrors #status-dot / #studio-badge.
+        if (typeof syncChromeGrabber === 'function') syncChromeGrabber();
+
         // Orphaned split pane check
         for (const session of Object.keys(_splitPanes)) {
             checkSplitPaneAlive(session);
