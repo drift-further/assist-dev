@@ -1017,3 +1017,29 @@
     letter-spacing: 0.5px;
 }
 .term-tui-chip.hidden { display: none; }
+
+/* Transcript paging for TUI panes — the alternate screen keeps no scrollback,
+   so these send Page_Up/Page_Down/End into the app itself. Touch-sized. */
+.term-tui-nav {
+    margin-left: auto;
+    display: flex;
+    gap: 4px;
+}
+.term-tui-nav.hidden { display: none; }
+.tui-nav-btn {
+    background: transparent;
+    color: var(--purple);
+    border: 1px solid var(--purple);
+    border-radius: 3px;
+    min-width: 34px;
+    min-height: 26px;
+    padding: 0 6px;
+    font-family: inherit;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+}
+.tui-nav-btn:active {
+    background: rgba(191, 90, 242, 0.18);
+    box-shadow: 0 0 10px rgba(191, 90, 242, 0.35);
+}

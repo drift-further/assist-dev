@@ -703,6 +703,9 @@ function _doRender(content, info, target) {
         _paneTui[target] = isTui;
         if (target === _termTarget) {
             document.getElementById('term-tui-chip').classList.toggle('hidden', !isTui);
+            // Paging buttons only make sense where browser scrollback doesn't exist.
+            const nav = document.getElementById('term-tui-nav');
+            if (nav) nav.classList.toggle('hidden', !isTui);
         }
     }
 
@@ -1223,16 +1226,42 @@ async function fitTuiToScreen(target) {
 let _tuiTouchY = null;
 let _tuiWheelAcc = 0;
 let _tuiLastScrollSend = 0;
+let _tuiThreshold = 120;  // per-gesture page distance; set at touchstart
+
+// Bare key to the TUI pane — shared by the swipe gesture, the double-tap and
+// the on-screen nav buttons so all three route identically.
+function _tuiSendKey(keys) {
+    fetch('/key', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ keys: keys, target: _termTarget }),
+    }).catch(function() {});
+}
 
 function _tuiSendScroll(pageUp) {
     const now = Date.now();
     if (now - _tuiLastScrollSend < 120) return;  // cap the POST rate
     _tuiLastScrollSend = now;
-    fetch('/key', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ keys: pageUp ? 'Page_Up' : 'Page_Down', target: _termTarget }),
-    }).catch(function() {});
+    _tuiSendKey(pageUp ? 'Page_Up' : 'Page_Down');
+}
+
+// Finger travel needed for one page. Scaled to the visible pane so a drag moves
+// roughly the content it covers — half a screen of travel pages by one screen.
+// The old flat 80px fired a FULL page every 80px AND re-anchored, so an
+// ordinary flick (~600px) jumped ~7 pages and shot straight past whatever you
+// were trying to read: the transcript was effectively unnavigable by hand.
+function _tuiPageThreshold() {
+    const display = document.getElementById('term-display');
+    const h = (display && display.clientHeight) || 300;
+    return Math.max(120, Math.round(h * 0.5));
+}
+
+// On-screen paging (buttons in the TUI info row).
+function tuiPage(pageUp) { _tuiSendScroll(pageUp); }
+
+function tuiJumpEnd() {
+    _tuiSendKey('End');
+    if (typeof showFlash === 'function') showFlash('sent', 'Jump to end');
 }
 
 (function _wireTuiScroll() {
@@ -1251,6 +1280,10 @@ function _tuiSendScroll(pageUp) {
         _tuiTouchY = e.touches[0].clientY;
         _tuiTapStartX = e.touches[0].clientX;
         _tuiTapStartY = e.touches[0].clientY;
+        // Measure once per gesture: reading clientHeight on every touchmove
+        // forces a layout on each frame, which is exactly the wrong cost on
+        // the phone this whole change is for.
+        _tuiThreshold = _tuiPageThreshold();
     }, { passive: true });
     display.addEventListener('touchmove', function(e) {
         if (!_paneTui[_termTarget] || _tuiTouchY === null) return;
@@ -1261,7 +1294,7 @@ function _tuiSendScroll(pageUp) {
         if (typeof _selDragging !== 'undefined' && _selDragging) return;
         e.preventDefault();
         const dy = e.touches[0].clientY - _tuiTouchY;
-        if (Math.abs(dy) >= 80) {
+        if (Math.abs(dy) >= _tuiThreshold) {
             _tuiSendScroll(dy > 0);  // finger moving down = read older = PageUp
             _tuiTouchY = e.touches[0].clientY;
         }
@@ -1287,12 +1320,7 @@ function _tuiSendScroll(pageUp) {
         _tuiLastTap = now; _tuiLastTapX = t.clientX; _tuiLastTapY = t.clientY;
         if (!isDoubleTap) return;
         _tuiLastTap = 0;  // consume — a triple tap shouldn't fire twice
-        fetch('/key', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ keys: 'End', target: _termTarget }),
-        }).catch(function() {});
-        if (typeof showFlash === 'function') showFlash('sent', 'Jump to end');
+        tuiJumpEnd();
     });
 })();
 
