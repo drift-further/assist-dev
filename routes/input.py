@@ -209,6 +209,9 @@ def type_text():
     return jsonify({"ok": True, "via": "xdotool"})
 
 
+_UPLOAD_CHUNK = 1024 * 1024  # stream to disk 1MB at a time — never buffer whole file
+
+
 @input_bp.route("/upload", methods=["POST"])
 def upload_file():
     if "file" not in request.files:
@@ -216,9 +219,11 @@ def upload_file():
     f = request.files["file"]
     if not f.filename:
         return jsonify({"ok": False, "error": "No filename"}), 400
+    limit = state.MAX_UPLOAD_SIZE
+    too_large = f"File too large ({limit // (1024 * 1024)}MB max)"
     content_length = request.content_length
-    if content_length and content_length > state.MAX_UPLOAD_SIZE:
-        return jsonify({"ok": False, "error": "File too large (50MB max)"}), 413
+    if content_length and content_length > limit:
+        return jsonify({"ok": False, "error": too_large}), 413
     raw_name = f.filename
     sanitized = re.sub(r"[^a-zA-Z0-9._-]", "_", raw_name)
     sanitized = re.sub(r"_+", "_", sanitized).lstrip(".")
@@ -226,11 +231,27 @@ def upload_file():
         sanitized = "file"
     short_uuid = uuid.uuid4().hex[:8]
     dest = Path(f"/tmp/assist_{short_uuid}_{sanitized}")
-    data = f.read(state.MAX_UPLOAD_SIZE + 1)
-    if len(data) > state.MAX_UPLOAD_SIZE:
-        return jsonify({"ok": False, "error": "File too large (50MB max)"}), 413
-    dest.write_bytes(data)
-    return jsonify({"ok": True, "path": str(dest), "name": raw_name, "size": len(data)})
+
+    written = 0
+    oversized = False
+    try:
+        with dest.open("wb") as out:
+            while True:
+                chunk = f.stream.read(_UPLOAD_CHUNK)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > limit:
+                    oversized = True
+                    break
+                out.write(chunk)
+    except OSError as exc:
+        dest.unlink(missing_ok=True)
+        return jsonify({"ok": False, "error": f"Write failed: {exc.strerror}"}), 500
+    if oversized:
+        dest.unlink(missing_ok=True)
+        return jsonify({"ok": False, "error": too_large}), 413
+    return jsonify({"ok": True, "path": str(dest), "name": raw_name, "size": written})
 
 
 # ---------------------------------------------------------------------------

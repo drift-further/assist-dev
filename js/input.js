@@ -159,7 +159,12 @@ function triggerUpload() { document.getElementById('file-input').click(); }
 function onFileSelected(inp) {
     const file = inp.files && inp.files[0];
     if (!file) return;
-    if (file.size > 50 * 1024 * 1024) { showFlash('error', 'Too large (50MB max)'); inp.value = ''; return; }
+    const maxMb = (SETTINGS && SETTINGS.limits && SETTINGS.limits.max_upload_mb) || 2048;
+    if (file.size > maxMb * 1024 * 1024) {
+        showFlash('error', 'Too large (' + maxMb + 'MB max)');
+        inp.value = '';
+        return;
+    }
     _attachedFile = file;
     document.getElementById('attach-name').textContent = file.name;
     document.getElementById('attach-size').textContent = formatFileSize(file.size);

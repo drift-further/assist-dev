@@ -50,7 +50,7 @@ DEFAULT_SETTINGS = {
     },
     "limits": {
         "max_history": 2500,
-        "max_upload_mb": 50,
+        "max_upload_mb": 2048,
         "max_capture_lines": 20000,
     },
     "studio": {

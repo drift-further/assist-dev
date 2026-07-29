@@ -54,7 +54,7 @@ const _SETTINGS_SECTIONS = [
     {
         key: 'limits', label: 'Limits', fields: [
             { key: 'max_history', label: 'Max History', type: 'number', min: 100, max: 50000 },
-            { key: 'max_upload_mb', label: 'Max Upload', type: 'number', min: 1, max: 500, suffix: ' MB' },
+            { key: 'max_upload_mb', label: 'Max Upload', type: 'number', min: 1, max: 4096, suffix: ' MB' },
             { key: 'max_capture_lines', label: 'Max Capture Lines', type: 'number', min: 1000, max: 100000 },
         ]
     },
