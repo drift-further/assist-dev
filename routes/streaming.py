@@ -214,11 +214,21 @@ def _maybe_redraw_async(target, info):
     threading.Thread(target=_force_redraw, args=(target,), daemon=True).start()
 
 
-def _full_frame(target, lines):
+def _tui_flag(msg):
+    """Normalize a subscribe message's per-pane TUI override.
+
+    True/False pin the capture range to match the mode the chip is showing;
+    absent (None) leaves detection to capture_pane, as before the toggle.
+    """
+    v = msg.get("tui")
+    return None if v is None else bool(v)
+
+
+def _full_frame(target, lines, tui=None):
     """Capture `target` and return the JSON 'full' frame, or an 'error' frame
     when the capture fails (dead/unknown target) so the client doesn't sit on
     a healthy-looking but frozen terminal. Returns (frame_json, info)."""
-    content, info = capture_pane(target, lines)
+    content, info = capture_pane(target, lines, tui=tui)
     if content is None:
         return (
             json.dumps({"type": "error", "error": "Target not found", "target": target}),
@@ -260,6 +270,7 @@ def register_streaming(sock_instance):
 
         target = None
         lines = _DEFAULT_LINES
+        tui = None
 
         try:
             raw = ws.receive(timeout=5)
@@ -267,6 +278,7 @@ def register_streaming(sock_instance):
                 msg = json.loads(raw)
                 target = msg.get("target", state.tmux_target)
                 lines = min(int(msg.get("lines", _DEFAULT_LINES)), 20000)
+                tui = _tui_flag(msg)
         except Exception:
             target = state.tmux_target
 
@@ -279,6 +291,7 @@ def register_streaming(sock_instance):
             "lock": threading.Lock(),
             "target": target,
             "lines": lines,
+            "tui": tui,
             "last_send": time.time(),
         }
 
@@ -293,7 +306,7 @@ def register_streaming(sock_instance):
         # grid artifacts. Any repaint runs in the background afterwards and
         # the streamer pushes the cleaned frame when the content changes.
         try:
-            frame, info = _full_frame(target, lines)
+            frame, info = _full_frame(target, lines, tui)
             _send_to(client, frame)
             _maybe_redraw_async(target, info)
         except Exception:
@@ -302,7 +315,7 @@ def register_streaming(sock_instance):
         set_ws_send_timeout(ws)
 
         with state.ws_lock:
-            cache_key = f"{target}:{lines}"
+            cache_key = f"{target}:{lines}:{tui}"
             state.ws_last_content.pop(cache_key, None)
             state.ws_clients.append(client)
         _ensure_streamer()
@@ -320,15 +333,18 @@ def register_streaming(sock_instance):
                     if msg.get("type") == "subscribe":
                         new_target = msg.get("target", target)
                         new_lines = min(int(msg.get("lines", lines)), 20000)
+                        new_tui = _tui_flag(msg)
                         with state.ws_lock:
-                            cache_key = f"{new_target}:{new_lines}"
+                            cache_key = f"{new_target}:{new_lines}:{new_tui}"
                             state.ws_last_content.pop(cache_key, None)
                             client["target"] = new_target
                             client["lines"] = new_lines
+                            client["tui"] = new_tui
                         target = new_target
                         lines = new_lines
+                        tui = new_tui
                         _ensure_streamer()
-                        frame, info = _full_frame(target, lines)
+                        frame, info = _full_frame(target, lines, tui)
                         _send_to(client, frame)
                         _maybe_redraw_async(target, info)
                 except Exception:
@@ -360,10 +376,11 @@ def _terminal_streamer():
                         clients = []
                     else:
                         _empty_count = 0
-                        # Snapshot (entry, target, lines) under the lock —
+                        # Snapshot (entry, target, lines, tui) under the lock —
                         # subscribe mutates entries in place.
                         clients = [
-                            (c, c["target"], c["lines"]) for c in state.ws_clients
+                            (c, c["target"], c["lines"], c.get("tui"))
+                            for c in state.ws_clients
                         ]
 
                 if not clients:
@@ -374,22 +391,25 @@ def _terminal_streamer():
 
                 now = time.time()
 
+                # Grouped by TUI override too: two clients on the same pane with
+                # different overrides need different capture ranges, so they
+                # can't share a capture or a dedup entry.
                 targets = {}
-                for client, target, lines in clients:
-                    key = (target, lines)
+                for client, target, lines, tui in clients:
+                    key = (target, lines, tui)
                     if key not in targets:
                         targets[key] = []
                     targets[key].append(client)
 
-                for (target, lines), group in targets.items():
+                for (target, lines, tui), group in targets.items():
                     try:
-                        content, info = capture_pane(target, lines)
+                        content, info = capture_pane(target, lines, tui=tui)
                     except Exception:
                         continue
                     if content is None:
                         continue
 
-                    cache_key = f"{target}:{lines}"
+                    cache_key = f"{target}:{lines}:{tui}"
                     with state.ws_lock:
                         prev_content = state.ws_last_content.get(cache_key)
 
@@ -445,7 +465,7 @@ def _terminal_streamer():
                 # still needs traffic inside the frontend's 8s inactivity
                 # window even while OTHER targets are busy — a global
                 # sent_any flag starves it into a reconnect loop.
-                for client, _t, _l in clients:
+                for client, _t, _l, _tui in clients:
                     if now - client["last_send"] >= state.WS_HEARTBEAT_INTERVAL:
                         try:
                             _send_to(client, json.dumps({"type": "heartbeat", "ts": now}))

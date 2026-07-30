@@ -1,6 +1,7 @@
 """routes/git.py — Git operations and venv creation in isolated tmux sessions."""
 
 import concurrent.futures
+import re
 import shlex
 import subprocess
 import time
@@ -9,80 +10,76 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
-import shared.state as state
 from shared.tmux import detect_venv, tmux_send_keys, tmux_send_text
 from shared.utils import resolve_target
 
 git_bp = Blueprint("git_bp", __name__)
 
-# Characters that must never appear in any git argument — the command is
-# ultimately typed into a shell-backed tmux pane, so anything the shell
-# could interpret is rejected outright. `!` stays allowed: it only bites
-# inside a `-c alias.*=!cmd` definition (unreachable — options before the
-# subcommand are rejected below) and banning it would break commit
-# messages; shlex.quote's single quotes keep it inert in the shell.
-_FORBIDDEN_CHARS = set(";|&$`(){}<>\n\r")
+_ALLOWED_OPS = frozenset({"status", "push", "commit_push"})
+_MAX_COMMIT_MESSAGE_LEN = 2000
 
-# Builtin subcommands only. Git never alias-expands a name that shadows a
-# builtin, so an allowlist also closes the `git <alias>` → `!cmd` path.
-_ALLOWED_SUBCOMMANDS = {
-    "add", "branch", "checkout", "commit", "diff", "fetch", "log",
-    "pull", "push", "restore", "stash", "status", "switch",
-}
-
-# Options that make git execute an arbitrary program, wherever they appear.
-_FORBIDDEN_OPTIONS = ("--upload-pack", "--receive-pack", "--exec")
+# Control characters must never reach the message, and shlex.quote does NOT
+# protect against them. The command is TYPED into an interactive pane, so
+# readline sees these bytes before any shell parsing happens: a Ctrl-U (\x15)
+# in a commit message erases the whole generated prefix, and the rest of the
+# message becomes its own command —
+#     git commit -m 'x<Ctrl-U>touch /tmp/pwn #' && git push
+# leaves the shell holding `touch /tmp/pwn #' && git push`, i.e. arbitrary
+# execution through a correctly-quoted argument. Ctrl-W, backspace, ESC and
+# friends give the same class of edit. NUL additionally cannot survive the
+# subprocess argv at all. Verified live 2026-07-28; a test that runs the
+# finished string through `bash -c` cannot see this, because it never types it.
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 
-def _validate_git_command(command):
-    """Validate a (possibly &&-chained) git command and rebuild it safely.
+def _build_git_command(op, message):
+    """Map a fixed op to the exact shell line typed into the throwaway pane.
 
-    Each &&-segment must shlex-parse, be `git <allowed-subcommand> …` with
-    no options between "git" and the subcommand (blocks -c/-C/--exec-path/
-    --config-env config and cwd injection), no exec-capable options, and
-    no shell metacharacters in any token. Returns (rebuilt_cmd, None) on
-    success or (None, error_message) on rejection.
+    Every branch is explicit and the tail raises: a future op added to
+    _ALLOWED_OPS without a branch here must blow up, not fall through to
+    whichever template happens to be last — that template commits and pushes.
     """
-    segments = command.split("&&")
-    rebuilt = []
-    for segment in segments:
-        segment = segment.strip()
-        if not segment:
-            return None, "Empty command segment"
-        try:
-            tokens = shlex.split(segment)
-        except ValueError as e:
-            return None, f"Unparseable command: {e}"
-        if not tokens or tokens[0] != "git":
-            return None, "Only git commands allowed"
-        if len(tokens) < 2 or tokens[1].startswith("-"):
-            return None, "Options before the git subcommand are not allowed"
-        if tokens[1] not in _ALLOWED_SUBCOMMANDS:
-            return None, f"Git subcommand not allowed: {tokens[1]}"
-        for tok in tokens:
-            if any(ch in _FORBIDDEN_CHARS for ch in tok):
-                return None, "Shell metacharacters not allowed"
-            if tok in _FORBIDDEN_OPTIONS or any(
-                tok.startswith(opt + "=") for opt in _FORBIDDEN_OPTIONS
-            ):
-                return None, "Git option not allowed"
-        rebuilt.append(" ".join(shlex.quote(tok) for tok in tokens))
-    return " && ".join(rebuilt), None
+    if op == "status":
+        return "git status"
+    if op == "push":
+        return "git push"
+    if op == "commit_push":
+        return f"git add -A && git commit -m {shlex.quote(message)} && git push"
+    raise ValueError(f"No template for op: {op}")
 
 
 @git_bp.route("/api/git/run", methods=["POST"])
 def git_run():
-    """Run a git command in a temporary tmux session, isolated from Claude Code."""
-    data = request.get_json(silent=True) or {}
-    command = (data.get("command") or "").strip()
+    """Run a fixed git op in a temporary tmux session, isolated from Claude Code."""
+    # A valid JSON body need not be an object — `["x"]` and `1` both parse, and
+    # .get() on either is a 500 rather than the 400 it should be.
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        data = {}
+    # Same absence of type guarantee one level down: op may be a list/dict/number.
+    raw_op = data.get("op")
+    op = raw_op.strip() if isinstance(raw_op, str) else ""
     target = resolve_target(data)
 
-    if not command:
-        return jsonify({"ok": False, "error": "No command provided"}), 400
+    if op not in _ALLOWED_OPS:
+        return jsonify({"ok": False, "error": "Invalid or missing op"}), 400
 
-    command, validation_error = _validate_git_command(command)
-    if validation_error:
-        return jsonify({"ok": False, "error": validation_error}), 403
+    if op == "commit_push":
+        message = data.get("message")
+        # Blank-after-strip too: git aborts on an all-whitespace message, and
+        # failing here says why instead of surfacing git's error in a pane.
+        if not isinstance(message, str) or not message.strip():
+            return jsonify({"ok": False, "error": "Message required"}), 400
+        if _CONTROL_CHARS_RE.search(message):
+            return (
+                jsonify({"ok": False, "error": "Message must not contain control characters"}),
+                400,
+            )
+        if len(message) > _MAX_COMMIT_MESSAGE_LEN:
+            return jsonify({"ok": False, "error": "Message too long"}), 400
+        command = _build_git_command(op, message)
+    else:
+        command = _build_git_command(op, "")
 
     if not target:
         return jsonify({"ok": False, "error": "No active session"}), 400

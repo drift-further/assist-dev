@@ -131,29 +131,6 @@ async function doPaste() {
     }
 }
 
-async function doCopy() {
-    const text = input.value.trim();
-    if (!text) return;
-    try {
-        const resp = await fetch('/copy', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({text: text}),
-        });
-        const data = await resp.json();
-        if (data.ok) {
-            showFlash('copied', 'Copied!');
-            lastAction = Date.now();
-            updateStatusTime();
-            loadHistory();
-        } else {
-            showFlash('error', data.error || 'Failed');
-        }
-    } catch (e) {
-        showFlash('error', 'Offline');
-    }
-}
-
 function triggerUpload() { document.getElementById('file-input').click(); }
 
 function onFileSelected(inp) {

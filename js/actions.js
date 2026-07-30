@@ -378,10 +378,12 @@ const SMART_PATTERNS = [
             // the footer is often pushed 10-20 lines up from the bottom.
             // Bound depth from bottom (~30 lines) to skip stale footers in
             // scrollback. Mirrors routes/autoyes.py:_detect_autoyes_prompt.
+            // "Press enter to confirm" is codex's footer — no separator glyph
+            // and different wording, so the other three forms all miss it.
             const FOOTER_DEPTH_MAX = 30;
             let footerIdx = -1;
             for (let i = lines.length - 1; i >= 0; i--) {
-                if (/(?:Enter to select|Esc to cancel|Navigate)\s*[·•]/.test(lines[i])) { footerIdx = i; break; }
+                if (/(?:Enter to select|Esc to cancel|Navigate)\s*[·•]|Press enter to confirm/.test(lines[i])) { footerIdx = i; break; }
             }
             const optPattern = /^\s*(?:[^\d\s]\s*)?(\d+)[\.\)]\s+\S/;
             if (footerIdx >= 0 && (lines.length - 1 - footerIdx) <= FOOTER_DEPTH_MAX) {
@@ -410,7 +412,7 @@ const SMART_PATTERNS = [
             // Find footer line
             let endIdx = lines.length;
             for (let i = lines.length - 1; i >= 0; i--) {
-                if (/(?:Enter to select|Esc to cancel|Navigate)\s*[·•]/.test(lines[i])) { endIdx = i; break; }
+                if (/(?:Enter to select|Esc to cancel|Navigate)\s*[·•]|Press enter to confirm/.test(lines[i])) { endIdx = i; break; }
             }
             // Find last ──── separator before footer (bounds the prompt region)
             let startIdx = 0;

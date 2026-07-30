@@ -721,7 +721,10 @@ def terminal_capture():
         int(request.args.get("lines", state.get_setting("terminal", "capture_lines"))),
         state.get_setting("limits", "max_capture_lines"),
     )
-    content, info = capture_pane(target, lines)
+    # Per-pane TUI override from the chip (absent = auto-detect, as always).
+    raw_tui = request.args.get("tui")
+    tui = None if raw_tui in (None, "") else raw_tui in ("1", "true", "True")
+    content, info = capture_pane(target, lines, tui=tui)
     if content is None:
         return jsonify({"ok": False, "error": "capture-pane failed"}), 500
 

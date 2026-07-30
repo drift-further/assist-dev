@@ -96,10 +96,6 @@ let _attachedFilePath = null;   // pre-uploaded path (clipboard images)
 // Notification state
 let _notifPermission = typeof Notification !== 'undefined' ? Notification.permission : 'denied';
 let _notifSentFor = {};         // target -> last notified tail hash
-let _notifScanTimer = null;
-
-// Info toast timer
-let _infoTimer = null;
 
 // Saved commands state
 let _splitPanes = {};              // session -> { target, ws, wsConnected, lastContent, label }

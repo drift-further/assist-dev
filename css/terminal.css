@@ -303,34 +303,6 @@
     letter-spacing: 0.5px;
 }
 
-/* Terminal bar buttons */
-.term-bar-btn {
-    padding: 7px 10px;
-    border: 1px solid;
-    background: transparent;
-    font-family: var(--font);
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-    transition: all 0.12s;
-    white-space: nowrap;
-}
-.term-bar-btn:active { transform: scale(0.93); }
-.term-bar-btn.btn-proj { color: var(--amber); border-color: rgba(255, 149, 0, 0.3); }
-.term-bar-btn.btn-proj:active { background: rgba(255, 149, 0, 0.15); }
-.term-bar-btn.btn-proj.active { background: rgba(255, 149, 0, 0.1); border-color: rgba(255, 149, 0, 0.5); }
-.term-bar-btn.btn-info {
-    color: var(--text-dim); border-color: var(--border);
-    font-size: 10px; font-style: italic; font-weight: 800;
-    padding: 7px 8px; min-width: 28px; text-align: center;
-}
-.term-bar-btn.btn-info:active { background: rgba(0, 212, 255, 0.1); color: var(--cyan); border-color: rgba(0, 212, 255, 0.4); }
-.term-bar-btn.btn-kill { color: var(--red); border-color: rgba(255, 0, 64, 0.3); font-size: 8px; padding: 7px 6px; }
-.term-bar-btn.btn-kill:active { background: rgba(255, 0, 64, 0.15); }
-
 /* Fit menu (terminal width presets) */
 .fit-menu {
     display: none; flex-shrink: 0; padding: 6px;
@@ -398,10 +370,6 @@
 .plus-proj:active { background: rgba(255, 149, 0, 0.15); }
 .plus-git { color: var(--amber); border-color: rgba(255, 149, 0, 0.3); }
 .plus-git:active { background: rgba(255, 149, 0, 0.15); }
-.plus-info { color: var(--cyan); border-color: rgba(0, 212, 255, 0.3); }
-.plus-info:active { background: rgba(0, 212, 255, 0.15); }
-.plus-kill { color: var(--red); border-color: rgba(255, 0, 64, 0.3); }
-.plus-kill:active { background: rgba(255, 0, 64, 0.15); }
 .plus-autoyes { color: #777; border-color: rgba(255, 149, 0, 0.3); }
 .plus-autoyes.active { color: var(--amber); border-color: rgba(255, 149, 0, 0.5); background: rgba(255, 149, 0, 0.1); }
 .plus-autoyes:active { background: rgba(255, 149, 0, 0.15); }
@@ -494,22 +462,6 @@
 }
 .ay-cancel:active { background: rgba(255, 0, 64, 0.25); transform: scale(0.95); }
 
-/* Session info toast */
-.session-info-toast {
-    display: none;
-    padding: 8px 12px;
-    background: rgba(0, 212, 255, 0.08);
-    border: 1px solid rgba(0, 212, 255, 0.3);
-    font-size: 11px; font-weight: 500; color: var(--cyan);
-    letter-spacing: 0.5px; word-break: break-all;
-    animation: fadeSlide 0.2s ease-out;
-}
-.session-info-toast.visible { display: block; }
-.session-info-toast .info-label {
-    font-size: 8px; font-weight: 700; color: var(--text-dim);
-    letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 3px;
-}
-
 /* Project launcher */
 .term-projects { display: flex; flex-direction: column; gap: 6px; }
 
@@ -590,9 +542,13 @@
 .term-display.hidden { display: none; }
 .term-info {
     position: sticky; top: 0; z-index: 2;
-    background: linear-gradient(180deg, rgba(3, 8, 6, 0.95) 0%, rgba(3, 8, 6, 0.8) 100%);
+    /* Opaque, not the old 0.95->0.8 fade: this row sticks over scrolling
+       terminal text and now carries a tappable control, so the text passing
+       underneath must not show through and compete with it. */
+    background: var(--bg-term);
     padding: 5px 8px; font-size: 8px; font-weight: 600; color: var(--text-dim);
-    letter-spacing: 1px; text-transform: uppercase; display: flex; gap: 10px;
+    letter-spacing: 1px; text-transform: uppercase;
+    display: flex; gap: 10px; align-items: center;
     border-bottom: 1px solid rgba(13, 59, 26, 0.3);
 }
 .term-info-cmd { color: var(--cyan); }
@@ -975,13 +931,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.stale-sheet-row .row-label {
-    font-family: var(--font);
-    font-size: 9px;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
 .stale-sheet-row .row-idle {
     font-family: var(--font);
     font-size: 9px;
@@ -1006,15 +955,34 @@
 .stale-sheet-row .row-dot.amber { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
 .stale-sheet-row .row-dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
 
-/* TUI-mode chip: pane is a full-screen alternate-screen app */
+/* Mode chip: TUI (full-screen alternate-screen app) vs STD (normal pane).
+   Also the control — tap cycles auto -> pinned -> auto. Purple = auto-detected
+   TUI, dim = auto-detected normal, amber + dot = pinned by hand. */
 .term-tui-chip {
+    background: transparent;
     color: var(--purple);
     border: 1px solid var(--purple);
     border-radius: 3px;
-    padding: 0 4px;
+    padding: 0 6px;
     margin-right: 6px;
+    min-height: 22px;
+    font-family: inherit;
     font-size: 10px;
     letter-spacing: 0.5px;
+    line-height: 1;
+    cursor: pointer;
+}
+.term-tui-chip.std {
+    color: var(--text-dim);
+    border-color: var(--text-dim);
+}
+.term-tui-chip.pinned {
+    color: var(--amber);
+    border-color: var(--amber);
+}
+.term-tui-chip:active {
+    background: rgba(255, 149, 0, 0.18);
+    box-shadow: 0 0 10px rgba(255, 149, 0, 0.35);
 }
 .term-tui-chip.hidden { display: none; }
 

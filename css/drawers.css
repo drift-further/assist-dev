@@ -271,15 +271,6 @@
 
 /* List sections (history/favorites) */
 .list-area { max-height: 50dvh; overflow-y: auto; }
-.list-section-label {
-    font-size: 9px; font-weight: 600; text-transform: uppercase;
-    letter-spacing: 2px; color: var(--text-dim);
-    padding: 6px 0 4px; display: flex; align-items: center; gap: 8px;
-}
-.list-section-label::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, var(--border), transparent); }
-.list-count {
-    font-size: 8px; color: var(--text-muted); font-weight: 400; letter-spacing: 0;
-}
 .list-item {
     display: flex; align-items: center; gap: 4px; padding: 5px 6px;
     border-bottom: 1px solid rgba(13, 59, 26, 0.15);

@@ -31,10 +31,6 @@ function formatFileSize(bytes) {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
-function isFav(text) {
-    return _favorites.some(f => f.text === text);
-}
-
 const SHELL_CMDS = new Set([
     'cd', 'ls', 'pwd', 'echo', 'cat', 'grep', 'mkdir', 'rm', 'cp', 'mv',
     'git', 'make', 'npm', 'python', 'pip', 'docker', 'tmux', 'kill',

@@ -275,7 +275,7 @@ def detect_venv(project_path):
     return None
 
 
-def capture_pane(target, lines=2000):
+def capture_pane(target, lines=2000, tui=None):
     """Capture tmux pane content and info. Returns (content, info) or (None, None).
 
     When the pane is on the alternate screen (a TUI like Claude Code is
@@ -283,6 +283,12 @@ def capture_pane(target, lines=2000):
     flow into scrollback, and historical main-screen scrollback (e.g. prior
     Claude launch banners) would just be noise. When on the main screen,
     capture up to `lines` of scrollback so shell history is preserved.
+
+    `tui` overrides that detection for this capture: True forces
+    visible-screen-only, False forces full scrollback, None (default) keeps
+    the automatic behaviour. The frontend sends it when the user has pinned
+    a pane's mode from the TUI chip, so the capture range always matches the
+    mode the UI is showing — mode is one bundle, not just gestures.
 
     Wrapper sessions (claude inside docker) are captured WITH full
     scrollback like any main-screen pane — the periodic Ctrl+L self-heal in
@@ -347,7 +353,9 @@ def capture_pane(target, lines=2000):
     # alternate screen (unlike a true TUI such as opencode), so keep full
     # scrollback for it — mirrors the frontend's never-TUI exemption.
     claude_pane = prettify_command(info.get("command", "")) == "claude"
-    if alternate_on and not claude_pane:
+    as_tui = (alternate_on and not claude_pane) if tui is None else bool(tui)
+    info["capture_tui"] = as_tui
+    if as_tui:
         capture_args += ["-S", "0"]  # true TUI: visible viewport only
     else:
         capture_args += ["-S", f"-{lines}"]

@@ -105,6 +105,52 @@ All configuration is environment-variable based, via `.env` in the repo. See `en
 
 Changes to `.env` require `assist restart` to take effect.
 
+## Access and authentication
+
+Assist can start a process in any tmux pane it manages, and `/api/commands/run` executes an arbitrary command string **by design** — the commands are ones you wrote yourself in the commands panel. So the only thing that can protect it is the trust boundary, not input validation.
+
+Two things enforce that:
+
+**A shared secret gates every endpoint.** On first start the server generates one and writes it to `auth_token` in the install directory (mode `0600`, gitignored); it is also printed to the startup log. Open Assist, paste the token into the login page once, and the browser holds a cookie from then on — the raw token is never stored client-side, only an HMAC of it. For scripts, pass it as an `X-Assist-Token` header or a `?token=` query parameter.
+
+```
+$ cat auth_token
+BduKDRwh…
+```
+
+To rotate: delete `auth_token` and restart. A new secret is generated and every issued cookie stops matching, because the HMAC key changed.
+
+Only three things are exempt: `/login`, `/health` (a liveness probe carrying no data), and `/api/cli-proxy` — containers have no way to hold the token, so that endpoint is instead restricted to the container subnet at the proxy layer and remains fail-closed on its own `ASSIST_CLI_ALLOWED` allowlist.
+
+**Flask binds `127.0.0.1` only.** nginx is the sole ingress. Historically LAN clients reached Flask directly on `<lan-ip>:8089` because the vhost answered only to the `assist.drift` name, which left every endpoint exposed to the whole network. nginx now listens on that same address and port and forwards to loopback, so **no client URL changes** — binding a specific IP in nginx does not collide with Flask's loopback bind.
+
+If you self-host this, the equivalent server block is:
+
+```nginx
+server {
+    listen <lan-ip>:8089;
+    server_name _;
+    client_max_body_size 2G;
+
+    location = /api/cli-proxy {
+        allow 172.16.0.0/12;   # container subnet only
+        allow 127.0.0.1;
+        deny all;
+        proxy_pass http://127.0.0.1:8089;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8089;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 86400s;
+    }
+}
+```
+
+Run `serve.py --host 0.0.0.0` to go back to binding all interfaces — but that re-exposes every endpoint to the network, and is only sane if you have no proxy in front.
+
 ## Connect to Studio
 
 [Studio](https://studio.drift) is the design hub agents report into — specs, plans, blocking questions, tasks and QA gates. Assist works standalone; connecting it to a Studio adds an attention inbox you can answer from your phone, a badge on the ◇ button, and a project/effort chip on the active session.

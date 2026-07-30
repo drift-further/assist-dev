@@ -138,13 +138,15 @@ function toggleGitPanel() {
     btn.classList.toggle('active', !visible);
 }
 
-async function gitRunCommand(cmd) {
+async function gitRunOp(op, message) {
     showFlash('sent', 'Git: running...');
     try {
+        const body = { op, target: getInputTarget() };
+        if (message !== undefined) body.message = message;
         const resp = await fetch('/api/git/run', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ command: cmd, target: getInputTarget() }),
+            body: JSON.stringify(body),
         });
         const data = await resp.json();
         if (data.ok) {
@@ -159,8 +161,8 @@ async function gitRunCommand(cmd) {
     }
 }
 
-function gitStatus() { gitRunCommand('git status'); }
-function gitPush() { gitRunCommand('git push'); }
+function gitStatus() { gitRunOp('status'); }
+function gitPush() { gitRunOp('push'); }
 
 async function createVenv() {
     showFlash('sent', 'Creating .venv...');
@@ -185,8 +187,7 @@ function gitCommitPush() {
     const inp = document.getElementById('git-commit-msg');
     const msg = inp.value.trim();
     if (!msg) { showFlash('error', 'Enter a message'); return; }
-    const escaped = msg.replace(/'/g, "'\\''");
-    gitRunCommand("git add -A && git commit -m '" + escaped + "' && git push");
+    gitRunOp('commit_push', msg);
     inp.value = '';
 }
 

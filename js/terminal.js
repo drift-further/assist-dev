@@ -595,11 +595,7 @@ function selectTab(target) {
     });
     // Send new subscribe over existing WebSocket, or fall back to HTTP
     if (_termWs && _termWsConnected) {
-        _termWs.send(JSON.stringify({
-            type: 'subscribe',
-            target: target,
-            lines: _termLines,
-        }));
+        _termWs.send(_tuiSubscribeFrame(target, _termLines));
     } else {
         captureTerminal();
         disconnectTerminalWs();
@@ -621,11 +617,6 @@ function selectTab(target) {
     if (typeof loadProjectSettings === 'function') loadProjectSettings(target.split(':')[0]);
 }
 
-// Kept for backward compat — tab clicks now use selectTab() directly
-async function onSessionChange() {
-    // No-op: tabs handle selection via selectTab()
-}
-
 async function _clearActivePane(target) {
     if (!target) return;
     try {
@@ -637,7 +628,7 @@ async function _clearActivePane(target) {
         showFlash('sent', 'Cleared');
         // Re-capture so the fresh state lands immediately.
         if (_termWs && _termWsConnected) {
-            _termWs.send(JSON.stringify({type: 'subscribe', target, lines: _termLines}));
+            _termWs.send(_tuiSubscribeFrame(target, _termLines));
         } else {
             captureTerminal();
         }
@@ -658,7 +649,7 @@ const _TUI_SHELLS = ['bash', 'zsh', 'sh', 'fish'];
 let _paneTui = {};   // target -> bool
 let _paneInfo = {};  // target -> last full-frame info dict
 
-function _isTuiInfo(info) {
+function _autoTuiInfo(info) {
     if (!info || !info.alternate_on || !info.command) return false;
     if (_TUI_SHELLS.includes(info.command)) return false;
     // Claude Code panes are never TUI-managed even when they flip to the
@@ -667,6 +658,99 @@ function _isTuiInfo(info) {
     // binaries (e.g. 2.1.206) into 'claude'.
     if ((info.command_display || info.command) === 'claude') return false;
     return true;
+}
+
+// Per-pane manual override of that detection, because auto-detect is wrong in
+// both directions: a codex/opencode pane you want to scroll and select text in,
+// or a claude pane you want to swipe-page. Per device (localStorage), not
+// server-side — same reasoning as deliberate TUI fit: your phone pinning a mode
+// must not change what the desktop sees of a shared tmux session.
+// target -> 'tui' (force TUI) | 'std' (force normal); absent = auto.
+let _tuiOverride = {};
+try {
+    _tuiOverride = JSON.parse(localStorage.getItem('assist_tui_override') || '{}') || {};
+} catch(e) { _tuiOverride = {}; }
+
+function _saveTuiOverride() {
+    try { localStorage.setItem('assist_tui_override', JSON.stringify(_tuiOverride)); } catch(e) {}
+}
+
+/** Effective TUI mode: the pinned override if there is one, else auto-detect. */
+function _isTuiInfo(info, target) {
+    const o = _tuiOverride[target];
+    if (o) return o === 'tui';
+    return _autoTuiInfo(info);
+}
+
+/** Wire flag for subscribe frames. Omitted when the pane is on auto so the
+ *  server keeps applying its own detection, exactly as before. Sent when
+ *  pinned so the capture range (-S 0 vs full scrollback) matches the chip —
+ *  mode is one bundle, not just gestures. */
+function _tuiSubscribeFrame(target, lines) {
+    const msg = {type: 'subscribe', target: target, lines: lines};
+    const o = _tuiOverride[target];
+    if (o) msg.tui = (o === 'tui');
+    return JSON.stringify(msg);
+}
+
+/** Same flag for the HTTP capture fallback. */
+function _tuiQuery(target) {
+    const o = _tuiOverride[target];
+    return o ? `&tui=${o === 'tui' ? 1 : 0}` : '';
+}
+
+/** Paint the chip + the TUI-only affordances for `target`. */
+function _updateTuiChip(target) {
+    const chip = document.getElementById('term-tui-chip');
+    if (!chip) return;
+    const isTui = !!_paneTui[target];
+    const pinned = _tuiOverride[target];
+    chip.textContent = (isTui ? 'TUI' : 'STD') + (pinned ? '•' : '');
+    chip.classList.remove('hidden');
+    chip.classList.toggle('pinned', !!pinned);
+    chip.classList.toggle('std', !isTui);
+    chip.title = pinned
+        ? `Pinned to ${isTui ? 'TUI' : 'normal'} mode — tap to cycle (pinned / auto)`
+        : (isTui
+            ? 'Auto: full-screen TUI — pane auto-fits, swipe pages the app. Tap to override.'
+            : 'Auto: normal pane — browser scrolling and scrollback. Tap to override.');
+    // Paging buttons only make sense where browser scrollback doesn't exist.
+    const nav = document.getElementById('term-tui-nav');
+    if (nav) nav.classList.toggle('hidden', !isTui);
+    // Nothing to load in TUI mode — the capture is exactly one screen.
+    const more = document.getElementById('term-load-more');
+    if (more && isTui) more.classList.remove('visible');
+}
+
+/** Tap the chip: auto -> flip (the reason you tapped) -> pin the auto verdict
+ *  -> back to auto. First tap always changes something visible. */
+function cycleTuiMode() {
+    const target = _termTarget;
+    if (!target) return;
+    const auto = _autoTuiInfo(_paneInfo[target]);
+    const cur = _tuiOverride[target] || null;
+    const flip = auto ? 'std' : 'tui';
+    const pin = auto ? 'tui' : 'std';
+    const next = cur === null ? flip : (cur === flip ? pin : null);
+
+    if (next) _tuiOverride[target] = next; else delete _tuiOverride[target];
+    _saveTuiOverride();
+
+    const isTui = next ? (next === 'tui') : auto;
+    _paneTui[target] = isTui;
+    _updateTuiChip(target);
+
+    // Re-subscribe so the backend capture range follows the new mode.
+    if (_termWs && _termWsConnected) {
+        _termWs.send(_tuiSubscribeFrame(target, _termLines));
+    } else {
+        captureTerminal();
+    }
+    if (typeof showFlash === 'function') {
+        showFlash('ok', next
+            ? `${isTui ? 'TUI' : 'Normal'} mode pinned`
+            : `Auto mode (${auto ? 'TUI' : 'normal'})`);
+    }
 }
 
 function _scheduleRender(content, info, target) {
@@ -699,14 +783,8 @@ function _doRender(content, info, target) {
         document.getElementById('term-info-cmd').textContent = info.command_display || info.command || '';
         document.getElementById('term-info-dim').textContent =
             (info.width && info.height) ? `${info.width}x${info.height}` : '';
-        const isTui = _isTuiInfo(info);
-        _paneTui[target] = isTui;
-        if (target === _termTarget) {
-            document.getElementById('term-tui-chip').classList.toggle('hidden', !isTui);
-            // Paging buttons only make sense where browser scrollback doesn't exist.
-            const nav = document.getElementById('term-tui-nav');
-            if (nav) nav.classList.toggle('hidden', !isTui);
-        }
+        _paneTui[target] = _isTuiInfo(info, target);
+        if (target === _termTarget) _updateTuiChip(target);
     }
 
     // Update toggle status
@@ -775,9 +853,11 @@ function _doRender(content, info, target) {
         }
     }
 
-    // Show load-more if at line limit
+    // Show load-more if at line limit. Never in TUI mode — that capture is
+    // exactly one screen, so there is no older content to fetch.
     const lineCount = content.split('\n').length;
-    document.getElementById('term-load-more').classList.toggle('visible', lineCount >= _termLines - 5);
+    document.getElementById('term-load-more').classList.toggle(
+        'visible', lineCount >= _termLines - 5 && !_paneTui[target || _termTarget]);
 
     // Smart actions always run (user needs to respond to prompts quickly)
     const detected = detectSmartActions(stripAnsi(content), target || _termTarget);
@@ -842,11 +922,7 @@ function connectTerminalWs() {
         _wsReconnectDelay = _WS_RECONNECT_MIN;  // reset backoff on success
         updateConnIndicator();
         // Send subscribe message
-        ws.send(JSON.stringify({
-            type: 'subscribe',
-            target: _termTarget,
-            lines: _termLines,
-        }));
+        ws.send(_tuiSubscribeFrame(_termTarget, _termLines));
         // No auto-resize on (re)connect — repeated reconnects were resizing
         // the pane to transient viewport measurements. Resize is now manual
         // via the Fit menu only.
@@ -997,7 +1073,7 @@ function updateConnIndicator() {
 async function captureTerminal() {
     if (!_termTarget) return;
     try {
-        const resp = await fetch(`/terminal/capture?target=${encodeURIComponent(_termTarget)}&lines=${_termLines}`);
+        const resp = await fetch(`/terminal/capture?target=${encodeURIComponent(_termTarget)}&lines=${_termLines}${_tuiQuery(_termTarget)}`);
         const data = await resp.json();
         if (!data.ok) return;
         _applyTerminalContent(data.content || '', data.info, data.target || _termTarget);
@@ -1046,14 +1122,10 @@ async function loadMore() {
     // Re-subscribe the WS with the new line count so the next streamed
     // frame doesn't erase the longer history we're about to render.
     if (_termWs && _termWsConnected) {
-        _termWs.send(JSON.stringify({
-            type: 'subscribe',
-            target: _termTarget,
-            lines: _termLines,
-        }));
+        _termWs.send(_tuiSubscribeFrame(_termTarget, _termLines));
     }
     try {
-        const resp = await fetch(`/terminal/capture?target=${encodeURIComponent(_termTarget)}&lines=${_termLines}`);
+        const resp = await fetch(`/terminal/capture?target=${encodeURIComponent(_termTarget)}&lines=${_termLines}${_tuiQuery(_termTarget)}`);
         const data = await resp.json();
         if (!data.ok) return;
         if (data.target && data.target !== _termTarget) return;
@@ -1072,22 +1144,9 @@ async function loadMore() {
         display.scrollTop = display.scrollHeight - fromBottom;
         requestAnimationFrame(() => { _autoScrolling = false; });
         const lineCount = content.split('\n').length;
-        document.getElementById('term-load-more').classList.toggle('visible', lineCount >= _termLines - 5);
+        document.getElementById('term-load-more').classList.toggle(
+            'visible', lineCount >= _termLines - 5 && !_paneTui[_termTarget]);
     } catch(e) {}
-}
-
-function showSessionInfo() {
-    const toast = document.getElementById('session-info-toast');
-    const text = document.getElementById('session-info-text');
-    if (!_termTarget) {
-        text.textContent = '(no active session)';
-    } else {
-        const session = _termTarget.split(':')[0];
-        text.textContent = 'tmux attach -t ' + session;
-    }
-    toast.classList.add('visible');
-    if (_infoTimer) clearTimeout(_infoTimer);
-    _infoTimer = setTimeout(() => toast.classList.remove('visible'), 4000);
 }
 
 async function killSession() {
@@ -1259,9 +1318,26 @@ function _tuiPageThreshold() {
 // On-screen paging (buttons in the TUI info row).
 function tuiPage(pageUp) { _tuiSendScroll(pageUp); }
 
-function tuiJumpEnd() {
-    _tuiSendKey('End');
+// Jump to the latest output. `End` alone is not enough: Claude Code honours it,
+// but codex ignores it entirely (verified live 2026-07-28 — three Page_Ups then
+// End left the viewport exactly where it was), so the button did nothing in a
+// codex pane. Follow it with a burst of Page_Down, which every pager-style TUI
+// understands and which is a harmless no-op once already at the bottom.
+// Sequential rather than parallel: these are keystrokes, and order matters.
+const _TUI_END_PAGES = 8;
+
+async function tuiJumpEnd() {
     if (typeof showFlash === 'function') showFlash('sent', 'Jump to end');
+    _tuiSendKey('End');
+    for (let i = 0; i < _TUI_END_PAGES; i++) {
+        try {
+            await fetch('/key', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ keys: 'Page_Down', target: _termTarget }),
+            });
+        } catch (e) { return; }
+    }
 }
 
 (function _wireTuiScroll() {

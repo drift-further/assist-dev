@@ -3,7 +3,6 @@
 import logging
 import re
 import subprocess
-import threading
 import time
 
 from flask import Blueprint, jsonify, request
@@ -85,8 +84,14 @@ _SELECTED_YES_RE = re.compile(r"(?:^|\n)\s*❯\s*Yes\b", re.IGNORECASE)
 # "Enter to select · Esc to cancel"; Antigravity (Gemini) CLI uses
 # "↑/↓ Navigate · tab Amend · e edit command · ctrl+r Review". Both end the
 # interactive option block, with the volatile status/cost line sitting below.
+# OpenAI's codex CLI closes its approval block with "Press enter to confirm or
+# esc to cancel" — no separator glyph and different wording, so the three forms
+# above all miss it and the whole numbered branch was skipped. Its option 1 is
+# already marked selected ("› 1. Yes, proceed (y)"), so bare Enter confirms,
+# which is exactly what numbered-yes sends.
 _NUMBERED_FOOTER_RE = re.compile(
     r"(?:Enter to select|Esc to cancel|Navigate)\s*[·•]"
+    r"|Press enter to confirm"
 )
 
 
@@ -283,6 +288,7 @@ def _extract_summary(tail, prompt_type):
 # it would reset the countdown each tick and the prompt would never fire.
 _PROMPT_TERMINATOR_RE = re.compile(
     r"(?:Enter to select|Esc to cancel|Navigate)\s*[·•]"
+    r"|Press enter to confirm"
     r"|Allow once\s+Allow always\s+Reject"
     r"|Skip & tell the agent what to do instead"
     r"|Use arrow keys to navigate"

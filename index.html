@@ -249,11 +249,6 @@
                 </div>
             </div>
 
-            <div class="session-info-toast" id="session-info-toast">
-                <div class="info-label">connect with</div>
-                <span id="session-info-text"></span>
-            </div>
-
             <div class="git-panel" id="git-panel">
                 <div class="git-row">
                     <button class="git-btn git-status" onclick="gitStatus()">Status</button>
@@ -394,7 +389,9 @@
 
             <div class="term-display hidden" id="term-display">
                 <div class="term-info" id="term-info">
-                    <span class="term-tui-chip hidden" id="term-tui-chip" title="Full-screen TUI — pane auto-fits; swipe scrolls the app">TUI</span>
+                    <!-- Tap cycles the pane's mode: auto -> pinned -> auto.
+                         A dot means pinned (auto-detect overridden here). -->
+                    <button class="term-tui-chip hidden" id="term-tui-chip" onclick="cycleTuiMode()" title="Terminal mode — tap to override auto-detect">TUI</button>
                     <span class="term-info-cmd" id="term-info-cmd"></span>
                     <span class="term-info-dim" id="term-info-dim"></span>
                     <!-- TUI panes have no browser-side scrollback (alt screen),
@@ -513,14 +510,14 @@
     <script src="/js/ui.js?v=2"></script>
     <script src="/js/input.js?v=3"></script>
     <script src="/js/autocomplete.js?v=1"></script>
-    <script src="/js/terminal.js?v=16"></script>
-    <script src="/js/actions.js?v=5"></script>
+    <script src="/js/terminal.js?v=17"></script>
+    <script src="/js/actions.js?v=6"></script>
     <script src="/js/commands.js?v=3"></script>
     <script src="/js/container.js"></script>
     <script src="/js/studio.js?v=2"></script>
     <script src="/js/access.js?v=2"></script>
     <script src="/js/chrome.js?v=1"></script>
-    <script src="/js/monitor.js?v=3"></script>
+    <script src="/js/monitor.js?v=4"></script>
     <script src="/js/notifications.js"></script>
     <script src="/js/tabs.js?v=3"></script>
     <script src="/js/settings.js?v=5"></script>

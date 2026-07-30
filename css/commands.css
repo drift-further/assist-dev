@@ -132,10 +132,6 @@
     box-shadow: 0 0 6px rgba(0, 212, 255, 0.2);
 }
 
-/* Plus menu cmd button */
-.plus-cmd { color: var(--cyan); border-color: rgba(0, 212, 255, 0.3); }
-.plus-cmd:active { background: rgba(0, 212, 255, 0.15); }
-
 /* Plus menu skills button */
 .plus-skills { color: var(--green); border-color: rgba(48, 209, 88, 0.3); }
 .plus-skills:active { background: rgba(48, 209, 88, 0.15); }

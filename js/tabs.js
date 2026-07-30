@@ -745,9 +745,6 @@ function _applyStaleGroup() {
     _lastStaleCount = staleTabs.length;
 }
 
-// Call reorder after session data is applied
-const _origApplySessionsData = typeof _applySessionsData === 'function' ? _applySessionsData : null;
-
 // Hook into tab rendering — called after each poll updates tabs
 function _postTabRender() {
     _reorderTabsDom();
