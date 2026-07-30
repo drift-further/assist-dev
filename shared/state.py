@@ -11,6 +11,21 @@ import threading
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
+# Claude launch mode
+# ---------------------------------------------------------------------------
+# Valid launch modes. The mode -> command mapping itself lives in js/state.js
+# (CLAUDE_COMMANDS), which is what actually builds the launch string; this dict
+# is what the legacy claude_mode.txt migration in load_settings() validates
+# against. Keep the two in step.
+#
+# This MUST stay above load_settings(), which runs at import time and reads it:
+# defined below that call, a legacy claude_mode.txt made startup raise NameError.
+CLAUDE_COMMANDS = {
+    "npx": "npx @anthropic-ai/claude-code",
+    "claude": "claude",
+}
+
+# ---------------------------------------------------------------------------
 # Settings — single source of truth for all configuration
 # ---------------------------------------------------------------------------
 DEFAULT_SETTINGS = {
@@ -235,12 +250,6 @@ def _save_project_settings_locked():
         pass
 
 
-def save_project_settings():
-    """Persist per-project settings to disk."""
-    with _project_settings_lock:
-        _save_project_settings_locked()
-
-
 def get_project_settings(project):
     """Return merged defaults + project overrides (deep copy)."""
     with _project_settings_lock:
@@ -336,11 +345,6 @@ def _save_container_config_locked():
         atomic_write_json(CONTAINER_CONFIG_FILE, _container_config)
     except OSError:
         pass
-
-
-def save_container_config():
-    with _container_config_lock:
-        _save_container_config_locked()
 
 
 def get_container_config():
@@ -470,8 +474,6 @@ AUTOYES_DELAY = DEFAULT_SETTINGS["autoyes"]["default_delay"]
 # ---------------------------------------------------------------------------
 # Automate state
 # ---------------------------------------------------------------------------
-AUTOMATE_DONE_SIGNAL = "~:)Investigate done(:~"
-AUTOMATE_DONE_IDLE_SEC = 60
 IMMEDIATE_NOTICE_FILENAME = "immediatenotice.md"
 AUTOMATE_STATE_FILE = DATA_DIR / "automate_state.json"
 
@@ -494,7 +496,6 @@ automate = {
     "stop_after": "",
 }
 automate_lock = threading.Lock()
-automate_stop_event = threading.Event()
 
 # ---------------------------------------------------------------------------
 # WebSocket state
@@ -574,27 +575,3 @@ else:
 # Claude env vars to strip from tmux sessions
 CLAUDE_ENV_VARS = ("CLAUDECODE",)
 
-# ---------------------------------------------------------------------------
-# Claude launch mode — now backed by settings.json
-# ---------------------------------------------------------------------------
-CLAUDE_COMMANDS = {
-    "npx": "npx @anthropic-ai/claude-code",
-    "claude": "claude",
-}
-
-
-def get_claude_mode() -> str:
-    """Read current mode from settings."""
-    mode = get_setting("server", "claude_mode")
-    return mode if mode in CLAUDE_COMMANDS else "npx"
-
-
-def set_claude_mode(mode: str):
-    """Update mode in settings."""
-    if mode in CLAUDE_COMMANDS:
-        patch_settings({"server": {"claude_mode": mode}})
-
-
-def get_claude_cmd() -> str:
-    """Return the full command string for the current mode."""
-    return CLAUDE_COMMANDS.get(get_claude_mode(), CLAUDE_COMMANDS["npx"])

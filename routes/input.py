@@ -13,8 +13,6 @@ import shared.state as state
 from shared.tmux import (
     TMUX_KEY_MAP,
     get_clipboard,
-    set_clipboard,
-    paste_to_terminal,
     send_keys,
     tmux_send_keys,
     tmux_send_text,
@@ -30,56 +28,6 @@ from shared.utils import (
 )
 
 input_bp = Blueprint("input_bp", __name__)
-
-
-@input_bp.route("/paste", methods=["POST"])
-def paste():
-    data = request.get_json(silent=True) or {}
-    text = (data.get("text") or "").strip()
-    if not text:
-        return jsonify({"ok": False, "error": "No text provided"}), 400
-    send_enter = data.get("enter", True)
-    text = text.replace("\n", " ").replace("\r", "").strip()
-    if not text:
-        return jsonify({"ok": False, "error": "No text provided"}), 400
-    text = fix_first_word_case(text)
-
-    target = resolve_target(data)
-
-    if target and tmux_target_exists(target):
-        if not tmux_send_text(target, text):
-            return jsonify({"ok": False, "error": "tmux send-keys failed"}), 500
-        if send_enter:
-            time.sleep(0.05)
-            tmux_send_keys(target, "Enter")
-        state.touch_activity(target)
-        add_to_history(text)
-        return jsonify({"ok": True, "via": "tmux"})
-
-    if not set_clipboard(text):
-        return jsonify({"ok": False, "error": "clipboard write failed"}), 500
-    if not paste_to_terminal():
-        return jsonify({"ok": False, "error": "paste to terminal failed"}), 500
-    if send_enter:
-        time.sleep(0.05)
-        if _IS_MAC:
-            subprocess.run(["osascript", "-e", "tell application \"System Events\" to key code 36"], timeout=5)
-        else:
-            subprocess.run(["xdotool", "key", "Return"], timeout=5)
-    add_to_history(text)
-    return jsonify({"ok": True, "via": "clipboard"})
-
-
-@input_bp.route("/copy", methods=["POST"])
-def copy():
-    data = request.get_json(silent=True) or {}
-    text = (data.get("text") or "").strip()
-    if not text:
-        return jsonify({"ok": False, "error": "No text provided"}), 400
-    if not set_clipboard(text):
-        return jsonify({"ok": False, "error": "clipboard write failed"}), 500
-    add_to_history(text)
-    return jsonify({"ok": True})
 
 
 @input_bp.route("/history")

@@ -24,6 +24,5 @@
 }
 .toast.visible { transform: translateY(0); opacity: 1; }
 .toast.toast-success { border-left-color: var(--green); }
-.toast.toast-warn { border-left-color: var(--amber); }
 .toast.toast-error { border-left-color: var(--red); }
 .toast.swiped { transform: translateX(100%); opacity: 0; }

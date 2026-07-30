@@ -2,8 +2,16 @@
 // Loaded first; all other modules depend on these globals.
 
 // Settings — fetched from /api/settings on load, updated on save.
+// The one place the launch-mode → command mapping is written. It mirrors
+// CLAUDE_COMMANDS in shared/state.py; keep the two in step if a mode is added.
+const CLAUDE_COMMANDS = { npx: 'npx @anthropic-ai/claude-code', claude: 'claude' };
+
+function claudeCmdForMode(mode) {
+    return CLAUDE_COMMANDS[mode] || CLAUDE_COMMANDS.npx;
+}
+
 let SETTINGS = null;  // populated by loadSettings()
-let CLAUDE_CMD = 'npx @anthropic-ai/claude-code';  // default until settings load
+let CLAUDE_CMD = CLAUDE_COMMANDS.npx;  // default until settings load
 let _serverPid = null;
 let _serverUptime = 0;
 
@@ -15,10 +23,7 @@ async function loadSettings() {
             SETTINGS = d.settings;
             _serverPid = d.pid;
             _serverUptime = d.uptime;
-            // Derive CLAUDE_CMD for backwards compat
-            const mode = SETTINGS.server.claude_mode;
-            const cmds = { npx: 'npx @anthropic-ai/claude-code', claude: 'claude' };
-            CLAUDE_CMD = cmds[mode] || cmds.npx;
+            CLAUDE_CMD = claudeCmdForMode(SETTINGS.server.claude_mode);
         }
     } catch(e) {}
 }

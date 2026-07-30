@@ -49,8 +49,6 @@ self.addEventListener('fetch', event => {
         url.pathname.startsWith('/poll') ||
         url.pathname.startsWith('/terminal/') ||
         url.pathname.startsWith('/type') ||
-        url.pathname.startsWith('/paste') ||
-        url.pathname.startsWith('/copy') ||
         url.pathname.startsWith('/key') ||
         url.pathname.startsWith('/upload') ||
         url.pathname.startsWith('/history') ||

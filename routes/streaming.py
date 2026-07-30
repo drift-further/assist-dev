@@ -472,13 +472,17 @@ def _terminal_streamer():
                         except Exception:
                             _remove_ws_client(client["ws"])
 
-                active_keys = {f"{t}:{l}" for t, l in targets}
+                # Keys are (target, lines, tui) and the dedup cache is written as
+                # f"{target}:{lines}:{tui}" (see cache_key above) — both the arity
+                # and the format have to match, or this silently raises and the
+                # whole cleanup below is skipped for the life of the process.
+                active_keys = {f"{t}:{l}:{tui}" for t, l, tui in targets}
                 with state.ws_lock:
                     stale = [k for k in state.ws_last_content if k not in active_keys]
                     for k in stale:
                         del state.ws_last_content[k]
 
-                active_targets = {t for t, _ in targets}
+                active_targets = {t for t, _, _ in targets}
                 for d in (_stable_since, _last_redraw_time):
                     for t in [t for t in list(d) if t not in active_targets]:
                         del d[t]

@@ -133,16 +133,6 @@ def prettify_command(cmd):
     return cmd
 
 
-def set_clipboard(text):
-    """Set the system clipboard (pbcopy on macOS, xclip on Linux)."""
-    if _IS_MAC:
-        cmd = ["pbcopy"]
-    else:
-        cmd = ["xclip", "-selection", "clipboard"]
-    proc = subprocess.run(cmd, input=text, text=True, timeout=5)
-    return proc.returncode == 0
-
-
 def get_clipboard():
     """Read the system clipboard (pbpaste on macOS, xclip -o on Linux). Returns text or None."""
     try:
@@ -154,27 +144,6 @@ def get_clipboard():
         return proc.stdout if proc.returncode == 0 else None
     except Exception:
         return None
-
-
-def paste_to_terminal():
-    """Paste clipboard into the focused terminal.
-
-    macOS: osascript Command+V (requires Accessibility permissions).
-    Linux: xdotool Ctrl+Shift+V.
-    Fallback-only — prefer tmux path when a target is available.
-    """
-    if _IS_MAC:
-        proc = subprocess.run(
-            ["osascript", "-e",
-             'tell application "System Events" to keystroke "v" using command down'],
-            timeout=5,
-        )
-    else:
-        proc = subprocess.run(
-            ["xdotool", "key", "--clearmodifiers", "ctrl+shift+v"],
-            timeout=5,
-        )
-    return proc.returncode == 0
 
 
 def send_keys(keys):

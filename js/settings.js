@@ -273,8 +273,7 @@ async function _saveSetting(sectionKey, fieldKey, value) {
             SETTINGS = d.settings;
             // Update CLAUDE_CMD if mode changed
             if (sectionKey === 'server' && fieldKey === 'claude_mode') {
-                const cmds = { npx: 'npx @anthropic-ai/claude-code', claude: 'claude' };
-                CLAUDE_CMD = cmds[value] || cmds.npx;
+                CLAUDE_CMD = claudeCmdForMode(value);
             }
             // Apply font size immediately
             if (sectionKey === 'terminal' && fieldKey === 'font_size') {
@@ -344,6 +343,9 @@ async function resetAllSettings() {
             const resetData = await resetResp.json();
             if (resetData.ok) {
                 SETTINGS = resetData.settings;
+                // Bulk replacement changes claude_mode too — recompute or resume
+                // keeps sending the pre-reset command until the page reloads.
+                CLAUDE_CMD = claudeCmdForMode(SETTINGS.server.claude_mode);
                 showFlash('ok', 'Settings reset to defaults');
                 renderSettings();
             }
