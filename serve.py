@@ -112,6 +112,7 @@ def create_app():
     from routes.poll import poll_bp
     from routes.completion import completion_bp
     from routes.studio import studio_bp
+    from routes.tabstate import tabstate_bp
 
     app.register_blueprint(static_bp)
     app.register_blueprint(access_bp)
@@ -125,6 +126,7 @@ def create_app():
     app.register_blueprint(poll_bp)
     app.register_blueprint(completion_bp)
     app.register_blueprint(studio_bp)
+    app.register_blueprint(tabstate_bp)
 
     from routes.settings import settings_bp, init_start_time
 

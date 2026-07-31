@@ -92,6 +92,10 @@ async function consolidatedPoll() {
             try { localStorage.setItem('term_target', _termTarget); } catch(e) {}
         }
 
+        // Tab order/pin/snooze — must land before the tabs are rebuilt, since
+        // the session list arrives already sorted by it.
+        if (typeof _applyTabState === 'function') _applyTabState(data.tab_state);
+
         // Sessions — update tabs
         _applySessionsData(data.sessions || [], data.active_target || '');
 
@@ -374,8 +378,11 @@ function _applyScanData(scanPanes) {
             const wasRunning = tab.classList.contains('running');
             tab.classList.add('running');
             if (!wasRunning) {
-                // NEW activity wakes a snoozed tab (see _applyStaleGroup).
-                if (typeof _wakeSnoozed === 'function') _wakeSnoozed(pane.target);
+                // Waking a snoozed tab is the server's call now (see
+                // shared/tab_state.py: sweep_wakes) — this edge can't see it.
+                // The `running` class latches while a pane keeps producing
+                // output, so a tab snoozed mid-run never hits this branch at
+                // all, which is exactly why the old client-side wake failed.
                 if (typeof _applyStaleGroup === 'function') _applyStaleGroup();
             }
             if (_activityDecayTimers[pane.target]) clearTimeout(_activityDecayTimers[pane.target]);

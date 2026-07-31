@@ -12,6 +12,7 @@ from flask import Blueprint, jsonify, request
 
 import shared.auth as auth
 import shared.state as state
+import shared.tab_state as tab_state
 from routes.terminal import enrich_panes_with_agents
 from shared.tmux import prettify_command
 
@@ -241,7 +242,7 @@ def consolidated_poll():
             "-F",
             "#{session_name}\t#{window_index}\t#{pane_index}\t"
             "#{pane_current_command}\t#{pane_width}\t#{pane_height}\t"
-            "#{session_activity}\t#{pane_pid}\t#{pane_id}",
+            "#{session_activity}\t#{pane_pid}\t#{pane_id}\t#{session_created}",
         ],
         capture_output=True,
         text=True,
@@ -260,12 +261,16 @@ def consolidated_poll():
                 target = f"{parts[0]}:{parts[1]}.{parts[2]}"
                 pane_pid = parts[7] if len(parts) >= 8 else ""
                 pane_id = parts[8] if len(parts) >= 9 else ""
+                # Epoch seconds the tmux session was opened — the key behind
+                # "sort by opened date" in the tab strip.
+                created = int(parts[9]) if len(parts) >= 10 and parts[9].isdigit() else 0
                 is_subpane = parts[0] in seen_sessions
                 seen_sessions.add(parts[0])
                 panes.append(
                     {
                         "target": target,
                         "session": parts[0],
+                        "created": created,
                         "window": int(parts[1]),
                         "pane": int(parts[2]),
                         "command": parts[3],
@@ -389,6 +394,13 @@ def consolidated_poll():
     # Backfill idle_seconds onto pane objects for frontend use
     for pane in panes:
         pane["idle_seconds"] = states.get(pane["target"], {}).get("idle_seconds", 0)
+
+    # --- Tab order / pin / snooze ---
+    # Runs after the states block so the wake sweep sees fresh activity times.
+    # apply_order returns a new list, so result["sessions"] is reassigned.
+    tab_state.sweep_wakes(live_targets, now)
+    result["sessions"] = tab_state.apply_order(panes)
+    result["tab_state"] = tab_state.get_tab_state()
 
     # --- Automate status ---
     with state.automate_lock:

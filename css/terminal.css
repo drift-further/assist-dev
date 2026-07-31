@@ -435,6 +435,15 @@
     margin: 0 2px;
 }
 .autoyes-countdown.visible { display: flex; }
+/* The whole stack is bottom-anchored above the input, so a bar appearing down
+   here shoves the smart-action buttons upward — and a finger already on its way
+   down lands on an option you didn't choose. While Auto-Yes is armed the slot
+   is held open, so the countdown appears without moving anything. */
+.autoyes-countdown.reserved:not(.visible) {
+    display: flex;
+    visibility: hidden;
+    pointer-events: none;
+}
 .ay-track {
     flex: 1; height: 6px; background: rgba(255, 149, 0, 0.15);
     border-radius: 3px; overflow: hidden;
@@ -713,6 +722,26 @@
     align-self: center;
     margin: 0 2px;
 }
+
+/* Desktop drag-to-reorder. Touch keeps the hold-drag + tap-to-place paths;
+   this is the mouse one, so the cues are hover-weight rather than chunky. */
+.session-tab.dnd-source { opacity: 0.45; }
+.session-tab.dnd-before,
+.session-tab.dnd-after {
+    position: relative;
+}
+.session-tab.dnd-before::after,
+.session-tab.dnd-after::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    bottom: 2px;
+    width: 2px;
+    background: var(--amber);
+    box-shadow: 0 0 6px var(--amber);
+}
+.session-tab.dnd-before::after { left: -3px; }
+.session-tab.dnd-after::after { right: -3px; }
 
 /* Tab context menu */
 .tab-context-menu {

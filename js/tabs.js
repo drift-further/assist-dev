@@ -1,15 +1,41 @@
-// tabs.js — Tab pin/reorder: long-press context menu, touch drag reorder, localStorage persistence
+// tabs.js — Tab pin/reorder: long-press context menu, touch drag reorder,
+// server-side persistence (shared/tab_state.py) so phone and desktop agree.
 
 const _TAB_LONG_PRESS_MS = 500;
 let _tabLongPressTimer = null;
 let _tabContextTarget = null;
 
-// Persisted state
-let _pinnedTabs = JSON.parse(localStorage.getItem('assist_pinned_tabs') || '[]');
-let _tabOrder = JSON.parse(localStorage.getItem('assist_tab_order') || '[]');
-// Manually-snoozed tabs: forced into the zZ (idle) sheet regardless of idle
-// time, until tapped or until the session shows running activity again.
-let _snoozedTabs = JSON.parse(localStorage.getItem('assist_snoozed_tabs') || '[]');
+// Server-owned state, refreshed from every /poll. Pin and order are keyed by
+// SESSION (a session's panes stay contiguous so team-lead/agent grouping
+// survives a reorder); snooze is keyed by TARGET so one agent pane can be
+// tucked away on its own.
+//
+// A snoozed tab is forced into the zZ (idle) sheet regardless of idle time. It
+// leaves when tapped, or when the server's wake sweep sees the pane's
+// busy/quiet state flip (shared/tab_state.py: sweep_wakes).
+let _tabState = { pinned: [], order: [], snoozed: {}, sort: 'manual' };
+
+// Cycled from the tab context menu. 'manual' honours the dragged order; the
+// other two are recomputed server-side every poll, so a session opened later
+// lands in the right place instead of on the end.
+const _SORT_MODES = ['manual', 'name', 'created'];
+const _SORT_LABELS = { manual: 'Manual', name: 'Name', created: 'Opened' };
+
+function _sessionOf(target) { return (target || '').split(':')[0]; }
+function _isPinned(target) { return _tabState.pinned.includes(_sessionOf(target)); }
+function _isSnoozed(target) { return !!(target && _tabState.snoozed[target]); }
+
+// Called from the poll handler with the doc the server shipped alongside the
+// session list.
+function _applyTabState(doc) {
+    if (!doc) return;
+    _tabState = {
+        pinned: doc.pinned || [],
+        order: doc.order || [],
+        snoozed: doc.snoozed || {},
+        sort: doc.sort || 'manual',
+    };
+}
 
 let _staleSheetOpen = false;
 let _lastStaleCount = 0;  // for new-stale flash detection
@@ -56,21 +82,53 @@ function _onStaleRowTap(target) {
     // active tab will leave the sheet automatically (active tabs are excluded).
 }
 
-function _savePinnedTabs() {
-    try { localStorage.setItem('assist_pinned_tabs', JSON.stringify(_pinnedTabs)); } catch(e) {}
+// --- Server writes ---
+
+// Pin and order changes re-sort the strip, and the server owns that sort, so
+// each write is followed by a poll rather than a second copy of the sort in JS.
+function _saveLists(patch) {
+    Object.assign(_tabState, patch);
+    return fetch('/api/tab-state', {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(patch),
+    }).then(r => r.json()).then(d => {
+        if (d.ok) _applyTabState(d.tab_state);
+        if (typeof consolidatedPoll === 'function') consolidatedPoll();
+    }).catch(() => {});
 }
-function _saveTabOrder() {
-    try { localStorage.setItem('assist_tab_order', JSON.stringify(_tabOrder)); } catch(e) {}
+
+// Snooze doesn't reorder anything, so update locally first — the zZ sheet
+// reacts on the tap instead of five seconds later.
+function _saveSnooze(target, on) {
+    if (on) _tabState.snoozed[target] = {at: Date.now() / 1000, was_busy: false};
+    else delete _tabState.snoozed[target];
+    return fetch('/api/tab-state/snooze', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({target: target, on: !!on}),
+    }).then(r => r.json()).then(d => {
+        if (d.ok) _applyTabState(d.tab_state);
+    }).catch(() => {});
 }
-function _saveSnoozedTabs() {
-    try { localStorage.setItem('assist_snoozed_tabs', JSON.stringify(_snoozedTabs)); } catch(e) {}
-}
-// Wake a snoozed tab (idempotent): called on tap/select and on NEW activity.
-function _wakeSnoozed(target) {
-    if (_snoozedTabs.includes(target)) {
-        _snoozedTabs = _snoozedTabs.filter(t => t !== target);
-        _saveSnoozedTabs();
+
+// Session order as the strip currently shows it — the basis for both reorder
+// gestures, since order is per session, not per pane.
+function _sessionOrderFromDom() {
+    const container = document.getElementById('session-tabs');
+    if (!container) return _tabState.order.slice();
+    const seen = new Set();
+    const sessions = [];
+    for (const t of container.querySelectorAll('.session-tab')) {
+        const s = _sessionOf(t.dataset.target);
+        if (s && !seen.has(s)) { seen.add(s); sessions.push(s); }
     }
+    return sessions;
+}
+
+// Wake a snoozed tab (idempotent): called on tap/select.
+function _wakeSnoozed(target) {
+    if (_isSnoozed(target)) _saveSnooze(target, false);
 }
 
 // --- Context menu ---
@@ -79,8 +137,8 @@ function _createContextMenu(tab, x, y) {
     _removeContextMenu();
     const target = tab.dataset.target;
     const session = target.split(':')[0];
-    const isPinned = _pinnedTabs.includes(target);
-    const isSnoozed = _snoozedTabs.includes(target);
+    const isPinned = _isPinned(target);
+    const isSnoozed = _isSnoozed(target);
 
     const menu = document.createElement('div');
     menu.className = 'tab-context-menu';
@@ -92,13 +150,13 @@ function _createContextMenu(tab, x, y) {
     pinBtn.textContent = isPinned ? 'Unpin' : 'Pin';
     pinBtn.onclick = function(e) {
         e.stopPropagation();
-        if (isPinned) {
-            _pinnedTabs = _pinnedTabs.filter(t => t !== target);
-        } else {
-            _pinnedTabs.push(target);
-        }
-        _savePinnedTabs();
-        _reorderTabsDom();
+        // Pinning is per session — pinning one pane of a team would otherwise
+        // tear the lead away from its agents.
+        const pinned = isPinned
+            ? _tabState.pinned.filter(s => s !== session)
+            : _tabState.pinned.concat([session]);
+        _saveLists({pinned: pinned});
+        _applyPinMarkers();
         _removeContextMenu();
     };
 
@@ -116,15 +174,11 @@ function _createContextMenu(tab, x, y) {
             body: JSON.stringify({session: session, name: newName.trim()}),
         }).then(r => r.json()).then(data => {
             if (data.ok) {
-                // Update pinned tabs refs
+                // Pin/order/snooze refs are rewritten server-side (see
+                // routes/terminal.py: terminal_rename), so every device gets the
+                // fix-up; the poll below brings the new doc down.
                 const oldPrefix = session + ':';
                 const newPrefix = data.new + ':';
-                _pinnedTabs = _pinnedTabs.map(t => t.startsWith(oldPrefix) ? newPrefix + t.slice(oldPrefix.length) : t);
-                _savePinnedTabs();
-                _tabOrder = _tabOrder.map(t => t.startsWith(oldPrefix) ? newPrefix + t.slice(oldPrefix.length) : t);
-                _saveTabOrder();
-                _snoozedTabs = _snoozedTabs.map(t => t.startsWith(oldPrefix) ? newPrefix + t.slice(oldPrefix.length) : t);
-                _saveSnoozedTabs();
                 // Update active target
                 if (_termTarget && _termTarget.startsWith(oldPrefix)) {
                     _termTarget = newPrefix + _termTarget.slice(oldPrefix.length);
@@ -205,6 +259,19 @@ function _createContextMenu(tab, x, y) {
         _enterReorderMode(tab);
     };
 
+    // One entry that cycles Manual -> Name -> Opened rather than three, so the
+    // menu stays thumb-sized and always shows which mode is in force.
+    const sortBtn = document.createElement('button');
+    sortBtn.className = 'tab-ctx-item tab-ctx-sort';
+    sortBtn.textContent = 'Sort: ' + (_SORT_LABELS[_tabState.sort] || 'Manual');
+    sortBtn.onclick = function(e) {
+        e.stopPropagation();
+        const next = _SORT_MODES[(_SORT_MODES.indexOf(_tabState.sort) + 1) % _SORT_MODES.length];
+        _saveLists({sort: next});
+        showFlash('sent', 'Sort: ' + _SORT_LABELS[next]);
+        _removeContextMenu();
+    };
+
     // Deliberate fit — TUI panes only (they're the ones that used to auto-shrink).
     const isTui = !!(typeof _paneTui !== 'undefined' && _paneTui[target]);
     let fitBtn = null;
@@ -224,12 +291,7 @@ function _createContextMenu(tab, x, y) {
     snoozeBtn.textContent = isSnoozed ? 'Unsnooze' : 'Snooze';
     snoozeBtn.onclick = function(e) {
         e.stopPropagation();
-        if (isSnoozed) {
-            _snoozedTabs = _snoozedTabs.filter(t => t !== target);
-        } else {
-            _snoozedTabs.push(target);
-        }
-        _saveSnoozedTabs();
+        _saveSnooze(target, !isSnoozed);
         if (typeof _applyStaleGroup === 'function') _applyStaleGroup();
         _removeContextMenu();
     };
@@ -237,6 +299,7 @@ function _createContextMenu(tab, x, y) {
     menu.appendChild(pinBtn);
     menu.appendChild(renameBtn);
     menu.appendChild(reorderBtn);
+    menu.appendChild(sortBtn);
     if (fitBtn) menu.appendChild(fitBtn);
     menu.appendChild(dupeBtn);
     menu.appendChild(snoozeBtn);
@@ -392,20 +455,19 @@ function _initTabDragReorder() {
 
         // Only reorder if hold-drag was active and dragged enough
         if (wasDragging && Math.abs(_dragOffsetX) > 40) {
-            const tabs = Array.from(container.querySelectorAll('.session-tab'));
-            const idx = tabs.indexOf(tab);
             // Tab may have been removed (poll rebuild, session died) — bail
             // rather than reorder with -1 math.
+            if (!container.contains(tab)) return;
+            // A drag nudges the whole SESSION one slot, not one pane: order is
+            // per session, and the server keeps a session's panes contiguous.
+            const sessions = _sessionOrderFromDom();
+            const idx = sessions.indexOf(_sessionOf(tab.dataset.target));
             if (idx === -1) return;
             const direction = _dragOffsetX > 0 ? 1 : -1;
-            const newIdx = Math.max(0, Math.min(tabs.length - 1, idx + direction));
+            const newIdx = Math.max(0, Math.min(sessions.length - 1, idx + direction));
             if (newIdx !== idx) {
-                const targets = tabs.map(t => t.dataset.target);
-                const [moved] = targets.splice(idx, 1);
-                targets.splice(newIdx, 0, moved);
-                _tabOrder = targets;
-                _saveTabOrder();
-                _reorderTabsDom();
+                sessions.splice(newIdx, 0, sessions.splice(idx, 1)[0]);
+                _saveLists({order: sessions});
             }
         }
     }, {passive: true});
@@ -424,6 +486,68 @@ function _initTabDragReorder() {
     }, {passive: true});
 }
 
+// --- Desktop drag reorder (HTML5 DnD; touch uses the hold-drag above) ---
+
+let _dndSession = null;  // session being dragged with a mouse
+
+function _initTabDesktopDrag() {
+    const container = document.getElementById('session-tabs');
+    if (!container) return;
+
+    container.addEventListener('dragstart', function(e) {
+        const tab = e.target.closest('.session-tab');
+        if (!tab) return;
+        _dndSession = _sessionOf(tab.dataset.target);
+        tab.classList.add('dnd-source');
+        e.dataTransfer.effectAllowed = 'move';
+        // Firefox refuses to start a drag without payload.
+        try { e.dataTransfer.setData('text/plain', _dndSession); } catch (err) {}
+    });
+
+    container.addEventListener('dragover', function(e) {
+        if (!_dndSession) return;
+        e.preventDefault();  // required, or the drop never fires
+        e.dataTransfer.dropEffect = 'move';
+        const tab = e.target.closest('.session-tab');
+        _clearDropMarkers();
+        if (!tab || _sessionOf(tab.dataset.target) === _dndSession) return;
+        // Drop before or after, depending on which half the cursor is over.
+        const box = tab.getBoundingClientRect();
+        tab.classList.add(e.clientX < box.left + box.width / 2 ? 'dnd-before' : 'dnd-after');
+    });
+
+    container.addEventListener('drop', function(e) {
+        if (!_dndSession) return;
+        e.preventDefault();
+        const marked = container.querySelector('.dnd-before, .dnd-after');
+        const source = _dndSession;
+        _endDesktopDrag();
+        if (!marked) return;
+        const anchor = _sessionOf(marked.dataset.target);
+        if (anchor === source) return;
+        const after = marked.classList.contains('dnd-after');
+        const sessions = _sessionOrderFromDom().filter(s => s !== source);
+        let at = sessions.indexOf(anchor);
+        if (at === -1) return;
+        sessions.splice(after ? at + 1 : at, 0, source);
+        _saveLists({order: sessions});   // implies sort: manual, server-side
+        showFlash('sent', 'Tab moved');
+    });
+
+    container.addEventListener('dragend', _endDesktopDrag);
+}
+
+function _clearDropMarkers() {
+    document.querySelectorAll('.dnd-before, .dnd-after')
+        .forEach(t => t.classList.remove('dnd-before', 'dnd-after'));
+}
+
+function _endDesktopDrag() {
+    _dndSession = null;
+    _clearDropMarkers();
+    document.querySelectorAll('.dnd-source').forEach(t => t.classList.remove('dnd-source'));
+}
+
 // --- Click-to-place reorder mode ---
 
 let _reorderModeTab = null;  // the tab being repositioned
@@ -432,7 +556,7 @@ let _reorderCleanup = null;  // function to tear down listeners + visuals
 // True while a tab drag or reorder placement is in progress — the 5s poll
 // checks this and skips its tab-strip rebuild (app.js _applySessionsData).
 function _tabsInteractionActive() {
-    return !!(_dragTab || _reorderModeTab);
+    return !!(_dragTab || _reorderModeTab || _dndSession);
 }
 
 function _enterReorderMode(tab) {
@@ -517,82 +641,49 @@ function _buildDropZones(container, sourceTab) {
 }
 
 function _placeTabAtIndex(container, sourceTab, insertIdx, tabsAtTimeOfBuild) {
-    // Compute new order from current tab positions, excluding the source
-    const currentTabs = Array.from(container.querySelectorAll('.session-tab'));
-    const targets = currentTabs.filter(t => t !== sourceTab).map(t => t.dataset.target);
+    // Zones sit between tabs, so slot i means "in front of whichever tab was at
+    // index i". Resolve that to a SESSION, since order is per session.
+    const sourceSession = _sessionOf(sourceTab.dataset.target);
+    const before = insertIdx < tabsAtTimeOfBuild.length
+        ? _sessionOf(tabsAtTimeOfBuild[insertIdx].dataset.target)
+        : null;
 
-    // Adjust insert index for removal of source
-    const sourceWasAt = tabsAtTimeOfBuild.indexOf(sourceTab);
-    let adjustedIdx = insertIdx;
-    if (sourceWasAt !== -1 && sourceWasAt < insertIdx) adjustedIdx--;
-    adjustedIdx = Math.max(0, Math.min(targets.length, adjustedIdx));
+    const sessions = _sessionOrderFromDom().filter(s => s !== sourceSession);
+    let at = (before && before !== sourceSession) ? sessions.indexOf(before) : -1;
+    if (at === -1) at = sessions.length;  // dropped past the end, or onto itself
+    sessions.splice(at, 0, sourceSession);
 
-    targets.splice(adjustedIdx, 0, sourceTab.dataset.target);
-
-    // Merge with full tab order (preserve any tabs not currently visible)
-    const mainTabs = document.getElementById('session-tabs');
-    const allTargets = Array.from(mainTabs.querySelectorAll('.session-tab')).map(t => t.dataset.target);
-    // Build complete order: tabs in `targets` first at their positions, others keep relative order
-    const ordered = [];
-    const seen = new Set();
-    // Put the container's tabs in their new order
-    for (const t of targets) {
-        ordered.push(t);
-        seen.add(t);
-    }
-    // Append any tabs from other containers (stale group etc) not already placed
-    for (const t of allTargets) {
-        if (!seen.has(t)) {
-            ordered.push(t);
-            seen.add(t);
-        }
-    }
-
-    _tabOrder = ordered;
-    _saveTabOrder();
-
+    _saveLists({order: sessions});
     _exitReorderMode();
-    _reorderTabsDom();
-    _applyStaleGroup();
 
     showFlash('sent', 'Tab moved');
 }
 
-// --- Reorder DOM tabs based on pinned + order state ---
+// --- Pin markers ---
+// The server hands the session list down already sorted (shared/tab_state.py:
+// apply_order), so the DOM is in the right order by the time it is built. All
+// that is left here is the pinned styling and the divider.
 
-function _reorderTabsDom() {
+function _applyPinMarkers() {
     const container = document.getElementById('session-tabs');
     if (!container) return;
     const tabs = Array.from(container.querySelectorAll('.session-tab'));
     if (tabs.length === 0) return;
 
-    // Sort: pinned first, then by saved order, then by current DOM order
-    tabs.sort((a, b) => {
-        const aPin = _pinnedTabs.includes(a.dataset.target) ? 0 : 1;
-        const bPin = _pinnedTabs.includes(b.dataset.target) ? 0 : 1;
-        if (aPin !== bPin) return aPin - bPin;
-
-        const aIdx = _tabOrder.indexOf(a.dataset.target);
-        const bIdx = _tabOrder.indexOf(b.dataset.target);
-        if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
-        if (aIdx !== -1) return -1;
-        if (bIdx !== -1) return 1;
-        return 0;
-    });
-
-    // Update pin visual markers
     let hadPinned = false;
     for (const tab of tabs) {
-        const isPinned = _pinnedTabs.includes(tab.dataset.target);
+        const isPinned = _isPinned(tab.dataset.target);
         tab.classList.toggle('pinned', isPinned);
         if (isPinned) hadPinned = true;
-        container.appendChild(tab);
+        // Desktop drag-to-reorder. Set here rather than in the two renderers so
+        // both paths get it from one place.
+        tab.draggable = true;
     }
 
     // Add/remove pin divider
     let divider = container.querySelector('.pin-divider');
     if (hadPinned) {
-        const firstUnpinned = tabs.find(t => !_pinnedTabs.includes(t.dataset.target));
+        const firstUnpinned = tabs.find(t => !_isPinned(t.dataset.target));
         if (firstUnpinned) {
             if (!divider) {
                 divider = document.createElement('span');
@@ -638,15 +729,15 @@ function _applyStaleGroup() {
 
     const staleTabs = allTabs.filter(t => {
         const target = t.dataset.target;
-        if (_pinnedTabs.includes(target)) return false;
+        if (_isPinned(target)) return false;
         // Manual snooze forces the tab into ZZ even when it's the active or a
         // running tab — snoozing the tab you're looking at is the main use
-        // case. A snoozed tab leaves ZZ only when tapped/selected
-        // (_onStaleRowTap / selectTab) or when NEW activity arrives
-        // (_wakeSnoozed, fired from the running-transition hooks in
-        // app.js / terminal.js) — NOT from its active/running state at the
-        // moment it was snoozed.
-        if (_snoozedTabs.includes(target)) return true;
+        // case. A snoozed tab leaves ZZ when tapped/selected (_onStaleRowTap /
+        // selectTab), or when the server's wake sweep sees the pane's
+        // busy/quiet state flip: snooze a working pane and it returns when it
+        // finishes, snooze a quiet one and it returns when it starts up again
+        // (shared/tab_state.py: sweep_wakes).
+        if (_isSnoozed(target)) return true;
         if (t.classList.contains('active')) return false;
         if (t.classList.contains('running')) return false;
         const idle = parseInt(t.dataset.idleSeconds || '0', 10);
@@ -697,7 +788,7 @@ function _applyStaleGroup() {
 
         const idleSec = parseInt(tab.dataset.idleSeconds || '0', 10);
         const idle = document.createElement('span');
-        if (_snoozedTabs.includes(target)) {
+        if (_isSnoozed(target)) {
             // Manually snoozed — a real idle time would read misleadingly low
             // (e.g. "0m") in an idle list, so show the snooze glyph instead.
             idle.className = 'row-snooze';
@@ -747,7 +838,7 @@ function _applyStaleGroup() {
 
 // Hook into tab rendering — called after each poll updates tabs
 function _postTabRender() {
-    _reorderTabsDom();
+    _applyPinMarkers();
     // Stale group is applied later, after _applyStatesData populates
     // dataset.idleSeconds — calling it here would always see idle=0 and
     // bounce stale tabs back into the strip on every poll.
@@ -769,6 +860,48 @@ function _postTabRender() {
     }
 }
 
+// --- One-time migration off localStorage ---
+// Pin/order/snooze used to be per-device. Hand whatever this browser still
+// holds to the server once, then drop the keys. The server ignores the import
+// if it already has state, so the first device to sync wins and a second one
+// can't clobber it.
+
+const _LEGACY_TAB_KEYS = ['assist_pinned_tabs', 'assist_tab_order', 'assist_snoozed_tabs'];
+
+function _dropLegacyTabKeys() {
+    _LEGACY_TAB_KEYS.forEach(k => { try { localStorage.removeItem(k); } catch(e) {} });
+}
+
+function _migrateLegacyTabState() {
+    const read = (key) => {
+        try {
+            const parsed = JSON.parse(localStorage.getItem(key) || '[]');
+            return Array.isArray(parsed) ? parsed.filter(v => typeof v === 'string' && v) : [];
+        } catch(e) { return []; }
+    };
+    const payload = {
+        pinned: read('assist_pinned_tabs'),
+        order: read('assist_tab_order'),
+        snoozed: read('assist_snoozed_tabs'),
+    };
+    if (!payload.pinned.length && !payload.order.length && !payload.snoozed.length) {
+        _dropLegacyTabKeys();
+        return;
+    }
+    fetch('/api/tab-state/import', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload),
+    }).then(r => r.json()).then(d => {
+        if (!d.ok) return;
+        _applyTabState(d.tab_state);
+        _dropLegacyTabKeys();
+        if (typeof consolidatedPoll === 'function') consolidatedPoll();
+    }).catch(() => {});  // keep the keys; retry on the next load
+}
+
 // Initialize on load
 _initTabLongPress();
 _initTabDragReorder();
+_initTabDesktopDrag();
+_migrateLegacyTabState();

@@ -449,6 +449,9 @@ async function loadSessions() {
     try {
         const resp = await fetch('/terminal/sessions');
         const data = await resp.json();
+        // Arrives sorted by the server's tab state — apply the doc first so the
+        // pin markers this render sets are in step with the order.
+        if (typeof _applyTabState === 'function') _applyTabState(data.tab_state);
         const panes = data.sessions || [];
         const container = document.getElementById('session-tabs');
         const current = _termTarget || data.active_target || '';
@@ -535,6 +538,9 @@ async function loadSessions() {
             updateTmuxIndicator();
             document.getElementById('term-display').classList.remove('hidden');
         }
+
+        // Same hook _applySessionsData runs — pin markers on this render path too.
+        if (typeof _postTabRender === 'function') _postTabRender();
     } catch(e) {}
 }
 
@@ -815,8 +821,8 @@ function _doRender(content, info, target) {
             const wasRunning = tab.classList.contains('running');
             tab.classList.add('running');
             if (!wasRunning) {
-                // NEW activity wakes a snoozed tab (see _applyStaleGroup).
-                if (typeof _wakeSnoozed === 'function') _wakeSnoozed(target);
+                // Waking a snoozed tab is the server's call now — see
+                // shared/tab_state.py: sweep_wakes.
                 if (typeof _applyStaleGroup === 'function') _applyStaleGroup();
             }
             if (_activityDecayTimers[target]) clearTimeout(_activityDecayTimers[target]);

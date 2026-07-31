@@ -10,6 +10,7 @@ from pathlib import Path
 from flask import Blueprint, jsonify, request
 
 import shared.state as state
+import shared.tab_state as tab_state
 from shared.tmux import (
     capture_pane,
     detect_venv,
@@ -288,7 +289,7 @@ def terminal_sessions():
             "list-panes",
             "-a",
             "-F",
-            "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_current_command}\t#{pane_width}\t#{pane_height}\t#{session_activity}\t#{pane_pid}\t#{pane_id}",
+            "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_current_command}\t#{pane_width}\t#{pane_height}\t#{session_activity}\t#{pane_pid}\t#{pane_id}\t#{session_created}",
         ],
         capture_output=True,
         text=True,
@@ -309,12 +310,16 @@ def terminal_sessions():
             idle_seconds = int(time.time()) - activity if activity else 0
             pane_pid = parts[7] if len(parts) >= 8 else ""
             pane_id = parts[8] if len(parts) >= 9 else ""
+            # Epoch seconds the tmux session was opened — the key behind
+            # "sort by opened date" in the tab strip.
+            created = int(parts[9]) if len(parts) >= 10 and parts[9].isdigit() else 0
             is_subpane = parts[0] in seen_sessions
             seen_sessions.add(parts[0])
             panes.append(
                 {
                     "target": target,
                     "session": parts[0],
+                    "created": created,
                     "window": int(parts[1]),
                     "pane": int(parts[2]),
                     "command": parts[3],
@@ -330,7 +335,15 @@ def terminal_sessions():
 
     enrich_panes_with_agents(panes)
 
-    return jsonify({"sessions": panes, "active_target": state.tmux_target})
+    # Same ordering /poll applies, so the first render before a poll lands is
+    # already correct rather than briefly showing raw tmux order.
+    return jsonify(
+        {
+            "sessions": tab_state.apply_order(panes),
+            "active_target": state.tmux_target,
+            "tab_state": tab_state.get_tab_state(),
+        }
+    )
 
 
 @terminal_bp.route("/terminal/target", methods=["POST"])
@@ -516,6 +529,10 @@ def terminal_rename():
     if state.tmux_target and state.tmux_target.startswith(f"{old_name}:"):
         suffix = state.tmux_target[len(old_name) :]
         state.tmux_target = new_name + suffix
+
+    # Carry pin/order/snooze across the rename. Server-side, so every connected
+    # device sees the fix-up, not just the one that issued the rename.
+    tab_state.rename_session(old_name, new_name)
 
     return jsonify(
         {"ok": True, "old": old_name, "new": new_name, "target": state.tmux_target}

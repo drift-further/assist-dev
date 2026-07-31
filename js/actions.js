@@ -145,6 +145,9 @@ function updateAutoYesUI(session) {
         btn.classList.toggle('active', active);
         btn.textContent = active ? '\u26A1 Auto-Yes' : 'Auto-Yes';
     }
+    // Arming/disarming is the only moment the bar's slot may change size, and
+    // it happens on a deliberate tap rather than mid-prompt.
+    _syncCountdownReservation();
 }
 
 // Sync auto-yes state from server on load / tab switch
@@ -194,12 +197,25 @@ function handleAutoYesWsMessage(msg) {
     }
 }
 
+// Hold the countdown bar's slot open whenever Auto-Yes is armed for the session
+// on screen. Without it the bar appearing mid-prompt lifts the smart-action
+// buttons by its own height, and a tap already in flight lands on the wrong
+// option. See .autoyes-countdown.reserved in css/terminal.css.
+function _syncCountdownReservation() {
+    const bar = document.getElementById('autoyes-countdown');
+    if (!bar) return;
+    const session = (_smartActionTarget || _termTarget || '').split(':')[0];
+    const armed = !!session && typeof isAutoYes === 'function' && isAutoYes(session);
+    bar.classList.toggle('reserved', armed);
+}
+
 let _countdownTimer = null;
 function _renderAutoYesCountdown() {
     const bar = document.getElementById('autoyes-countdown');
     if (!bar) return;
 
     if (_countdownTimer) { clearInterval(_countdownTimer); _countdownTimer = null; }
+    _syncCountdownReservation();
 
     if (!_autoyesCountdown) {
         bar.classList.remove('visible');
@@ -387,7 +403,12 @@ const SMART_PATTERNS = [
             }
             const optPattern = /^\s*(?:[^\d\s]\s*)?(\d+)[\.\)]\s+\S/;
             if (footerIdx >= 0 && (lines.length - 1 - footerIdx) <= FOOTER_DEPTH_MAX) {
-                let sepIdx = Math.max(0, footerIdx - 10);
+                // 10 only covered short options. codex's "Yes, and don't ask
+                // again for commands that start with `<command>`" embeds the
+                // command and wraps 25-30 rows, pushing option 1 out of range so
+                // only one option was counted and the bar never appeared.
+                // Mirrors _OPTION_REGION_LOOKBACK in routes/autoyes.py.
+                let sepIdx = Math.max(0, footerIdx - 60);
                 for (let i = footerIdx - 1; i >= sepIdx; i--) {
                     if (/^[\s]*─{10,}/.test(lines[i])) { sepIdx = i + 1; break; }
                 }
