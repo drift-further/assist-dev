@@ -322,24 +322,26 @@ function _resetSudoTap() {
     _updateSudoSendBtn();
 }
 
-async function _sendSudoPasswordToTerminal() {
+async function _sendSudoPasswordToTerminal(target = getInputTarget()) {
     // Server reads the stored password and types it into the pane \u2014
     // the password never travels to the browser or into history.
     try {
         const resp = await fetch('/sudo-send', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ target: getInputTarget() }),
+            body: JSON.stringify({ target }),
         });
         const data = await resp.json();
         if (data.ok) {
             showFlash('sent', 'Sudo sent');
+            return true;
         } else {
             showFlash('error', data.error || 'Failed');
         }
     } catch (e) {
         showFlash('error', 'Offline');
     }
+    return false;
 }
 
 async function doSudoSend() {

@@ -895,7 +895,9 @@
     right: 0;
     bottom: 0;
     width: 100vw;
-    max-height: 60vh;
+    /* Taller than the old idle-only sheet: this lists every tab, so a long
+       session list is the normal case rather than the exception. */
+    max-height: 70vh;
     background: var(--bg);
     border-top: 1px solid rgba(0, 212, 255, 0.2);
     transform: translateY(100%);
@@ -983,6 +985,47 @@
 .stale-sheet-row .row-dot.cyan { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
 .stale-sheet-row .row-dot.amber { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
 .stale-sheet-row .row-dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+/* No state to report — still occupies the column so names stay aligned. */
+.stale-sheet-row .row-dot.none { background: rgba(140,140,140,0.25); }
+
+/* The sheet lists every tab, so each row has to say where that tab is:
+   currently viewed, or tucked out of the strip into zZ. */
+.stale-sheet-row.is-active { background: rgba(0, 212, 255, 0.08); }
+.stale-sheet-row.is-active .row-name { color: var(--cyan); }
+.stale-sheet-row.is-tucked .row-name { color: rgba(0, 255, 65, 0.45); }
+/* Auto-tuck switch — lives in the sheet header because that is where you
+   notice tabs have gone missing from the strip. */
+.stale-sheet-tuck {
+    margin-left: auto;
+    margin-right: 10px;
+    padding: 4px 8px;
+    background: transparent;
+    border: 1px solid rgba(0, 212, 255, 0.3);
+    border-radius: 4px;
+    color: var(--cyan);
+    font-family: var(--font);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    white-space: nowrap;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.stale-sheet-tuck.is-off {
+    border-color: rgba(191, 90, 242, 0.45);
+    color: var(--purple);
+}
+.stale-sheet-tuck:active { background: rgba(0, 212, 255, 0.10); }
+
+.stale-sheet-sub {
+    margin-left: 8px;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.6px;
+    color: rgba(140,140,140,0.6);
+    text-transform: none;
+}
 
 /* Mode chip: TUI (full-screen alternate-screen app) vs STD (normal pane).
    Also the control — tap cycles auto -> pinned -> auto. Purple = auto-detected

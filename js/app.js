@@ -146,6 +146,14 @@ async function consolidatedPoll() {
         }
     } catch (e) {
         dot.className = 'status-dot err';
+        // An aborted or failed poll leaves the tab strip as it was, which on a
+        // fresh load is empty — the app then looks sessionless until something
+        // else renders tabs. /terminal/sessions is the cheap path that never
+        // does per-pane work: the strip may be stale, never blank.
+        if (typeof loadSessions === 'function' &&
+            !document.querySelector('#session-tabs .session-tab')) {
+            loadSessions();
+        }
     }
 }
 
@@ -351,7 +359,11 @@ function _applyScanData(scanPanes) {
         const isActive = _termOpen && pane.target === _termTarget;
         if (isActive) continue;
 
-        const detected = detectSmartActions(stripAnsi(pane.tail), pane.target);
+        const detected = detectSmartActions(
+            stripAnsi(pane.tail),
+            pane.target,
+            pane.agent_kind
+        );
         const tab = document.querySelector(`.session-tab[data-target="${CSS.escape(pane.target)}"]`);
 
         if (detected) {

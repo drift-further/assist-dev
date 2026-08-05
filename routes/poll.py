@@ -13,15 +13,15 @@ from flask import Blueprint, jsonify, request
 import shared.auth as auth
 import shared.state as state
 import shared.tab_state as tab_state
-from routes.terminal import enrich_panes_with_agents
+from shared.agent_identity import (
+    _VERSION_CMD_RE,
+    refine_with_content,
+    resolve_process,
+)
 from shared.tmux import prettify_command
+from routes.terminal import enrich_panes_with_agents
 
 poll_bp = Blueprint("poll_bp", __name__)
-
-# Claude Code native installs run as version-named binaries (e.g. `2.1.206`),
-# so pane_current_command for a spawned subagent pane is a bare version string.
-_VERSION_CMD_RE = re.compile(r"\d+(?:\.\d+){1,3}")
-
 
 def _find_project_dir(cwd):
     """Find the nearest project root for a tmux pane cwd."""
@@ -285,6 +285,14 @@ def consolidated_poll():
 
         enrich_panes_with_agents(panes)
 
+    process_kinds = {}
+    for pane in panes:
+        process_kind = resolve_process(
+            pane["target"], pane.get("pane_pid"), pane.get("command", "")
+        )
+        process_kinds[pane["target"]] = process_kind
+        pane["agent_kind"] = process_kind or "unknown"
+
     result["sessions"] = panes
     result["active_target"] = state.tmux_target
 
@@ -303,6 +311,8 @@ def consolidated_poll():
         )
         if cap.returncode == 0:
             tail = cap.stdout.rstrip("\n")
+            agent_kind = refine_with_content(process_kinds.get(target), tail)
+            pane["agent_kind"] = agent_kind
             if tail:
                 content_hash = hashlib.md5(tail.encode()).hexdigest()
                 with state._activity_lock:
@@ -318,12 +328,15 @@ def consolidated_poll():
                         "target": target,
                         "session": pane["session"],
                         "command": pane["command"],
+                        "agent_kind": agent_kind,
                         "tail": tail,
                     }
                 )
     result["scan"] = scan_results
 
     # Clean up stale targets no longer in tmux
+    if proc.returncode == 0:
+        tab_state.sweep_agent_declarations(live_targets)
     with state._activity_lock:
         for stale in set(state.pane_content_hash) - live_targets:
             state.pane_content_hash.pop(stale, None)

@@ -659,10 +659,10 @@ function _autoTuiInfo(info) {
     if (!info || !info.alternate_on || !info.command) return false;
     if (_TUI_SHELLS.includes(info.command)) return false;
     // Claude Code panes are never TUI-managed even when they flip to the
-    // alternate screen — deliberately-sized claude panes must not be auto-fit
-    // (user decision 2026-07-10). command_display folds version-named
-    // binaries (e.g. 2.1.206) into 'claude'.
-    if ((info.command_display || info.command) === 'claude') return false;
+    // alternate screen — deliberately-sized claude panes must not be auto-fit.
+    // Identity comes from the process tree so npx-launched Claude is covered
+    // even though tmux reports node.
+    if (info.agent_kind === 'claude') return false;
     return true;
 }
 
@@ -866,7 +866,13 @@ function _doRender(content, info, target) {
         'visible', lineCount >= _termLines - 5 && !_paneTui[target || _termTarget]);
 
     // Smart actions always run (user needs to respond to prompts quickly)
-    const detected = detectSmartActions(stripAnsi(content), target || _termTarget);
+    const actionTarget = target || _termTarget;
+    const actionInfo = _paneInfo[actionTarget];
+    const detected = detectSmartActions(
+        stripAnsi(content),
+        actionTarget,
+        actionInfo && actionInfo.agent_kind
+    );
     renderSmartActions(detected);
     _updateSudoSendBtn();
 }
@@ -1117,7 +1123,12 @@ function resumeTerminal() {
         _termLastContent = _termLatestContent;
         display.scrollTop = display.scrollHeight;
         // Re-detect smart actions after resume
-        const detected = detectSmartActions(stripAnsi(_termLatestContent), _termTarget);
+        const info = _paneInfo[_termTarget];
+        const detected = detectSmartActions(
+            stripAnsi(_termLatestContent),
+            _termTarget,
+            info && info.agent_kind
+        );
         renderSmartActions(detected);
     }
 }

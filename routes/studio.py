@@ -41,11 +41,50 @@ _snapshot_lock = threading.Lock()
 # Only one refresh may run at a time: the refresher thread and a concurrent
 # /studio/test would otherwise publish their snapshots out of order.
 _refresh_lock = threading.Lock()
+# repo_path -> os.path.realpath(repo_path). A project can live on a network
+# mount, and realpath() lstats every component: when that mount's server is
+# gone the kernel blocks for seconds per path and no timeout interrupts it.
+# Resolving the project list inside _match_project put that cost in every 5s
+# /poll, pushing the poll past the frontend's abort and leaving the tab strip
+# empty. Only the refresher thread resolves; request handlers read this memo
+# and never touch the filesystem for it.
+_repo_real = {}
+_repo_real_lock = threading.Lock()
 # question_id -> time answered. An inbox fetch that began BEFORE an answer
 # committed is still in flight; without this it republishes the answered
 # question and resurrects the badge for a whole cycle.
 _answered_recently = {}
 _ANSWERED_TTL = 120.0
+
+
+def _resolved_repo_path(rp):
+    """Memoized realpath of a repo_path. Read-only — NEVER resolves.
+
+    A miss falls back to lexical normalisation: right for every local path,
+    merely imprecise for an unresolved symlink until the refresher fills the
+    memo in, and never a request thread wedged in the kernel.
+    """
+    with _repo_real_lock:
+        hit = _repo_real.get(rp)
+    return hit if hit is not None else os.path.normpath(rp)
+
+
+def _warm_repo_paths(projects):
+    """Resolve any repo_path not yet memoized. Refresher thread ONLY — this is
+    the call that can block on a dead network mount."""
+    pending = []
+    with _repo_real_lock:
+        for p in projects:
+            rp = p.get("repo_path")
+            if rp and rp not in _repo_real:
+                pending.append(rp)
+    for rp in pending:
+        try:
+            real = os.path.realpath(rp)
+        except OSError:
+            real = os.path.normpath(rp)
+        with _repo_real_lock:
+            _repo_real[rp] = real
 
 
 def _prune_answered():
@@ -188,6 +227,13 @@ def studio_refresher():
                 delay = _INBOX_INTERVAL if refresh_once() == "connected" else _BACKOFF_INTERVAL
         except Exception:
             delay = _BACKOFF_INTERVAL
+        # Outside every lock and after the snapshot is published: a dead mount
+        # costs seconds per path and must not hold up the connection state, the
+        # inbox, or a concurrent /studio/test. Each path resolves once.
+        try:
+            _warm_repo_paths(client.cached_projects())
+        except Exception:
+            pass
         time.sleep(delay)
 
 
@@ -222,7 +268,7 @@ def _match_project(cwd, projects):
         rp = p.get("repo_path")
         if not rp:
             continue
-        rp_real = os.path.realpath(rp)
+        rp_real = _resolved_repo_path(rp)
         if cwd_real == rp_real or cwd_real.startswith(rp_real + os.sep):
             if len(rp_real) > best_len:
                 best, best_len = p, len(rp_real)

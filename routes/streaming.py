@@ -7,10 +7,9 @@ import threading
 import time
 
 import shared.state as state
+from shared.agent_identity import _has_wrapper_descendant, resolve_process
 from shared.security import origin_allowed
 from shared.tmux import (
-    _NATIVE_TUI_COMMS,
-    _has_wrapper_descendant,
     capture_pane,
     set_ws_send_timeout,
     tmux_exact_target,
@@ -125,8 +124,9 @@ def _force_redraw(target):
             saved_activity = state.pane_last_activity.get(target)
 
         is_wrapper = _has_wrapper_descendant(target, pane_pid)
+        agent_kind = resolve_process(target, pane_pid, cmd)
 
-        if is_wrapper or cmd in _NATIVE_TUI_COMMS:
+        if is_wrapper or agent_kind == "claude":
             # Wrapper TUI (e.g. claude inside docker via claude-mount.sh):
             # the in-container TUI's foreground pty is several hops from the
             # host pane, so SIGWINCH-via-resize can't reach it. Ctrl+L does,

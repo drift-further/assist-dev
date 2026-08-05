@@ -46,7 +46,17 @@ def create_app():
     # allowlist, and nginx restricts it to the container subnet.
     # /health is a liveness probe (assist-ctl polls it to decide whether a
     # restart succeeded) and carries no data worth gating.
-    _AUTH_EXEMPT = {"static_bp.login", "poll_bp.cli_proxy", "poll_bp.health"}
+    # The device-approval pair is exempt for the same reason /login is: the
+    # caller has no token yet. Both are fenced inside shared.auth by the LAN
+    # allowlist, a pending cap, a per-IP cooldown and a single-use claim, and
+    # neither can reach a command-exec surface.
+    _AUTH_EXEMPT = {
+        "static_bp.login",
+        "poll_bp.cli_proxy",
+        "poll_bp.health",
+        "access_bp.access_request",
+        "access_bp.access_request_status",
+    }
 
     @app.before_request
     def _require_auth():

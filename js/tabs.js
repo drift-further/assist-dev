@@ -698,6 +698,21 @@ function _applyPinMarkers() {
 
 function _getStaleThreshold() { return SETTINGS ? SETTINGS.ui.stale_tab_threshold_sec : 3600; }
 
+// Idle-based tucking is optional. Off means every pane stays in the strip and
+// the zZ sheet holds only what was snoozed by hand. Default on, including
+// before SETTINGS has loaded.
+function _autoTuckEnabled() { return !SETTINGS || SETTINGS.ui.idle_tab_tucking !== 'off'; }
+
+// Flip it from the pull-out header — the place you actually notice tabs are
+// missing — rather than only from the settings panel.
+function toggleIdleTucking() {
+    const next = _autoTuckEnabled() ? 'off' : 'on';
+    if (typeof _saveSetting !== 'function') return;
+    Promise.resolve(_saveSetting('ui', 'idle_tab_tucking', next))
+        .then(() => _applyStaleGroup())
+        .catch(() => {});
+}
+
 function _applyStaleGroup() {
     const container = document.getElementById('session-tabs');
     const sheetBody = document.getElementById('stale-sheet-body');
@@ -714,6 +729,16 @@ function _applyStaleGroup() {
     // running, the lead and ALL its children stay in the strip.
     const threshold = _getStaleThreshold();
     const allTabs = Array.from(container.querySelectorAll('.session-tab'));
+    if (allTabs.length === 0) {
+        // No sessions at all — nothing to list and nothing to open.
+        sheetBody.innerHTML = '';
+        if (sheetCount) sheetCount.textContent = '0';
+        const emptySub = document.getElementById('stale-sheet-sub');
+        if (emptySub) emptySub.textContent = '';
+        if (_staleSheetOpen) closeStaleSheet();
+        _lastStaleCount = 0;
+        return;
+    }
 
     // Build a session -> [tabs] map so we can check "any child running"
     const bySession = {};
@@ -738,8 +763,16 @@ function _applyStaleGroup() {
         // finishes, snooze a quiet one and it returns when it starts up again
         // (shared/tab_state.py: sweep_wakes).
         if (_isSnoozed(target)) return true;
+        // Idle tucking switched off: a hand-snoozed tab still hides (above),
+        // but nothing gets tucked away just for going quiet.
+        if (!_autoTuckEnabled()) return false;
         if (t.classList.contains('active')) return false;
         if (t.classList.contains('running')) return false;
+        // A pane waiting on a prompt produces no output, so its idle clock runs
+        // — the tab you most need to see is the one that ages into ZZ fastest.
+        // Explicit snooze above still wins; this only covers the automatic
+        // idle-threshold sweep.
+        if (t.classList.contains('has-prompt')) return false;
         const idle = parseInt(t.dataset.idleSeconds || '0', 10);
         if (idle < threshold) return false;
         // Team-lead/agent unit: if the session has any running child, keep
@@ -747,13 +780,6 @@ function _applyStaleGroup() {
         const session = (target || '').split(':')[0];
         if (sessionHasRunning[session]) return false;
         return true;
-    });
-
-    // Sort by idle-time descending (most-recently-stale first)
-    staleTabs.sort((a, b) => {
-        const ai = parseInt(a.dataset.idleSeconds || '0', 10);
-        const bi = parseInt(b.dataset.idleSeconds || '0', 10);
-        return ai - bi;  // smaller idle = more recent
     });
 
     // Hide/show tabs via class — never .remove() — so this function stays
@@ -764,58 +790,35 @@ function _applyStaleGroup() {
     const staleSet = new Set(staleTabs);
     allTabs.forEach(t => t.classList.toggle('stale-tucked', staleSet.has(t)));
 
+    // The sheet lists EVERY tab, in strip order — not just the tucked ones.
+    // The strip is a ~260px scroller holding close to a metre of tabs with its
+    // scrollbar hidden, so a session that sorts to the end sits several screens
+    // off the right edge with nothing hinting it exists. (Any session missing
+    // from the server's manual order sorts to the end — see apply_order in
+    // shared/tab_state.py — which is every freshly created one.) This list is
+    // the dependable way to reach a pane; tucked rows are marked, not omitted.
+    // Every poll rebuilds this list. It is long enough to scroll now, so put
+    // the scroll position back or a poll landing mid-scroll yanks the user to
+    // the top while they are reading.
+    const scrollTop = sheetBody.scrollTop;
     sheetBody.innerHTML = '';
-    staleTabs.forEach(tab => {
-        const target = tab.dataset.target || '';
-        const session = target.split(':')[0];
-        const row = document.createElement('div');
-        row.className = 'stale-sheet-row';
-        row.dataset.target = target;
+    allTabs.forEach(tab => sheetBody.appendChild(_buildTabRow(tab, staleSet.has(tab))));
+    sheetBody.scrollTop = scrollTop;
 
-        const dotClass = _staleRowDotClass(tab);
-        if (dotClass) {
-            const dot = document.createElement('span');
-            dot.className = 'row-dot ' + dotClass;
-            row.appendChild(dot);
-        }
-
-        const name = document.createElement('span');
-        name.className = 'row-name';
-        const label = tab.cloneNode(true);
-        Array.from(label.querySelectorAll('.tab-badge, .tab-idle-time, .tab-dot')).forEach(n => n.remove());
-        name.textContent = label.textContent.trim() || session;
-        row.appendChild(name);
-
-        const idleSec = parseInt(tab.dataset.idleSeconds || '0', 10);
-        const idle = document.createElement('span');
-        if (_isSnoozed(target)) {
-            // Manually snoozed — a real idle time would read misleadingly low
-            // (e.g. "0m") in an idle list, so show the snooze glyph instead.
-            idle.className = 'row-snooze';
-            idle.textContent = 'zZ';
-        } else {
-            idle.className = 'row-idle';
-            idle.textContent = (typeof _formatIdleTime === 'function')
-                ? _formatIdleTime(idleSec)
-                : Math.floor(idleSec / 60) + 'm';
-        }
-        row.appendChild(idle);
-
-        row.onclick = () => _onStaleRowTap(target);
-        sheetBody.appendChild(row);
-    });
-
-    if (sheetCount) sheetCount.textContent = String(staleTabs.length);
-
-    // If the sheet is open and no stale tabs remain, close it.
-    if (_staleSheetOpen && staleTabs.length === 0) closeStaleSheet();
-
-    if (staleTabs.length === 0) {
-        _lastStaleCount = 0;
-        return;
+    if (sheetCount) sheetCount.textContent = String(allTabs.length);
+    const sub = document.getElementById('stale-sheet-sub');
+    if (sub) sub.textContent = staleTabs.length ? staleTabs.length + ' in zZ' : '';
+    const tuckBtn = document.getElementById('stale-sheet-tuck');
+    if (tuckBtn) {
+        const on = _autoTuckEnabled();
+        // State, not action — "auto-tuck off" as a button label reads equally
+        // well as a description and as the thing tapping would do.
+        tuckBtn.textContent = on ? 'auto-tuck on' : 'auto-tuck off';
+        tuckBtn.classList.toggle('is-off', !on);
     }
 
-    // Render pill
+    // Render pill. Always — it is the only handle on the full tab list, so it
+    // has to be there even when nothing is tucked away.
     const wrap = document.createElement('div');
     wrap.className = 'stale-pill-wrap';
     wrap.onclick = () => {
@@ -824,8 +827,8 @@ function _applyStaleGroup() {
     const pill = document.createElement('span');
     pill.className = 'stale-pill';
     if (staleTabs.length > _lastStaleCount) pill.classList.add('flash');
-    pill.innerHTML = '<span class="stale-pill-glyph">zZ</span>' +
-        '<span class="stale-pill-count">' + staleTabs.length + '</span>';
+    pill.innerHTML = '<span class="stale-pill-glyph">&#9776;</span>' +
+        '<span class="stale-pill-count">' + allTabs.length + '</span>';
     wrap.appendChild(pill);
     container.appendChild(wrap);
 
@@ -834,6 +837,51 @@ function _applyStaleGroup() {
         setTimeout(() => pill.classList.remove('flash'), 260);
     }
     _lastStaleCount = staleTabs.length;
+}
+
+// One row of the tab pull-out. `isTucked` means the tab is hidden from the
+// strip (idle past the threshold, or snoozed), so the row has to say so — it
+// is the only place that tab is visible.
+function _buildTabRow(tab, isTucked) {
+    const target = tab.dataset.target || '';
+    const session = target.split(':')[0];
+    const row = document.createElement('div');
+    row.className = 'stale-sheet-row';
+    row.dataset.target = target;
+    if (isTucked) row.classList.add('is-tucked');
+    if (tab.classList.contains('active')) row.classList.add('is-active');
+
+    // The dot is always present, colourless when the pane has no state, so
+    // every name starts at the same x and the list scans as one column.
+    const dotClass = _staleRowDotClass(tab);
+    const dot = document.createElement('span');
+    dot.className = 'row-dot ' + (dotClass || 'none');
+    row.appendChild(dot);
+
+    const name = document.createElement('span');
+    name.className = 'row-name';
+    const label = tab.cloneNode(true);
+    Array.from(label.querySelectorAll('.tab-badge, .tab-idle-time, .tab-dot')).forEach(n => n.remove());
+    name.textContent = label.textContent.trim() || session;
+    row.appendChild(name);
+
+    const idleSec = parseInt(tab.dataset.idleSeconds || '0', 10);
+    const meta = document.createElement('span');
+    if (_isSnoozed(target)) {
+        // Manually snoozed — a real idle time would read misleadingly low
+        // (e.g. "0m") in an idle list, so show the snooze glyph instead.
+        meta.className = 'row-snooze';
+        meta.textContent = 'zZ';
+    } else {
+        meta.className = 'row-idle';
+        meta.textContent = (typeof _formatIdleTime === 'function')
+            ? _formatIdleTime(idleSec)
+            : Math.floor(idleSec / 60) + 'm';
+    }
+    row.appendChild(meta);
+
+    row.onclick = () => _onStaleRowTap(target);
+    return row;
 }
 
 // Hook into tab rendering — called after each poll updates tabs

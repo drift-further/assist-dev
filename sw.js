@@ -1,5 +1,5 @@
 // sw.js — Service worker for Assist (network-first for static assets, cache fallback when offline)
-const VERSION = 'assist-v3-004';
+const VERSION = 'assist-v3-006';
 const STATIC_CACHE = 'assist-static-' + VERSION;
 const STATIC_URLS = [
     '/',
@@ -12,14 +12,14 @@ const STATIC_URLS = [
     '/css/drawers.css',
     '/css/widgets.css',
     '/css/commands.css',
-    '/js/state.js',
-    '/js/ui.js',
-    '/js/input.js',
-    '/js/terminal.js',
-    '/js/actions.js',
-    '/js/commands.js',
-    '/js/monitor.js',
-    '/js/app.js',
+    '/js/state.js?v=2',
+    '/js/ui.js?v=2',
+    '/js/input.js?v=4',
+    '/js/terminal.js?v=19',
+    '/js/actions.js?v=9',
+    '/js/commands.js?v=4',
+    '/js/monitor.js?v=4',
+    '/js/app.js?v=9',
 ];
 
 self.addEventListener('install', event => {
@@ -55,6 +55,7 @@ self.addEventListener('fetch', event => {
         url.pathname.startsWith('/favorite') ||
         url.pathname.startsWith('/sudo-password') ||
         url.pathname.startsWith('/autoyes/') ||
+        url.pathname.startsWith('/access/') ||
         url.pathname.startsWith('/api/') ||
         url.pathname.startsWith('/health')
     ) {
@@ -69,7 +70,7 @@ self.addEventListener('fetch', event => {
             fetch(event.request).then(response => {
                 if (response.ok) cache.put(event.request, response.clone());
                 return response;
-            }).catch(() => cache.match(event.request, {ignoreSearch: true}))
+            }).catch(() => cache.match(event.request))
         )
     );
 });

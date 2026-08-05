@@ -11,6 +11,7 @@ from flask import Blueprint, jsonify, request
 
 import shared.state as state
 import shared.tab_state as tab_state
+from shared.agent_identity import resolve_process
 from shared.tmux import (
     capture_pane,
     detect_venv,
@@ -195,6 +196,13 @@ def get_agent_info_map():
         except Exception:
             continue
 
+        # Carried through so enrich_panes_with_agents() can reject a config
+        # that predates the pane it claims to name — see the note there.
+        try:
+            config_mtime = config_path.stat().st_mtime
+        except OSError:
+            continue
+
         team_name = config.get("name", "")
         lead_sid = config.get("leadSessionId", "")
 
@@ -204,10 +212,17 @@ def get_agent_info_map():
         for member in config.get("members", []):
             pane_id = member.get("tmuxPaneId", "")
             if member.get("backendType") == "tmux" and pane_id.startswith("%"):
+                # Teams accumulate here forever and pane ids repeat, so two
+                # configs can claim the same one. Newest wins; without this the
+                # winner was whatever order glob() happened to return.
+                existing = pane_id_map.get(pane_id)
+                if existing and existing["config_mtime"] >= config_mtime:
+                    continue
                 pane_id_map[pane_id] = {
                     "agent_name": member.get("name", ""),
                     "agent_color": member.get("color", ""),
                     "team_name": team_name,
+                    "config_mtime": config_mtime,
                 }
 
     # Map lead session IDs to PIDs via session files
@@ -238,10 +253,22 @@ def enrich_panes_with_agents(panes):
     # Match team members by tmux pane_id
     for pane in panes:
         info = pane_id_map.get(pane.get("pane_id", ""))
-        if info:
-            pane["agent_name"] = info["agent_name"]
-            pane["agent_color"] = info["agent_color"]
-            pane["team_name"] = info["team_name"]
+        if not info:
+            continue
+        # tmux hands out pane ids from %0 again every time its server restarts,
+        # and team configs under ~/.claude/teams are never garbage collected, so
+        # a long-dead team keeps naming whatever pane later inherits its id. A
+        # config written BEFORE the pane existed cannot be describing it — a
+        # real registration records a concrete tmuxPaneId, so it is always
+        # written after the pane it registers. Without this, a July team config
+        # relabelled the live assist-dev tab "perf-orch" and the session looked
+        # missing from the strip entirely.
+        created = pane.get("created") or 0
+        if created and created > info["config_mtime"]:
+            continue
+        pane["agent_name"] = info["agent_name"]
+        pane["agent_color"] = info["agent_color"]
+        pane["team_name"] = info["team_name"]
 
     # Match team leads by process ancestry
     if lead_pids:
@@ -315,6 +342,7 @@ def terminal_sessions():
             created = int(parts[9]) if len(parts) >= 10 and parts[9].isdigit() else 0
             is_subpane = parts[0] in seen_sessions
             seen_sessions.add(parts[0])
+            agent_kind = resolve_process(target, pane_pid, parts[3])
             panes.append(
                 {
                     "target": target,
@@ -330,6 +358,7 @@ def terminal_sessions():
                     "pane_id": pane_id,
                     "is_subpane": is_subpane,
                     "command_display": prettify_command(parts[3]),
+                    "agent_kind": agent_kind or "unknown",
                 }
             )
 

@@ -8,6 +8,7 @@ import time
 from flask import Blueprint, jsonify, request
 
 import shared.state as state
+from shared.agent_identity import refine_with_content, resolve_process
 from shared.tmux import tmux_send_keys, tmux_send_text
 from routes.streaming import broadcast_autoyes_event
 
@@ -22,6 +23,15 @@ _PERMISSION_YNA_RE = re.compile(
     re.IGNORECASE,
 )
 _CONFIRM_YN_RE = re.compile(r"\(y/n\)|\[Y/n\]|\[y/N\]|\(yes/no\)", re.IGNORECASE)
+_PACKAGE_CONFIRM_RE = re.compile(
+    r"(?:Do you want to continue\?\s*\[Y/n\]|Is this ok\s*\[y/N\]:?)\s*$",
+    re.IGNORECASE,
+)
+_SSH_HOST_KEY_RE = re.compile(
+    r"Are you sure you want to continue connecting "
+    r"\(yes/no(?:/\[fingerprint\])?\)\?\s*$",
+    re.IGNORECASE,
+)
 # OpenCode's TUI permission dialog (verified live on 1.18.4): a
 # "△ Permission required" header with an "Allow once  Allow always  Reject"
 # button row. The dialog opens with "Allow once" selected; Left/Right cycle
@@ -93,32 +103,73 @@ _NUMBERED_FOOTER_RE = re.compile(
     r"(?:Enter to select|Esc to cancel|Navigate)\s*[·•]"
     r"|Press enter to confirm"
 )
+# How far above the footer to look for option 1 when there is no ──── anchor.
+# codex's second option is "Yes, and don't ask again for commands that start
+# with `<the entire command>`" — it embeds the command verbatim, so a one-line
+# command still wraps 25-30 rows on a wide pane and pushes option 1 way up.
+# This was 14, which covers only short options; on any wrapped prompt option 1
+# fell outside the region, _NUMBERED_YES_RE missed, and auto-yes silently never
+# fired. The footer-distance gate below (depth*4) is what keeps stale prompts
+# out, so widening this window does not resurrect answered prompts.
+_OPTION_REGION_LOOKBACK = 60
+_OPTION_SEP_RE = re.compile(r"^\s*─{10,}")
+_OPTION_LINE_RE = re.compile(r"^\s*(?:[^\d\s]\s*)?\d+[.)]\s+\S")
 
 
-def _detect_autoyes_prompt(tail):
+def _option_region_start(lines, footer_line, search_floor):
+    """Top of the numbered-option block above `footer_line`, or None.
+
+    The block is bounded above by a ──── separator, but Claude Code's
+    AskUserQuestion menu draws a SECOND separator between the last real option
+    and the trailing "Chat about this" row. Stopping at the separator nearest
+    the footer leaves a single option in the region, so "1. Yes" above the
+    divider falls outside it and auto-yes silently never fires. Keep walking up
+    until the region holds at least two options.
+    Mirrors _optionRegionStart() in js/actions.js.
+    """
+    for i in range(footer_line - 1, search_floor - 1, -1):
+        if not _OPTION_SEP_RE.match(lines[i]):
+            continue
+        count = sum(
+            1 for ln in lines[i + 1 : footer_line] if _OPTION_LINE_RE.match(ln)
+        )
+        if count >= 2:
+            return i + 1
+    return None
+
+
+def _detect_autoyes_prompt(tail, agent_kind):
     """Detect prompts that auto-yes should answer. Returns (type, send_text, with_enter, summary) or None."""
     # Only check last N lines for y/n prompts — avoids false positives from
     # answered prompts still in scrollback
     lines = tail.split("\n")
     depth = state.get_setting("autoyes", "detection_depth")
     bottom = "\n".join(lines[-depth:])
-    if _PERMISSION_YNA_RE.search(bottom):
+    if agent_kind == "claude" and _PERMISSION_YNA_RE.search(bottom):
         return ("permission-yna", "y", False, _extract_summary(tail, "permission"))
-    if _OPENCODE_PERMISSION_RE.search(bottom) and "Permission required" in tail:
+    if (
+        agent_kind == "opencode"
+        and _OPENCODE_PERMISSION_RE.search(bottom)
+        and "Permission required" in tail
+    ):
         # Enter confirms the default "Allow once" — no text to type.
         return ("opencode-permission", "", True, _extract_summary(tail, "opencode"))
     # Cursor CLI dialogs use their own bottom windows — both are taller than the
     # generic detection depth (see the pattern definitions above).
     cursor_bottom = "\n".join(lines[-max(depth, _CURSOR_PERMISSION_LINES):])
-    if _CURSOR_PERMISSION_HDR_RE.search(cursor_bottom) and _CURSOR_PERMISSION_OPT_RE.search(
-        cursor_bottom
+    if (
+        agent_kind == "cursor"
+        and _CURSOR_PERMISSION_HDR_RE.search(cursor_bottom)
+        and _CURSOR_PERMISSION_OPT_RE.search(cursor_bottom)
     ):
         # "y" runs once, no Enter. (Tab would also allowlist the binary — that
         # is a smart-action choice, never an automatic one.)
         return ("cursor-permission", "y", False, _extract_summary(tail, "cursor"))
     trust_bottom = "\n".join(lines[-max(depth, _CURSOR_TRUST_LINES):])
-    if _CURSOR_TRUST_OPT_RE.search(trust_bottom) and _CURSOR_TRUST_FOOTER_RE.search(
-        trust_bottom
+    if (
+        agent_kind == "cursor"
+        and _CURSOR_TRUST_OPT_RE.search(trust_bottom)
+        and _CURSOR_TRUST_FOOTER_RE.search(trust_bottom)
     ):
         return ("cursor-trust", "a", False, "Trust workspace")
     # confirm-yn must sit on the LAST non-empty line — a real interactive
@@ -129,6 +180,13 @@ def _detect_autoyes_prompt(tail):
         if ln.strip():
             last_line = ln
             break
+    # Shell-layer matchers stay eligible inside agent panes. Package managers
+    # and ssh are readline prompts, so their affirmative answer needs Enter.
+    # Mirrors the package-confirm and ssh-host-key patterns in js/actions.js.
+    if _PACKAGE_CONFIRM_RE.search(last_line):
+        return ("package-confirm", "y", True, _extract_summary(tail, "confirm"))
+    if _SSH_HOST_KEY_RE.search(last_line):
+        return ("ssh-host-key", "yes", True, _extract_summary(tail, "confirm"))
     if _CONFIRM_YN_RE.search(last_line):
         if not re.search(r"\(y/n/a\)|\[Y/n/a\]", last_line, re.IGNORECASE):
             with_enter = bool(_CONFIRM_NEEDS_ENTER_RE.search(last_line))
@@ -141,7 +199,7 @@ def _detect_autoyes_prompt(tail):
     last_footer = None
     for m in _NUMBERED_FOOTER_RE.finditer(tail):
         last_footer = m
-    if last_footer:
+    if agent_kind in ("claude", "codex", "gemini") and last_footer:
         footer_line = tail.count("\n", 0, last_footer.start())
         if (len(lines) - 1 - footer_line) <= depth * 4:
             # Bound the option region by the last ──── separator above the
@@ -150,12 +208,11 @@ def _detect_autoyes_prompt(tail):
             # on narrow phone panes, so a fixed lookback can push option 1 out
             # of view; the separator is a stable top anchor. Fall back to a
             # generous fixed window when there is no separator.
-            search_floor = max(0, footer_line - depth * 4)
-            region_start = max(0, footer_line - 14)
-            for i in range(footer_line - 1, search_floor - 1, -1):
-                if re.match(r"^\s*─{10,}", lines[i]):
-                    region_start = i + 1
-                    break
+            search_floor = max(0, footer_line - max(depth * 4, _OPTION_REGION_LOOKBACK))
+            region_start = max(0, footer_line - _OPTION_REGION_LOOKBACK)
+            anchored = _option_region_start(lines, footer_line, search_floor)
+            if anchored is not None:
+                region_start = anchored
             region = "\n".join(lines[region_start:footer_line + 1])
             if _NUMBERED_YES_RE.search(region):
                 return ("numbered-yes", "", True, _extract_summary(tail, "numbered"))
@@ -372,7 +429,8 @@ def _autoyes_scan_tick():
             "list-panes",
             "-a",
             "-F",
-            "#{session_name}\t#{window_index}\t#{pane_index}",
+            "#{session_name}\t#{window_index}\t#{pane_index}\t"
+            "#{pane_pid}\t#{pane_current_command}",
         ],
         capture_output=True,
         text=True,
@@ -401,7 +459,7 @@ def _autoyes_scan_tick():
         if not line:
             continue
         parts = line.split("\t")
-        if len(parts) < 3:
+        if len(parts) < 5:
             continue
         live_sessions.add(parts[0])
         live_targets.add(f"{parts[0]}:{parts[1]}.{parts[2]}")
@@ -438,8 +496,10 @@ def _autoyes_scan_tick():
         if not tail:
             continue
 
+        process_kind = resolve_process(target, parts[3], parts[4])
+        agent_kind = refine_with_content(process_kind, tail)
         phash = _prompt_hash(tail)
-        detected = _detect_autoyes_prompt(tail)
+        detected = _detect_autoyes_prompt(tail, agent_kind)
 
         # Collect broadcast event to fire AFTER releasing the lock
         # (broadcast_autoyes_event also acquires autoyes_lock — avoid deadlock).

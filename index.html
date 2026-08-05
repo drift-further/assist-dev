@@ -17,7 +17,7 @@
     <link rel="stylesheet" href="/css/autocomplete.css">
     <link rel="stylesheet" href="/css/container.css">
     <link rel="stylesheet" href="/css/studio.css?v=3">
-    <link rel="stylesheet" href="/css/access.css?v=1">
+    <link rel="stylesheet" href="/css/access.css?v=2">
     <link rel="stylesheet" href="/css/chrome.css?v=1">
     <link rel="stylesheet" href="/css/notifications.css">
 </head>
@@ -118,10 +118,12 @@
         <button class="clear-btn" id="clear-btn" onclick="clearHistory()">Clear History</button>
     </div>
 
-    <!-- Idle sessions sheet (slides up when stale-pill is tapped) -->
+    <!-- Tab pull-out: every tab, tucked-into-zZ ones included (slides up when
+         the strip's pill is tapped) -->
     <div class="stale-sheet" id="stale-sheet" aria-hidden="true">
         <div class="stale-sheet-header">
-            <span class="stale-sheet-title">Idle sessions <span class="stale-sheet-count" id="stale-sheet-count">0</span></span>
+            <span class="stale-sheet-title">All tabs <span class="stale-sheet-count" id="stale-sheet-count">0</span><span class="stale-sheet-sub" id="stale-sheet-sub"></span></span>
+            <button class="stale-sheet-tuck" id="stale-sheet-tuck" onclick="toggleIdleTucking()">auto-tuck</button>
             <button class="drawer-close" onclick="closeStaleSheet()">&times;</button>
         </div>
         <div class="stale-sheet-body" id="stale-sheet-body"></div>
@@ -170,6 +172,17 @@
                 <button class="access-preset" onclick="accessOpen(15)">15 min</button>
             </div>
         </div>
+    </div>
+
+    <!-- A new device is asking to be let in. Modal on purpose: a security
+         decision must be answered or left to expire, never swiped away. -->
+    <div class="approve-backdrop" id="approve-backdrop" aria-hidden="true"></div>
+    <div class="approve-sheet" id="approve-sheet" role="dialog" aria-modal="true"
+         aria-labelledby="approve-sheet-title" aria-hidden="true">
+        <div class="approve-sheet-header">
+            <span class="approve-sheet-title" id="approve-sheet-title">&#9888; Approve new device?</span>
+        </div>
+        <div class="approve-sheet-body" id="approve-sheet-body"></div>
     </div>
 
     <div class="content">
@@ -508,20 +521,20 @@
 
     <script src="/js/state.js?v=2"></script>
     <script src="/js/ui.js?v=2"></script>
-    <script src="/js/input.js?v=3"></script>
+    <script src="/js/input.js?v=4"></script>
     <script src="/js/autocomplete.js?v=1"></script>
-    <script src="/js/terminal.js?v=18"></script>
-    <script src="/js/actions.js?v=7"></script>
-    <script src="/js/commands.js?v=3"></script>
+    <script src="/js/terminal.js?v=19"></script>
+    <script src="/js/actions.js?v=9"></script>
+    <script src="/js/commands.js?v=4"></script>
     <script src="/js/container.js"></script>
     <script src="/js/studio.js?v=2"></script>
-    <script src="/js/access.js?v=2"></script>
+    <script src="/js/access.js?v=3"></script>
     <script src="/js/chrome.js?v=1"></script>
     <script src="/js/monitor.js?v=4"></script>
     <script src="/js/notifications.js"></script>
     <script src="/js/tabs.js?v=5"></script>
     <script src="/js/settings.js?v=5"></script>
-    <script src="/js/app.js?v=8"></script>
+    <script src="/js/app.js?v=9"></script>
     <script src="/js/selection.js?v=2"></script>
     <script>
     if ('serviceWorker' in navigator) {

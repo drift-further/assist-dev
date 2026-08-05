@@ -258,9 +258,217 @@ def window_state():
         if onboard is not None and time.monotonic() - _last_onboard_at > _ONBOARD_TTL_SEC:
             _last_onboard = onboard = None
     is_open = deadline is not None and time.monotonic() < deadline
+    # pending_requests() is called outside the `with _window_lock` block above
+    # on purpose: it takes _requests_lock, and the two must never be held at
+    # once or different callers could acquire them in opposite orders.
     return {
         "open": is_open,
         "remaining_sec": math.ceil(deadline - time.monotonic()) if is_open else 0,
         "networks": _networks_raw(),
         "last_onboard": onboard,
+        "pending_requests": pending_requests(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Device approval requests
+# ---------------------------------------------------------------------------
+#
+# The window above is the operator pushing: they open a slot and whichever
+# in-scope device gets there first takes it. This is the pull direction — a
+# device asks by name and a logged-in session answers. The admission is
+# targeted rather than broadcast: it is bound to a `claim` secret that only the
+# requesting browser ever sees, so an approval meant for one device cannot be
+# intercepted by another racing to load `/`.
+
+_requests_lock = threading.Lock()
+_requests = {}              # id -> record
+_request_seq = 0
+_request_last_create = {}   # ip -> monotonic of its last create, for the cooldown
+
+# A decided-and-denied record lingers this long so the requester's next poll
+# reports "denied" rather than the misleading "expired". A UI timing detail,
+# not an operator knob — hence a constant rather than a setting.
+_REQUEST_DENIED_GRACE = 20
+
+
+def _request_cfg():
+    """(ttl_seconds, max_pending, cooldown_seconds) from settings.
+
+    Read at use time, the way _networks_raw() reads open_networks, so editing
+    settings.json takes effect without a restart. Each value is clamped: a
+    hand-edited zero or a string must not disable the limit it configures.
+    """
+    from shared import state
+
+    cfg = state.get_settings().get("access") or {}
+    defaults = state.DEFAULT_SETTINGS["access"]
+
+    def _num(key, low, high):
+        try:
+            value = float(cfg.get(key, defaults[key]))
+        except (TypeError, ValueError):
+            value = float(defaults[key])
+        if not math.isfinite(value):
+            value = float(defaults[key])
+        return max(low, min(value, high))
+
+    return (
+        _num("request_ttl_minutes", 1, 60) * 60,
+        int(_num("request_max_pending", 1, 10)),
+        _num("request_cooldown_sec", 0, 3600),
+    )
+
+
+def _prune_requests(now):
+    """Drop expired and finished records. Caller holds _requests_lock."""
+    for rid, rec in list(_requests.items()):
+        if now >= rec["deadline"]:
+            del _requests[rid]
+        elif (
+            rec["status"] == "denied"
+            and now - rec["decided_at"] > _REQUEST_DENIED_GRACE
+        ):
+            del _requests[rid]
+
+
+def _fresh_code(taken):
+    """A 4-digit code not already on screen beside another pending request.
+
+    The operator's whole job is matching digits, so two simultaneous requests
+    showing the same code would defeat the feature. Bounded retry, then accept
+    a duplicate rather than spin.
+    """
+    for _ in range(20):
+        code = f"{secrets.randbelow(10000):04d}"
+        if code not in taken:
+            return code
+    return f"{secrets.randbelow(10000):04d}"
+
+
+def create_request(ip, ua):
+    """Register a device asking to be let in.
+
+    The `claim` in the success payload is the only copy that leaves here: it
+    binds the eventual cookie to the browser that asked, and is never published
+    to /poll or any other operator-facing response.
+    """
+    global _request_seq
+    if not ip_in_scope(ip):
+        return {"ok": False, "error": "out_of_scope"}
+
+    ttl, max_pending, cooldown = _request_cfg()
+    now = time.monotonic()
+    with _requests_lock:
+        _prune_requests(now)
+        last = _request_last_create.get(ip)
+        if last is not None and now - last < cooldown:
+            return {"ok": False, "error": "cooldown"}
+        pending = [r for r in _requests.values() if r["status"] == "pending"]
+        if len(pending) >= max_pending:
+            return {"ok": False, "error": "too_many"}
+
+        _request_seq += 1
+        rid = _request_seq
+        code = _fresh_code({r["code"] for r in pending})
+        claim = secrets.token_urlsafe(32)
+        _requests[rid] = {
+            "id": rid,
+            "code": code,
+            "claim": claim,
+            "ip": ip,
+            "ua": ua,
+            "status": "pending",
+            "deadline": now + ttl,
+            "decided_at": 0.0,
+        }
+        _request_last_create[ip] = now
+        # The cooldown map is keyed by IP and would otherwise grow for the life
+        # of the process. Sweep entries whose cooldown has already lapsed.
+        if len(_request_last_create) > 256:
+            for old_ip, at in list(_request_last_create.items()):
+                if now - at >= cooldown:
+                    del _request_last_create[old_ip]
+
+    print(f"[assist] device approval requested by {ip} ({ua}) code {code}", flush=True)
+    return {
+        "ok": True,
+        "request": {"id": rid, "code": code, "expires_in": int(ttl)},
+        "claim": claim,
+    }
+
+
+def decide_request(rid, approve):
+    """Record the operator's verdict. True if a pending record moved.
+
+    Approve and deny racing from two logged-in sessions is resolved here: the
+    first call under the lock wins and the second sees a non-pending record.
+    """
+    now = time.monotonic()
+    with _requests_lock:
+        _prune_requests(now)
+        rec = _requests.get(rid)
+        if rec is None or rec["status"] != "pending":
+            return False
+        rec["status"] = "approved" if approve else "denied"
+        rec["decided_at"] = now
+        ip = rec["ip"]
+    verdict = "approved" if approve else "denied"
+    print(f"[assist] device approval {verdict} for {ip}", flush=True)
+    return True
+
+
+def request_status(claim, ip):
+    """What the waiting device is told. Consumes the record on approval.
+
+    "expired" is also the answer to an unknown, replayed or IP-mismatched
+    claim: a caller that cannot prove it made the request learns nothing about
+    whether one exists.
+    """
+    if not claim:
+        return {"status": "expired", "remaining_sec": 0}
+
+    now = time.monotonic()
+    with _requests_lock:
+        _prune_requests(now)
+        found = None
+        for rec in _requests.values():
+            if rec["ip"] == ip and hmac.compare_digest(rec["claim"], claim):
+                found = rec
+                break
+        if found is None:
+            return {"status": "expired", "remaining_sec": 0}
+        status = found["status"]
+        remaining = max(0, math.ceil(found["deadline"] - now))
+        if status == "approved":
+            del _requests[found["id"]]   # single use
+
+    return {
+        "status": status,
+        "remaining_sec": remaining if status == "pending" else 0,
+    }
+
+
+def pending_requests():
+    """Operator-facing view. Never carries `claim`.
+
+    Filtering to `pending` is what clears the approval sheet the moment a
+    verdict lands, without needing a second signal.
+    """
+    now = time.monotonic()
+    out = []
+    with _requests_lock:
+        _prune_requests(now)
+        for rec in sorted(_requests.values(), key=lambda r: r["id"]):
+            if rec["status"] != "pending":
+                continue
+            out.append(
+                {
+                    "id": rec["id"],
+                    "code": rec["code"],
+                    "ip": rec["ip"],
+                    "ua": rec["ua"],
+                    "remaining_sec": max(0, math.ceil(rec["deadline"] - now)),
+                }
+            )
+    return out

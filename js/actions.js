@@ -123,7 +123,12 @@ async function _enableAutoYes(session, delay) {
             updateAutoYesUI(session);
             _getSmartState(_termTarget).key = '';  // force re-render (toggle label changed)
             if (_termLatestContent) {
-                const detected = detectSmartActions(stripAnsi(_termLatestContent), _termTarget);
+                const info = _paneInfo[_termTarget];
+                const detected = detectSmartActions(
+                    stripAnsi(_termLatestContent),
+                    _termTarget,
+                    info && info.agent_kind
+                );
                 renderSmartActions(detected);
             }
         }
@@ -252,15 +257,95 @@ function _renderAutoYesCountdown() {
     _countdownTimer = setInterval(update, 100);
 }
 
-// Check if a detected result qualifies for auto-yes (first option starts with "Yes")
+// Check if a detected result qualifies for auto-yes.
 function _isAutoYesCandidate(result) {
     if (!result) return false;
     if (result.id === 'permission-yna' || result.id === 'confirm-yn' ||
         result.id === 'opencode-permission' || result.id === 'cursor-permission' ||
-        result.id === 'cursor-trust') return true;
+        result.id === 'cursor-trust' || result.id === 'package-confirm' ||
+        result.id === 'ssh-host-key' || result.id === 'selected-yes') return true;
     if (result.id !== 'numbered-options') return false;
     const first = result.actions[0];
     return first && first.isOption && /^1\.\s*Yes/i.test(first.label);
+}
+
+// --- Numbered-option region bounds (shared by match + getActions) ---------
+// The option block sits between a ──── separator and the menu footer. Claude
+// Code's AskUserQuestion menu draws a SECOND separator between the last real
+// option and the trailing "Chat about this" row, so the separator NEAREST the
+// footer leaves a single option in the region: the two-option gate failed, no
+// smart actions rendered, and the tab never got its ? badge on a question that
+// was genuinely waiting. Walk up through separators and take the first region
+// holding at least two options.
+// Mirrors _option_region_start() in routes/autoyes.py.
+const _OPT_LOOKBACK = 60;
+const _OPT_RE = /^\s*(?:[^\d\s]\s*)?(\d+)[\.\)]\s+\S/;
+const _OPT_TEXT_RE = /^\s*(?:[^\d\s]\s*)?(\d+)[\.\)]\s+(.+)/;
+const _OPT_SEP_RE = /^[\s]*─{10,}/;
+const _OPT_FOOTER_RE = /(?:Enter to select|Esc to cancel|Navigate)\s*[·•]|Press enter to confirm/;
+
+function _optionCount(lines, startIdx, endIdx) {
+    let count = 0;
+    for (let i = startIdx; i < endIdx; i++) {
+        if (_OPT_RE.test(lines[i])) count++;
+    }
+    return count;
+}
+
+function _findOptionFooter(lines) {
+    for (let i = lines.length - 1; i >= 0; i--) {
+        if (_OPT_FOOTER_RE.test(lines[i])) return i;
+    }
+    return -1;
+}
+
+// An internal divider inside the option block is what tells a long-form
+// AskUserQuestion apart from a Yes/No permission gate — the question splits its
+// "Chat about this" escape hatch off with a second ──── rule. Its options are
+// prose you read in the pane, so it marks the tab and notifies but renders no
+// button wall (five full-width buttons duplicate the pane and bury it).
+function _hasInternalDivider(lines, startIdx, endIdx) {
+    for (let i = startIdx; i < endIdx; i++) {
+        if (_OPT_SEP_RE.test(lines[i])) return true;
+    }
+    return false;
+}
+
+function _optionRegionStart(lines, footerIdx) {
+    const floor = Math.max(0, footerIdx - _OPT_LOOKBACK);
+    for (let i = footerIdx - 1; i >= floor; i--) {
+        if (!_OPT_SEP_RE.test(lines[i])) continue;
+        // A separator that leaves fewer than two options below it is an
+        // internal divider, not the top of the block — keep walking up.
+        if (_optionCount(lines, i + 1, footerIdx) >= 2) return i + 1;
+    }
+    return floor;
+}
+
+// Mirrors routes/autoyes.py:_SELECTED_YES_RE. The arrow row alone is not a
+// liveness signal: require the enclosing divider, a sibling No row, and the
+// live menu footer in one compact block.
+function _isSelectedYesMenu(lines, footerIdx) {
+    if (footerIdx < 0 || (lines.length - 1 - footerIdx) > 30) return false;
+    const floor = Math.max(0, footerIdx - 8);
+    let dividerIdx = -1;
+    let selectedIdx = -1;
+    let noIdx = -1;
+    for (let i = floor; i < footerIdx; i++) {
+        if (_OPT_SEP_RE.test(lines[i])) dividerIdx = i;
+        if (/^\s*❯\s+Yes\s*$/.test(lines[i])) selectedIdx = i;
+        if (/^\s+No\s*$/.test(lines[i])) noIdx = i;
+    }
+    return dividerIdx >= floor && dividerIdx < selectedIdx &&
+        noIdx > selectedIdx && noIdx - selectedIdx <= 3 && footerIdx - noIdx <= 3;
+}
+
+function _lastNonEmptyLine(tail) {
+    const lines = tail.split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+        if (lines[i].trim()) return lines[i];
+    }
+    return '';
 }
 
 const SMART_PATTERNS = [
@@ -286,6 +371,7 @@ const SMART_PATTERNS = [
     {
         id: 'permission-yna',
         desc: 'Permission prompt',
+        agents: ['claude'],
         match: (tail) => {
             // Only check last 8 lines — avoids false positives from answered prompts in scrollback
             const bottom = tail.split('\n').slice(-8).join('\n');
@@ -303,6 +389,7 @@ const SMART_PATTERNS = [
     {
         id: 'opencode-permission',
         desc: 'OpenCode permission',
+        agents: ['opencode'],
         // OpenCode TUI dialog (verified on 1.18.4): opens with "Allow once"
         // selected; Left/Right cycle the selection WITH WRAPAROUND and Enter
         // confirms. y/n keys (and Tab) do nothing — answers are key sequences.
@@ -321,6 +408,7 @@ const SMART_PATTERNS = [
     {
         id: 'cursor-permission',
         desc: 'Cursor: run command',
+        agents: ['cursor'],
         // Cursor CLI shell approval (verified live on cursor-agent
         // 2026.07.23-e383d2b). Its TUI gates only two things — this and the
         // workspace-trust dialog below; file edits/writes are never gated.
@@ -350,6 +438,7 @@ const SMART_PATTERNS = [
     {
         id: 'cursor-trust',
         desc: 'Cursor: trust workspace',
+        agents: ['cursor'],
         // Cursor's launch gate. Unlike every other prompt handled here it is
         // NOT erased when answered — the box stays on screen with the ▶ marker
         // gone and the footer replaced by "⏳ Trusting workspace…". The footer
@@ -368,25 +457,69 @@ const SMART_PATTERNS = [
         ]
     },
     {
+        id: 'sudo-password',
+        desc: 'Sudo password',
+        match: (tail) => /\[sudo\] password for [^:]+:\s*$/i.test(_lastNonEmptyLine(tail)),
+        actions: [
+            { label: 'Send stored password', sudo: true, secret: true, color: 'amber' },
+        ]
+    },
+    {
+        id: 'package-confirm',
+        desc: 'Package manager confirmation',
+        // Package and ssh prompts are shell-layer reactions: keep them
+        // eligible inside agent panes, but require the last non-empty line.
+        // Mirrors routes/autoyes.py:_PACKAGE_CONFIRM_RE.
+        match: (tail) => /(?:Do you want to continue\?\s*\[Y\/n\]|Is this ok\s*\[y\/N\]:?)\s*$/i.test(_lastNonEmptyLine(tail)),
+        actions: [
+            { label: 'Yes (y)', send: 'y', enter: true, color: 'green' },
+            { label: 'No (n)', send: 'n', enter: true, color: 'red' },
+        ]
+    },
+    {
+        id: 'ssh-host-key',
+        desc: 'SSH host key',
+        // Mirrors routes/autoyes.py:_SSH_HOST_KEY_RE.
+        match: (tail) => /Are you sure you want to continue connecting \(yes\/no(?:\/\[fingerprint\])?\)\?\s*$/i.test(_lastNonEmptyLine(tail)),
+        actions: [
+            { label: 'Continue (yes)', send: 'yes', enter: true, color: 'green' },
+            { label: 'Cancel (no)', send: 'no', enter: true, color: 'red' },
+        ]
+    },
+    {
         id: 'confirm-yn',
         desc: 'Confirmation',
         match: (tail) => {
-            // Only check last 8 lines — avoids false positives from answered prompts in scrollback
-            const bottom = tail.split('\n').slice(-8).join('\n');
-            if (/\(y\/n\/a\)/i.test(bottom) || /\[Y\/n\/a\]/i.test(bottom)) return false;
-            return /\(y\/n\)/i.test(bottom) ||
-                   /\[Y\/n\]/i.test(bottom) ||
-                   /\[y\/N\]/i.test(bottom) ||
-                   /\(yes\/no\)/i.test(bottom);
+            // Mirrors routes/autoyes.py: a displayed or echoed form is not an
+            // interactive prompt unless it is the last non-empty line.
+            const line = _lastNonEmptyLine(tail);
+            if (/\(y\/n\/a\)/i.test(line) || /\[Y\/n\/a\]/i.test(line)) return false;
+            return line.match(/\(y\/n\)|\[Y\/n\]|\[y\/N\]|\(yes\/no\)/i);
+        },
+        getActions: (_tail, match) => {
+            const withEnter = /\[Y\/n\]|\[y\/N\]|\(yes\/no\)/i.test(match[0]);
+            return [
+                { label: 'Yes (y)', send: 'y', enter: withEnter, color: 'green' },
+                { label: 'No (n)', send: 'n', enter: withEnter, color: 'red' },
+            ];
+        }
+    },
+    {
+        id: 'selected-yes',
+        desc: 'Confirm selected option',
+        agents: ['claude', 'codex', 'gemini'],
+        match: (tail) => {
+            const lines = tail.split('\n');
+            return _isSelectedYesMenu(lines, _findOptionFooter(lines));
         },
         actions: [
-            { label: 'Yes (y)', send: 'y', enter: false, color: 'green' },
-            { label: 'No (n)', send: 'n', enter: false, color: 'red' },
+            { label: 'Confirm Yes', send: '', enter: true, color: 'green' },
         ]
     },
     {
         id: 'numbered-options',
         desc: 'Select option',
+        agents: ['claude', 'codex', 'gemini'],
         match: (tail) => {
             const lines = tail.split('\n');
             // Find the LAST footer in tail. Claude Code renders its TodoWrite
@@ -397,51 +530,38 @@ const SMART_PATTERNS = [
             // "Press enter to confirm" is codex's footer — no separator glyph
             // and different wording, so the other three forms all miss it.
             const FOOTER_DEPTH_MAX = 30;
-            let footerIdx = -1;
-            for (let i = lines.length - 1; i >= 0; i--) {
-                if (/(?:Enter to select|Esc to cancel|Navigate)\s*[·•]|Press enter to confirm/.test(lines[i])) { footerIdx = i; break; }
-            }
-            const optPattern = /^\s*(?:[^\d\s]\s*)?(\d+)[\.\)]\s+\S/;
+            const footerIdx = _findOptionFooter(lines);
             if (footerIdx >= 0 && (lines.length - 1 - footerIdx) <= FOOTER_DEPTH_MAX) {
-                // 10 only covered short options. codex's "Yes, and don't ask
-                // again for commands that start with `<command>`" embeds the
+                // The region floor is 60 lines, not 10. codex's "Yes, and don't
+                // ask again for commands that start with `<command>`" embeds the
                 // command and wraps 25-30 rows, pushing option 1 out of range so
                 // only one option was counted and the bar never appeared.
                 // Mirrors _OPTION_REGION_LOOKBACK in routes/autoyes.py.
-                let sepIdx = Math.max(0, footerIdx - 60);
-                for (let i = footerIdx - 1; i >= sepIdx; i--) {
-                    if (/^[\s]*─{10,}/.test(lines[i])) { sepIdx = i + 1; break; }
-                }
-                let count = 0;
-                for (let i = sepIdx; i < footerIdx; i++) {
-                    if (optPattern.test(lines[i])) count++;
-                }
-                return count >= 2;
+                const sepIdx = _optionRegionStart(lines, footerIdx);
+                return _optionCount(lines, sepIdx, footerIdx) >= 2;
             }
-            // Fallback: simple numbered prompts without footer
-            const last = lines.slice(-8);
-            let count = 0;
-            let lastOptIdx = -1;
-            for (let i = 0; i < last.length; i++) {
-                if (optPattern.test(last[i])) { count++; lastOptIdx = i; }
-            }
-            return count >= 2 && lastOptIdx >= last.length - 3;
+            return false;
+        },
+        // Detected (so the tab is marked and a notification fires) but with no
+        // one-tap buttons — see _hasInternalDivider().
+        notifyOnly: (tail) => {
+            const lines = tail.split('\n');
+            const footerIdx = _findOptionFooter(lines);
+            if (footerIdx < 0) return false;
+            return _hasInternalDivider(lines, _optionRegionStart(lines, footerIdx), footerIdx);
         },
         getActions: (tail) => {
             const actions = [];
             const lines = tail.split('\n');
-            // Find footer line
-            let endIdx = lines.length;
-            for (let i = lines.length - 1; i >= 0; i--) {
-                if (/(?:Enter to select|Esc to cancel|Navigate)\s*[·•]|Press enter to confirm/.test(lines[i])) { endIdx = i; break; }
-            }
-            // Find last ──── separator before footer (bounds the prompt region)
-            let startIdx = 0;
-            for (let i = endIdx - 1; i >= 0; i--) {
-                if (/^[\s]*─{10,}/.test(lines[i])) { startIdx = i + 1; break; }
-            }
+            const footer = _findOptionFooter(lines);
+            if (footer < 0) return null;
+            const endIdx = footer;
+            // Bound the prompt region above (same walk-up as match(), or the
+            // two would disagree and getActions would return only the options
+            // below an internal divider).
+            const startIdx = _optionRegionStart(lines, endIdx);
             for (let i = startIdx; i < endIdx; i++) {
-                const m = lines[i].match(/^\s*(?:[^\d\s]\s*)?(\d+)[\.\)]\s+(.+)/);
+                const m = lines[i].match(_OPT_TEXT_RE);
                 if (m) {
                     const num = m[1];
                     const text = m[2].trim();
@@ -482,7 +602,7 @@ function _unfreezeAndScroll() {
 }
 
 // `content` must be ANSI-stripped; `target` keys the per-pane dismiss state.
-function detectSmartActions(content, target) {
+function detectSmartActions(content, target, agentKind) {
     if (!content) return null;
     const st = _getSmartState(target);
     if (st.dismissedContent && content === st.dismissedContent) return null;
@@ -493,12 +613,15 @@ function detectSmartActions(content, target) {
     const tail = lines.slice(-60).join('\n');
 
     for (const pattern of SMART_PATTERNS) {
-        if (pattern.match(tail)) {
+        if (pattern.agents && !pattern.agents.includes(agentKind)) continue;
+        const match = pattern.match(tail);
+        if (match) {
+            const notifyOnly = !!(pattern.notifyOnly && pattern.notifyOnly(tail));
             if (pattern.getActions) {
-                const actions = pattern.getActions(tail);
-                if (actions) return { id: pattern.id, desc: pattern.desc, actions };
+                const actions = pattern.getActions(tail, match);
+                if (actions) return { id: pattern.id, desc: pattern.desc, actions, notifyOnly };
             } else {
-                return { id: pattern.id, desc: pattern.desc, actions: pattern.actions };
+                return { id: pattern.id, desc: pattern.desc, actions: pattern.actions, notifyOnly };
             }
         }
     }
@@ -506,6 +629,10 @@ function detectSmartActions(content, target) {
 }
 
 function renderSmartActions(result, targetOverride) {
+    // notify-only detections still mark the tab and fire a push, but render no
+    // action bar. Cleared here rather than at the call sites so every caller
+    // (poll scan, WS stream, tab switch) is covered by one rule.
+    if (result && result.notifyOnly) result = null;
     // Dedupe key must distinguish actions by what they SEND — numbered-options
     // and claude-resume actions have no `send`, so fall back to optNum/claudeCmd/label.
     const key = result ? result.id + '|' + result.actions.map(a => a.secret ? '***' : (a.send ?? a.optNum ?? a.claudeCmd ?? a.label)).join(',') : '';
@@ -553,6 +680,15 @@ function renderSmartActions(result, targetOverride) {
         } else if (action.restart) {
             const cmd = action.claudeCmd;
             btn.addEventListener('click', () => restartClaudeSession(cmd));
+        } else if (action.sudo) {
+            // The matcher is the liveness proof for this exact pane. Do not run
+            // the bottom-bar triple-tap flow, which derives its target from the
+            // main input router and can send a secret to a different pane.
+            const sudoTarget = target;
+            btn.addEventListener('click', async () => {
+                const sent = await _sendSudoPasswordToTerminal(sudoTarget);
+                if (sent) hideSmartActions();
+            });
         } else if (action.isOption) {
             const num = action.optNum;
             btn.addEventListener('click', () => sendSmartAction(num, true));

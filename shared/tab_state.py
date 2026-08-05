@@ -35,7 +35,13 @@ MIN_SNOOZE_SEC = 30
 SORT_MODES = ("manual", "name", "created")
 
 _lock = threading.Lock()
-_tab_state = {"pinned": [], "order": [], "snoozed": {}, "sort": "manual"}
+_tab_state = {
+    "pinned": [],
+    "order": [],
+    "snoozed": {},
+    "sort": "manual",
+    "agent_declarations": {},
+}
 
 
 def _dedup(values):
@@ -72,11 +78,54 @@ def _normalize(data):
                 at = 0.0
             snoozed[target] = {"at": at, "was_busy": bool(meta.get("was_busy"))}
     sort = data.get("sort")
+    declarations = {}
+    raw_declarations = data.get("agent_declarations")
+    if isinstance(raw_declarations, dict):
+        for target, declaration in raw_declarations.items():
+            if (
+                not isinstance(target, str)
+                or not target
+                or not isinstance(declaration, dict)
+            ):
+                continue
+            try:
+                pane_pid = int(declaration.get("pane_pid"))
+            except (TypeError, ValueError):
+                continue
+            proc_start_time = str(declaration.get("proc_start_time") or "")
+            kind = declaration.get("kind")
+            try:
+                declared_at = float(declaration.get("declared_at"))
+            except (TypeError, ValueError):
+                continue
+            if (
+                pane_pid > 0
+                and proc_start_time
+                and isinstance(kind, str)
+                and kind
+                and declared_at > 0
+            ):
+                normalized = {
+                    "pane_pid": pane_pid,
+                    "proc_start_time": proc_start_time,
+                    "kind": kind,
+                    "declared_at": declared_at,
+                }
+                try:
+                    agent_pid = int(declaration.get("agent_pid"))
+                except (TypeError, ValueError):
+                    agent_pid = 0
+                agent_start_time = str(declaration.get("agent_start_time") or "")
+                if agent_pid > 0 and agent_start_time:
+                    normalized["agent_pid"] = agent_pid
+                    normalized["agent_start_time"] = agent_start_time
+                declarations[target] = normalized
     return {
         "pinned": _dedup(data.get("pinned")),
         "order": _dedup(data.get("order")),
         "snoozed": snoozed,
         "sort": sort if sort in SORT_MODES else "manual",
+        "agent_declarations": declarations,
     }
 
 
@@ -99,10 +148,59 @@ def _save_locked():
         pass
 
 
+def _browser_doc_locked():
+    """Copy only state intended for the tab-state API."""
+    return copy.deepcopy(
+        {key: value for key, value in _tab_state.items() if key != "agent_declarations"}
+    )
+
+
 def get_tab_state():
-    """Return the full doc (deep copy)."""
+    """Return the browser-visible tab doc (deep copy)."""
     with _lock:
-        return copy.deepcopy(_tab_state)
+        return _browser_doc_locked()
+
+
+def get_agent_declaration(target):
+    """Return the server-only launch declaration for one pane, if any."""
+    with _lock:
+        return copy.deepcopy(_tab_state["agent_declarations"].get(target))
+
+
+def set_agent_declaration(target, declaration):
+    """Persist one server-only launch declaration in the tab-state file."""
+    global _tab_state
+    with _lock:
+        declarations = dict(_tab_state["agent_declarations"])
+        declarations[target] = declaration
+        _tab_state = {**_tab_state, "agent_declarations": declarations}
+        _save_locked()
+
+
+def delete_agent_declaration(target):
+    """Remove a stale launch declaration, if present."""
+    global _tab_state
+    with _lock:
+        if target not in _tab_state["agent_declarations"]:
+            return
+        declarations = dict(_tab_state["agent_declarations"])
+        declarations.pop(target, None)
+        _tab_state = {**_tab_state, "agent_declarations": declarations}
+        _save_locked()
+
+
+def sweep_agent_declarations(live_targets):
+    """Drop declarations for panes that no longer exist."""
+    global _tab_state
+    with _lock:
+        declarations = {
+            target: declaration
+            for target, declaration in _tab_state["agent_declarations"].items()
+            if target in live_targets
+        }
+        if declarations != _tab_state["agent_declarations"]:
+            _tab_state = {**_tab_state, "agent_declarations": declarations}
+            _save_locked()
 
 
 def set_lists(pinned=None, order=None, sort=None):
@@ -124,7 +222,7 @@ def set_lists(pinned=None, order=None, sort=None):
             merged["sort"] = sort
         _tab_state = _normalize(merged)
         _save_locked()
-        return copy.deepcopy(_tab_state)
+        return _browser_doc_locked()
 
 
 def _is_busy(target, now=None):
@@ -158,7 +256,7 @@ def set_snooze(target, on):
             snoozed[target] = entry
         _tab_state = {**_tab_state, "snoozed": snoozed}
         _save_locked()
-        return copy.deepcopy(_tab_state)
+        return _browser_doc_locked()
 
 
 def sweep_wakes(live_targets, now=None):
@@ -282,6 +380,14 @@ def rename_session(old, new):
                     ): meta
                     for t, meta in doc["snoozed"].items()
                 },
+                "agent_declarations": {
+                    (
+                        new_prefix + t[len(old_prefix) :]
+                        if t.startswith(old_prefix)
+                        else t
+                    ): declaration
+                    for t, declaration in doc["agent_declarations"].items()
+                },
             }
         )
         _save_locked()
@@ -329,16 +435,17 @@ def import_legacy(pinned_targets, order_targets, snoozed_targets):
             or _tab_state["snoozed"]
             or _tab_state.get("sort", "manual") != "manual"
         ):
-            return copy.deepcopy(_tab_state), False
+            return _browser_doc_locked(), False
         _tab_state = _normalize(
             {
                 "pinned": sessions_of(pinned_targets),
                 "order": sessions_of(order_targets),
                 "snoozed": snoozed,
+                "agent_declarations": _tab_state["agent_declarations"],
             }
         )
         _save_locked()
-        return copy.deepcopy(_tab_state), True
+        return _browser_doc_locked(), True
 
 
 load_tab_state()

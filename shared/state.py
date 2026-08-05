@@ -61,6 +61,9 @@ DEFAULT_SETTINGS = {
         "toast_duration_ms": 8000,
         "max_toasts": 3,
         "stale_tab_threshold_sec": 3600,
+        # "off" keeps every pane in the strip and reserves the zZ sheet for
+        # panes snoozed by hand. Toggled from the tab pull-out's header.
+        "idle_tab_tucking": "on",
         "recent_projects_limit": 20,
     },
     "limits": {
@@ -82,13 +85,31 @@ DEFAULT_SETTINGS = {
         "api_token": "",
     },
     "access": {
-        # Temporary open-access window. A live window lets ONE client from
-        # these networks fetch `/` and walk away with the auth cookie.
-        # Comma-separated CIDRs; an unparseable entry is dropped, and an
-        # empty list means the window can never admit anyone.
-        "open_networks": "10.0.0.0/8",
+        # Networks allowed to onboard — both the open-access window and the
+        # device-approval request check this. Comma-separated CIDRs; an
+        # unparseable entry is dropped, and an empty list means nobody can
+        # onboard by either route.
+        #
+        # All private ranges rather than one LAN: a VPN client is an
+        # authenticated member of the network but is handed an address from
+        # whatever pool its concentrator uses, which is frequently not the
+        # LAN's. Public addresses stay refused, and this is a second fence
+        # regardless — Flask binds loopback, nginx listens on the LAN address,
+        # and neither route hands over anything without a human approving it.
+        # CGNAT (100.64/10) is included because Tailscale and carrier NAT
+        # both live there.
+        "open_networks": (
+            "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,fd00::/8"
+        ),
         "open_default_minutes": 5,
         "open_max_minutes": 60,
+        # Device approval requests — the pull half of onboarding. A device on
+        # `open_networks` asks to be let in and a logged-in session approves
+        # it, so the allowlist above is shared rather than duplicated: one
+        # place to widen or narrow the trust boundary.
+        "request_ttl_minutes": 5,
+        "request_max_pending": 3,
+        "request_cooldown_sec": 30,
     },
 }
 

@@ -6,12 +6,32 @@ Phone-friendly web terminal interface for managing Claude Code tmux sessions. Si
 
 ```
 serve.py              Flask app factory — registers blueprints, starts background threads
-index.html            Single page (~393 lines) — all panels are collapsible sections, no routing
-js/                   13 ES6 modules loaded via <script> tags in dependency order (no bundler)
-css/                  10 CSS modules — hand-rolled, no framework
-routes/               Flask blueprints, one per feature domain (8 blueprints + 1 WebSocket handler)
+index.html            Single page — all panels are collapsible sections, no routing
+js/                   ES6 modules loaded via <script> tags in dependency order (no bundler)
+css/                  CSS modules — hand-rolled, no framework
+routes/               Flask blueprints, one per feature domain, + a WebSocket handler
 shared/               state.py (all mutable state), tmux.py (tmux/X11 helpers), utils.py
 ```
+
+`js/` and `routes/` are both **many small modules**, one per feature domain — not a couple of large
+files. Locate by domain rather than reading everything: `ls js/ routes/`.
+
+<!-- File/module counts were removed 2026-08-01: every one had drifted (index.html was
+     described as ~393 lines when it was 532; 13 js modules when there were 17; 8
+     blueprints when there were 15). Run `ls` — don't restate counts that go stale. -->
+
+## Auth is live — read this before touching the server
+
+**Every endpoint requires a shared secret.** `auth_token` lives in the repo root (0600, gitignored,
+auto-generated on first start). The browser logs in once at `/login` and holds an HMAC cookie;
+scripts pass `X-Assist-Token` or `?token=`. **Exempt: `/login`, `/health`, `/api/cli-proxy`.**
+
+**Any test script hitting the API must send the token or it gets 401** — that is the most likely
+cause of a sudden "everything returns 401". Rotate by deleting `auth_token` and restarting.
+
+Flask binds **127.0.0.1 only**; nginx listens on the LAN address and forwards to loopback, so no
+client URL changed. **The nginx vhost lives in a separate infrastructure repo** — not here, so a
+fresh clone of this repo will not reproduce LAN access on its own.
 
 **No build step.** Frontend is plain ES6 + CSS custom properties. No npm, no bundler, no framework. This is deliberate — zero frontend dependencies.
 
@@ -67,7 +87,9 @@ Python changes (serve.py, routes/) require restart. HTML/JS/CSS are served direc
 
 ## Blueprint Pattern
 
-New routes follow the existing pattern: one blueprint per feature domain, registered in `serve.py:create_app()`. Current blueprints: static, input, terminal, git, commands, autoyes, automate, container, poll, settings. WebSocket streaming is registered separately via `register_streaming(sock)`.
+New routes follow the existing pattern: one blueprint per feature domain, registered in
+`serve.py:create_app()`. See `routes/` for the current set. WebSocket streaming is registered
+separately via `register_streaming(sock)`.
 
 ## Key Behaviors
 

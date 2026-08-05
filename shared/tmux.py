@@ -1,89 +1,18 @@
 """shared/tmux.py — tmux and X11/macOS interaction helpers."""
 
-import os
 import platform
-import re
 import subprocess
-import time
 import uuid
 
+from shared.agent_identity import (
+    _VERSION_CMD_RE,
+    _has_wrapper_descendant,
+    refine_with_content,
+    resolve_process,
+)
 from shared.state import WS_SEND_TIMEOUT
 
 _IS_MAC = platform.system() == "Darwin"
-
-# Wrapper-TUI detection: when a pane runs a script that exec's docker/podman
-# to host the real TUI (e.g. claude inside docker via claude-mount.sh), the
-# in-container TUI writes to its own pty. The host tmux pane receives the
-# output but never sees clean erase-codes between animation frames, so stale
-# cells accumulate above the live viewport. Capturing only the visible
-# screen (`-S 0`) hides the accumulated mess.
-_WRAPPER_COMMS = ("docker", "podman", "lxc-attach", "kubectl")
-
-# Native-TUI detection: claude running directly in the host pane renders on
-# the MAIN screen (alternate_on=0) with a diff-based renderer that skips
-# cells it believes unchanged (e.g. runs of spaces). After a reflow or a
-# frame taller than the pane, its model diverges from the tmux grid and the
-# skipped cells keep stale characters. SIGWINCH-via-resize triggers exactly
-# those diff redraws, so the heal for these panes is Ctrl+L (full
-# clear-and-repaint, re-renders in-flight typed input). Note: npx-launched
-# claude shows comm "node" — too generic to include safely.
-_NATIVE_TUI_COMMS = ("claude",)
-_WRAPPER_CACHE: dict[str, tuple[float, bool]] = {}
-_WRAPPER_CACHE_TTL = 5.0  # seconds
-# Entries for dead targets are never evicted individually; just reset the
-# whole cache when it grows past this (it repopulates within one TTL).
-_WRAPPER_CACHE_MAX = 256
-
-
-def _has_wrapper_descendant(target, pane_pid):
-    """True if any descendant of pane_pid is a known TUI-wrapper.
-
-    Cached per target for 5s to avoid scanning /proc on every poll. Linux-
-    only path via /proc; falls back to False on macOS or any read error.
-    """
-    if pane_pid is None or _IS_MAC:
-        return False
-    now = time.time()
-    cached = _WRAPPER_CACHE.get(target)
-    if cached and now - cached[0] < _WRAPPER_CACHE_TTL:
-        return cached[1]
-    if len(_WRAPPER_CACHE) > _WRAPPER_CACHE_MAX:
-        _WRAPPER_CACHE.clear()
-    try:
-        children: dict[int, list[tuple[int, str]]] = {}
-        for entry in os.listdir("/proc"):
-            if not entry.isdigit():
-                continue
-            try:
-                # comm can contain spaces and parens — find the LAST `)`
-                # then parse the fixed fields that follow.
-                with open(f"/proc/{entry}/stat") as f:
-                    raw = f.read()
-                close = raw.rfind(")")
-                if close < 0:
-                    continue
-                ppid = int(raw[close + 2:].split()[1])
-                with open(f"/proc/{entry}/comm") as f:
-                    comm = f.read().strip()
-                children.setdefault(ppid, []).append((int(entry), comm))
-            except (OSError, ValueError, IndexError):
-                continue
-        stack = [int(pane_pid)]
-        seen = set()
-        while stack:
-            pid = stack.pop()
-            if pid in seen:
-                continue
-            seen.add(pid)
-            for cpid, ccomm in children.get(pid, []):
-                if ccomm in _WRAPPER_COMMS:
-                    _WRAPPER_CACHE[target] = (now, True)
-                    return True
-                stack.append(cpid)
-        _WRAPPER_CACHE[target] = (now, False)
-        return False
-    except Exception:
-        return False
 
 # tmux `send-keys -l` has an internal command buffer limit around 16 KB
 # (fails with "command too long"). Above this threshold we fall back to
@@ -121,10 +50,6 @@ TMUX_KEY_MAP = {
     "End": "End",
     "Home": "Home",
 }
-
-# Claude Code native installs run as version-named binaries (e.g. `2.1.206`).
-_VERSION_CMD_RE = re.compile(r"\d+(?:\.\d+){1,3}")
-
 
 def prettify_command(cmd):
     """Human-readable pane command: version-named binaries render as `claude`."""
@@ -308,6 +233,10 @@ def capture_pane(target, lines=2000, tui=None):
             info["command_display"] = prettify_command(info.get("command", ""))
             info["alternate_on"] = alternate_on
 
+    # Capture range and redraw behavior must use process identity here: content
+    # fingerprints are not available until after this function captures.
+    process_kind = resolve_process(target, pane_pid, info.get("command", ""))
+
     # Wrapper detection exposed to the streamer so periodic self-heal can
     # send Ctrl+L (which reaches the in-container TUI) instead of a
     # resize-window toggle (which doesn't). Does NOT affect the capture
@@ -315,13 +244,13 @@ def capture_pane(target, lines=2000, tui=None):
     info["is_wrapper"] = (not alternate_on) and _has_wrapper_descendant(target, pane_pid)
     # Native claude on the main screen needs the same Ctrl+L heal — its
     # diff renderer leaves stale cells that SIGWINCH redraws can't clear.
-    info["is_native_tui"] = (not alternate_on) and info.get("command") in _NATIVE_TUI_COMMS
+    info["is_native_tui"] = (not alternate_on) and process_kind == "claude"
 
     capture_args = ["tmux", "capture-pane", "-e", "-p", "-t", target]
     # Claude writes its transcript into tmux scrollback even while on the
     # alternate screen (unlike a true TUI such as opencode), so keep full
     # scrollback for it — mirrors the frontend's never-TUI exemption.
-    claude_pane = prettify_command(info.get("command", "")) == "claude"
+    claude_pane = process_kind == "claude"
     as_tui = (alternate_on and not claude_pane) if tui is None else bool(tui)
     info["capture_tui"] = as_tui
     if as_tui:
@@ -347,6 +276,10 @@ def capture_pane(target, lines=2000, tui=None):
     while lines_list and not lines_list[-1]:
         lines_list.pop()
     content = "\n".join(lines_list)
+    info["agent_kind"] = refine_with_content(process_kind, content)
+    info["is_native_tui"] = (
+        not alternate_on and info["agent_kind"] == "claude"
+    )
     return content, info
 
 
@@ -382,10 +315,9 @@ def pane_wants_ctrl_l_heal(target):
         if proc.returncode != 0:
             return False
         parts = proc.stdout.strip().split("\t")
-        if parts and parts[0] in _NATIVE_TUI_COMMS:
-            return True
         pane_pid = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
-        return _has_wrapper_descendant(target, pane_pid)
+        agent_kind = resolve_process(target, pane_pid, parts[0] if parts else "")
+        return agent_kind == "claude" or _has_wrapper_descendant(target, pane_pid)
     except Exception:
         return False
 

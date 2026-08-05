@@ -14,6 +14,7 @@ from pathlib import Path
 from flask import Blueprint, jsonify, request
 
 import shared.state as state
+from shared.agent_identity import declare_agent_command
 from shared.tmux import tmux_send_keys, tmux_send_text
 from shared.utils import load_json, save_json
 
@@ -259,8 +260,12 @@ def _automate_start_inner(data, prompt):
         env_prefix += f"CLAUDE_CMD={shlex.quote(claude_cmd)} "
     cmd = f"{env_prefix}bash {state.CLAUDE_MOUNT_SCRIPT} -n '{escaped_prompt}'"
 
-    tmux_send_text(f"{session_name}:0.0", cmd)
-    tmux_send_keys(f"{session_name}:0.0", "Enter")
+    target = f"{session_name}:0.0"
+    tmux_send_text(target, cmd)
+    tmux_send_keys(target, "Enter")
+    # The mount script launches Claude behind Docker, outside the pane's local
+    # descendant tree. Declare the server-owned launch explicitly.
+    declare_agent_command(target, claude_cmd or "claude")
 
     now = time.time()
     with state.automate_lock:
@@ -623,8 +628,10 @@ def _automate_relaunch(run_id):
     if claude_cmd:
         env_prefix += f"CLAUDE_CMD={shlex.quote(claude_cmd)} "
     cmd = f"{env_prefix}bash {state.CLAUDE_MOUNT_SCRIPT} -n '{escaped_prompt}'"
-    tmux_send_text(f"{session_name}:0.0", cmd)
-    tmux_send_keys(f"{session_name}:0.0", "Enter")
+    target = f"{session_name}:0.0"
+    tmux_send_text(target, cmd)
+    tmux_send_keys(target, "Enter")
+    declare_agent_command(target, claude_cmd or "claude")
 
     now = time.time()
     with state.automate_lock:

@@ -193,6 +193,7 @@ async function runSavedCommand(index) {
                 ws: null,
                 wsConnected: false,
                 lastContent: '',
+                agentKind: 'unknown',
                 label: cmd.name,
             };
             openCmdOutput(session);
@@ -277,6 +278,7 @@ function connectSplitWs(session) {
             // Streamer sends type:'full'; accept legacy 'capture' too
             if (data.type !== 'full' && data.type !== 'capture') return;
             state.lastContent = data.content || '';
+            state.agentKind = (data.info && data.info.agent_kind) || 'unknown';
             const currentSession = _termTarget ? _termTarget.split(':')[0] : '';
             if (_cmdOutputOpen && currentSession === session) {
                 const pre = document.getElementById('cmd-output-pre');
@@ -284,7 +286,11 @@ function connectSplitWs(session) {
                 pre.textContent = state.lastContent;
                 container.scrollTop = container.scrollHeight;
                 // Detect smart actions on split pane content
-                const detected = detectSmartActions(stripAnsi(state.lastContent), state.target);
+                const detected = detectSmartActions(
+                    stripAnsi(state.lastContent),
+                    state.target,
+                    state.agentKind
+                );
                 if (detected) renderSmartActions(detected, state.target);
             }
         } catch (e) {}

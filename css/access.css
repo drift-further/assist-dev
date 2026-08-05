@@ -67,3 +67,76 @@
 }
 
 .access-preset:active { background: rgba(255, 149, 0, 0.16); }
+
+/* --- Device approval modal -------------------------------------------------
+   Sits above the access sheet: a pending request must be answered or left to
+   expire, so this one dims the app and has no dismiss affordance. */
+
+.approve-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(8, 12, 16, 0.82);
+    z-index: 998;
+    display: none;
+}
+.approve-backdrop.visible { display: block; }
+
+.approve-sheet {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: min(92vw, 340px);
+    background: var(--bg);
+    border: 1px solid var(--amber);
+    border-radius: 6px;
+    z-index: 999;
+    display: none;
+}
+.approve-sheet.visible { display: block; }
+
+.approve-sheet-header {
+    padding: 12px 14px;
+    border-bottom: 1px solid #1d2b36;
+}
+.approve-sheet-title {
+    color: var(--amber);
+    font-size: 13px;
+    letter-spacing: 0.5px;
+}
+.approve-sheet-body { padding: 14px; }
+
+.approve-card + .approve-card {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid #1d2b36;
+}
+.approve-code {
+    font-size: 34px;
+    letter-spacing: 10px;
+    text-indent: 10px;
+    color: var(--cyan);
+    text-align: center;
+    margin-bottom: 8px;
+}
+.approve-meta {
+    color: #5a6b7a;
+    font-size: 12px;
+    text-align: center;
+    line-height: 1.6;
+}
+.approve-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 14px;
+}
+.approve-actions button {
+    flex: 1;
+    background: transparent;
+    border-radius: 4px;
+    padding: 13px;
+    font: inherit;
+    font-size: 13px;
+}
+.approve-deny { color: var(--red); border: 1px solid var(--red); }
+.approve-ok { color: var(--green); border: 1px solid var(--green); }

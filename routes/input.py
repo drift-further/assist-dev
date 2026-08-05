@@ -10,6 +10,7 @@ from pathlib import Path
 from flask import Blueprint, jsonify, request
 
 import shared.state as state
+from shared.agent_identity import declare_agent_command
 from shared.tmux import (
     TMUX_KEY_MAP,
     get_clipboard,
@@ -133,6 +134,10 @@ def type_text():
         if enter:
             time.sleep(0.05)
             tmux_send_keys(target, "Enter")
+        # Declarations belong to explicit agent launches Assist typed, never to
+        # the generic session launcher whose init command may leave a bare shell.
+        if text and enter:
+            declare_agent_command(target, text)
         state.touch_activity(target)
         if text and not no_history:
             add_to_history(text)
