@@ -95,8 +95,9 @@ let _sessionStates = {};        // target -> { state, since, prevState }
 
 // Input state
 let _sending = false;
-let _attachedFile = null;
-let _attachedFilePath = null;   // pre-uploaded path (clipboard images)
+// Attachments for the message being composed. Each entry uploads on attach, so
+// it carries {id, name, size, path, uploading}; the tray clears on send.
+let _attachments = [];
 
 // Notification state
 let _notifPermission = typeof Notification !== 'undefined' ? Notification.permission : 'denied';

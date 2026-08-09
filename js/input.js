@@ -20,49 +20,87 @@ function initClipboardImagePaste() {
     });
 }
 
-async function handleClipboardImage(blob) {
-    // Generate a filename from type (e.g. image/png → clipboard_1711612800.png)
+function handleClipboardImage(blob) {
+    // Generate a filename from type (e.g. image/png -> clipboard_1711612800.png)
     const ext = blob.type.split('/')[1] || 'png';
     const ts = Math.floor(Date.now() / 1000);
-    const file = new File([blob], 'clipboard_' + ts + '.' + ext, { type: blob.type });
+    addAttachment(new File([blob], 'clipboard_' + ts + '.' + ext, { type: blob.type }));
+}
 
-    // Show uploading state in attach bar
-    const attachBar = document.getElementById('attach-bar');
-    const attachName = document.getElementById('attach-name');
-    const attachSize = document.getElementById('attach-size');
-    attachName.textContent = file.name;
-    attachSize.textContent = formatFileSize(file.size);
-    attachBar.classList.add('visible', 'uploading');
+// ================================================================
+// Attachments — several files per message
+// ================================================================
+// Each file uploads the moment it is attached rather than on send, so the
+// transfer overlaps with typing and doPaste() only has to append paths.
+// /upload takes one file per request, so N files is N requests and the
+// server's streaming and size checks are reused untouched.
 
-    // Show flash
-    showFlash('uploading', 'Uploading image...');
+let _attachSeq = 0;
 
+function addAttachment(file) {
+    const maxMb = (SETTINGS && SETTINGS.limits && SETTINGS.limits.max_upload_mb) || 2048;
+    if (file.size > maxMb * 1024 * 1024) {
+        showFlash('error', file.name + ' too large (' + maxMb + 'MB max)');
+        return;
+    }
+    const entry = {
+        id: 'a' + (++_attachSeq),
+        name: file.name,
+        size: file.size,
+        path: null,
+        uploading: true,
+    };
+    _attachments.push(entry);
+    renderAttachments();
+    _uploadAttachment(entry, file);
+}
+
+async function _uploadAttachment(entry, file) {
     try {
         const fd = new FormData();
         fd.append('file', file);
         const resp = await fetch('/upload', { method: 'POST', body: fd });
         const data = await resp.json();
         if (data.ok) {
-            // Store as attached file path (send flow will append it)
-            _attachedFile = file;
-            _attachedFilePath = data.path;
-            attachName.textContent = file.name + ' \u2713';
-            attachBar.classList.remove('uploading');
-            showFlash('sent', 'Image ready');
+            entry.path = data.path;
+            entry.uploading = false;
         } else {
-            attachBar.classList.remove('visible', 'uploading');
-            showFlash('error', data.error || 'Upload failed');
+            _attachments = _attachments.filter(a => a.id !== entry.id);
+            showFlash('error', data.error || (file.name + ': upload failed'));
         }
     } catch (e) {
-        attachBar.classList.remove('visible', 'uploading');
-        showFlash('error', 'Upload failed');
+        _attachments = _attachments.filter(a => a.id !== entry.id);
+        showFlash('error', file.name + ': upload failed');
     }
+    renderAttachments();
+}
+
+function renderAttachments() {
+    const bar = document.getElementById('attach-bar');
+    if (!bar) return;
+    if (!_attachments.length) {
+        bar.classList.remove('visible');
+        bar.innerHTML = '';
+        return;
+    }
+    bar.innerHTML = _attachments.map(a => `
+        <span class="attach-chip${a.uploading ? ' uploading' : ''}">
+            <span class="attach-chip-name">&#128206; ${escHtml(a.name)}</span>
+            <span class="attach-chip-size">${a.uploading ? '…' : formatFileSize(a.size)}</span>
+            <button class="attach-remove" onclick="removeAttachment('${a.id}')"
+                    aria-label="Remove ${escHtml(a.name)}">&times;</button>
+        </span>`).join('');
+    bar.classList.add('visible');
 }
 
 async function doPaste() {
     if (_sending) return;
     const raw = input.value.replace(/\r/g, '').replace(/\n+$/, '').trim();
-    if (!raw && !_attachedFile) {
+    if (_attachments.some(a => a.uploading)) {
+        showFlash('uploading', 'Still uploading…');
+        return;
+    }
+    if (!raw && !_attachments.length) {
         // Empty send = press Enter in terminal
         if (_termTarget) {
             try { await fetch('/type', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text: '', enter: true, target: getInputTarget()}) }); } catch(e) {}
@@ -74,37 +112,13 @@ async function doPaste() {
     if (typeof renderSegChips === 'function') renderSegChips();
     let finalText = raw;
 
-    // Step 1: upload file if attached
-    if (_attachedFile) {
-        // If already uploaded (clipboard image), use stored path
-        if (_attachedFilePath) {
-            const atRef = '@' + _attachedFilePath;
-            finalText = raw ? raw + ' ' + atRef : atRef;
-            removeAttachment();
-        } else {
-            showFlash('uploading', 'Uploading...');
-            try {
-                const fd = new FormData();
-                fd.append('file', _attachedFile);
-                const resp = await fetch('/upload', { method: 'POST', body: fd });
-                const data = await resp.json();
-                if (data.ok) {
-                    const atRef = '@' + data.path;
-                    finalText = raw ? raw + ' ' + atRef : atRef;
-                    removeAttachment();
-                } else {
-                    showFlash('error', data.error || 'Upload failed');
-                    input.value = raw;
-                    _sending = false;
-                    return;
-                }
-            } catch (e) {
-                showFlash('error', 'Upload failed');
-                input.value = raw;
-                _sending = false;
-                return;
-            }
-        }
+    // Step 1: append one @ref per attachment. They uploaded when they were
+    // attached, and the guard above already refused to send while any are still
+    // in flight, so every entry here has a path.
+    if (_attachments.length) {
+        const refs = _attachments.map(a => '@' + a.path).join(' ');
+        finalText = raw ? raw + ' ' + refs : refs;
+        clearAttachments();
     }
 
     // Step 2: send combined text
@@ -140,25 +154,20 @@ async function doPaste() {
 function triggerUpload() { document.getElementById('file-input').click(); }
 
 function onFileSelected(inp) {
-    const file = inp.files && inp.files[0];
-    if (!file) return;
-    const maxMb = (SETTINGS && SETTINGS.limits && SETTINGS.limits.max_upload_mb) || 2048;
-    if (file.size > maxMb * 1024 * 1024) {
-        showFlash('error', 'Too large (' + maxMb + 'MB max)');
-        inp.value = '';
-        return;
-    }
-    _attachedFile = file;
-    document.getElementById('attach-name').textContent = file.name;
-    document.getElementById('attach-size').textContent = formatFileSize(file.size);
-    document.getElementById('attach-bar').classList.add('visible');
+    // The picker is `multiple`, and tapping attach again adds to the tray rather
+    // than replacing it — both ways of building up a set on a phone.
+    for (const file of inp.files || []) addAttachment(file);
     inp.value = '';
 }
 
-function removeAttachment() {
-    _attachedFile = null;
-    _attachedFilePath = null;
-    document.getElementById('attach-bar').classList.remove('visible', 'uploading');
+function removeAttachment(id) {
+    _attachments = _attachments.filter(a => a.id !== id);
+    renderAttachments();
+}
+
+function clearAttachments() {
+    _attachments = [];
+    renderAttachments();
 }
 
 async function toggleFavorite(text, event) {

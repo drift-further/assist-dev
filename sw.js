@@ -1,5 +1,5 @@
 // sw.js — Service worker for Assist (network-first for static assets, cache fallback when offline)
-const VERSION = 'assist-v3-007';
+const VERSION = 'assist-v3-008';
 const STATIC_CACHE = 'assist-static-' + VERSION;
 const STATIC_URLS = [
     '/',
@@ -12,9 +12,9 @@ const STATIC_URLS = [
     '/css/drawers.css',
     '/css/widgets.css',
     '/css/commands.css',
-    '/js/state.js?v=2',
+    '/js/state.js?v=3',
     '/js/ui.js?v=3',
-    '/js/input.js?v=5',
+    '/js/input.js?v=6',
     '/js/terminal.js?v=19',
     '/js/actions.js?v=9',
     '/js/commands.js?v=4',

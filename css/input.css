@@ -127,23 +127,29 @@
 .btn-upload:active { background: rgba(255, 149, 0, 0.15); box-shadow: 0 0 16px rgba(255, 149, 0, 0.3); }
 
 /* File attach bar */
+/* One chip per attached file, scrolling sideways so N files never cost a second
+   row of height on a phone. */
 .attach-bar {
-    display: none; align-items: center; gap: 8px; padding: 8px 12px;
+    display: none; align-items: center; gap: 6px; padding: 6px 8px;
     background: rgba(255, 149, 0, 0.06); border: 1px solid rgba(255, 149, 0, 0.25);
     flex-shrink: 0; animation: fadeSlide 0.2s ease-out;
+    overflow-x: auto; white-space: nowrap; scrollbar-width: none;
 }
+.attach-bar::-webkit-scrollbar { display: none; }
 .attach-bar.visible { display: flex; }
-.attach-bar.uploading {
-    border-color: rgba(255, 149, 0, 0.6);
-    animation: upload-pulse 1s ease-in-out infinite;
-}
-.attach-bar.uploading .attach-name { color: var(--amber); }
 @keyframes upload-pulse {
     0%, 100% { background: rgba(255, 149, 0, 0.06); }
     50% { background: rgba(255, 149, 0, 0.15); }
 }
-.attach-name { flex: 1; font-size: 11px; font-weight: 600; color: var(--amber); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: 0.3px; }
-.attach-size { font-size: 9px; color: var(--text-dim); flex-shrink: 0; letter-spacing: 0.5px; }
+.attach-chip {
+    display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
+    padding: 3px 4px 3px 8px;
+    background: rgba(255, 149, 0, 0.08); border: 1px solid rgba(255, 149, 0, 0.35);
+    max-width: 62vw;
+}
+.attach-chip.uploading { animation: upload-pulse 1s ease-in-out infinite; }
+.attach-chip-name { font-size: 11px; font-weight: 600; color: var(--amber); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: 0.3px; }
+.attach-chip-size { font-size: 9px; color: var(--text-dim); flex-shrink: 0; letter-spacing: 0.5px; }
 .attach-remove {
     width: 28px; height: 28px; border: 1px solid rgba(255, 0, 64, 0.3); background: transparent;
     color: var(--red); font-size: 16px; font-family: var(--font); cursor: pointer;
