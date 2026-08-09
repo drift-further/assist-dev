@@ -95,8 +95,12 @@ function renderLists() {
         if (items.length > 0) {
             for (const f of items) {
                 const display = f.display || f.text;
-                html += `<div class="list-item" onclick="loadText(this)" data-text="${escHtml(f.text)}">
+                const handle = (f.handle || '').trim();
+                html += `<div class="list-item" onclick="loadText(this)" data-text="${escHtml(f.text)}"
+                    data-handle="${escHtml(handle)}" data-id="${escHtml(f.id || '')}">
+                    ${handle ? `<span class="list-item-handle">${escHtml(handle)}</span>` : ''}
                     <span class="list-item-text">${highlightMatch(display, _filterText)}</span>
+                    <button class="list-item-edit" aria-label="Name this block">&#9998;</button>
                     <button class="list-item-star fav">&#9733;</button>
                 </div>`;
             }
@@ -135,6 +139,14 @@ function renderLists() {
 // history entries (raw text injected into a JS string literal). Capture
 // phase so the parent .list-item's loadText onclick never fires.
 listArea.addEventListener('click', function(e) {
+    const edit = e.target.closest('.list-item-edit');
+    if (edit) {
+        e.preventDefault();
+        e.stopPropagation();
+        const item = edit.closest('.list-item');
+        if (item && item.dataset.id) segEdit(item.dataset.id);
+        return;
+    }
     const star = e.target.closest('.list-item-star');
     if (!star) return;
     e.preventDefault();
@@ -144,9 +156,19 @@ listArea.addEventListener('click', function(e) {
 }, true);
 
 function loadText(el) {
-    input.value = el.dataset.text;
+    const handle = (el.dataset.handle || '').trim();
+    if (handle) {
+        // A segment is a block you ADD to what you're writing; a plain favorite is a
+        // whole prompt you RECALL. So handled rows append, unhandled rows replace.
+        const cur = input.value;
+        const sep = cur && !/\s$/.test(cur) ? ' ' : '';
+        input.value = cur + sep + '[' + handle + '] ';
+    } else {
+        input.value = el.dataset.text;
+    }
     closeBottomDrawer();
     input.focus();
+    if (typeof renderSegChips === 'function') renderSegChips();
 }
 
 function clearHistFilter() {

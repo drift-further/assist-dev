@@ -15,6 +15,7 @@
     <link rel="stylesheet" href="/css/widgets.css">
     <link rel="stylesheet" href="/css/commands.css">
     <link rel="stylesheet" href="/css/autocomplete.css">
+    <link rel="stylesheet" href="/css/segments.css">
     <link rel="stylesheet" href="/css/container.css">
     <link rel="stylesheet" href="/css/studio.css?v=3">
     <link rel="stylesheet" href="/css/access.css?v=2">
@@ -460,9 +461,11 @@
         <input type="file" id="file-input" style="display:none" onchange="onFileSelected(this)">
         <div class="input-wrap">
             <textarea id="text-input" placeholder="Speak or type..." enterkeyhint="send"></textarea>
+            <div id="seg-chips" class="seg-chips"></div>
             <div id="flash" class="flash-overlay"></div>
             <div id="ac-popup" class="ac-popup"></div>
         </div>
+        <div id="seg-sheet" class="seg-sheet"></div>
         <div class="attach-bar" id="attach-bar">
             <span style="font-size:14px;flex-shrink:0">&#128206;</span>
             <span class="attach-name" id="attach-name"></span>
@@ -520,9 +523,10 @@
     </div>
 
     <script src="/js/state.js?v=2"></script>
-    <script src="/js/ui.js?v=2"></script>
-    <script src="/js/input.js?v=4"></script>
-    <script src="/js/autocomplete.js?v=1"></script>
+    <script src="/js/ui.js?v=3"></script>
+    <script src="/js/input.js?v=5"></script>
+    <script src="/js/autocomplete.js?v=2"></script>
+    <script src="/js/segments.js?v=1"></script>
     <script src="/js/terminal.js?v=19"></script>
     <script src="/js/actions.js?v=9"></script>
     <script src="/js/commands.js?v=4"></script>

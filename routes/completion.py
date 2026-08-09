@@ -13,9 +13,10 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
+import shared.segments as segments
 import shared.state as state
 from shared.tmux import tmux_exact_target
-from shared.utils import resolve_target
+from shared.utils import load_json, resolve_target
 from routes.commands import _parse_skill_frontmatter, _scan_skills_dir
 
 completion_bp = Blueprint("completion_bp", __name__)
@@ -161,3 +162,38 @@ def complete_skills():
         skills = prefix + substr
 
     return jsonify({"ok": True, "skills": skills})
+
+
+def _body_preview(body, limit=60):
+    """One-line gist of a segment body, for the typeahead's secondary row."""
+    flat = " ".join((body or "").split())
+    return flat[:limit] + ("…" if len(flat) > limit else "")
+
+
+@completion_bp.route("/complete/segments")
+def complete_segments():
+    """Segments for [-autocomplete: the favorites that carry a handle.
+
+    Read-only on purpose — this runs per keystroke, so it skips the id migration that
+    /history does and simply ignores any entry without a usable handle.
+    """
+    q = (request.args.get("q") or "").strip().lower()
+    items = []
+    for fav in load_json(state.FAVORITES_FILE, default=[]):
+        handle = segments.normalize_handle(fav.get("handle"))
+        if not segments.valid_handle(handle):
+            continue
+        body = fav.get("text") or ""
+        items.append({
+            "handle": handle,
+            "label": fav.get("label") or _body_preview(body),
+            "chars": len(body),
+        })
+    items.sort(key=lambda s: s["handle"])
+
+    if q:
+        prefix = [s for s in items if s["handle"].startswith(q)]
+        substr = [s for s in items if q in s["handle"] and not s["handle"].startswith(q)]
+        items = prefix + substr
+
+    return jsonify({"ok": True, "segments": items})

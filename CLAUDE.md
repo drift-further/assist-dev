@@ -95,6 +95,7 @@ separately via `register_streaming(sock)`.
 
 - **WebSocket terminal streaming**: flask-sock, captures tmux panes, streams to connected clients
 - **Smart actions**: JS pattern detection for permission prompts, numbered options, sudo — surfaces one-tap mobile actions
+- **Prompt segments**: a favorite given a handle becomes `[handle]`; `shared/segments.py` expands it server-side in `/type` (opt-in via an `expand` flag) while history keeps the token form
 - **Auto-yes**: Background scanner with per-session countdown timers for auto-approving prompts
 - **Automate**: Continuous mode — sends prompts, watches for done signals, relaunches
 

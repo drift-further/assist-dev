@@ -101,6 +101,7 @@ All configuration is environment-variable based, via `.env` in the repo. See `en
 | `ASSIST_CLI_DIR` | Working directory used when invoking `ASSIST_CLI_BIN` | `~` |
 | `ASSIST_CLI_ALLOWED` | Comma-separated allowlist of subcommands (**empty = proxy disabled**) | (empty) |
 | `ASSIST_DB_NAME` | PostgreSQL DB for session history | `claude_archives` |
+| `ASSIST_ALLOWED_ORIGINS` | Extra browser origins accepted by the CSRF check, comma-separated. **Set this on any install that is not the original dev box** — the built-in list in `shared/security.py` hardcodes that machine's hostname and LAN IP, so your phone's address is rejected on POSTs until you add it | (built-in list only) |
 | `DISPLAY` | X11 display for clipboard/key-send | `:1` |
 
 Changes to `.env` require `assist restart` to take effect.
@@ -119,6 +120,8 @@ BduKDRwh…
 ```
 
 To rotate: delete `auth_token` and restart. A new secret is generated and every issued cookie stops matching, because the HMAC key changed.
+
+**Adding a device without typing the token.** A browser that arrives with no token can ask to be let in: it raises an approval request that any already-logged-in session sees and approves or denies. The request path is the one thing not behind the auth gate — a device with no token is exactly who calls it — so it is fenced instead by a LAN allowlist, a cap on pending requests, a per-IP cooldown, and a secret claim that binds an approval to the browser that asked. If you would rather onboard the first device the blunt way, **More → Access → Open** starts a time-boxed open-access window, and the strip across the top of the UI stays lit until it closes.
 
 Only three things are exempt: `/login`, `/health` (a liveness probe carrying no data), and `/api/cli-proxy` — containers have no way to hold the token, so that endpoint is instead restricted to the container subnet at the proxy layer and remains fail-closed on its own `ASSIST_CLI_ALLOWED` allowlist.
 
@@ -150,6 +153,50 @@ server {
 ```
 
 Run `serve.py --host 0.0.0.0` to go back to binding all interfaces — but that re-exposes every endpoint to the network, and is only sane if you have no proxy in front.
+
+## Composing prompts
+
+The composer has three typeaheads. All of them trigger at the start of a line or after
+whitespace, so ordinary shell text is never intercepted.
+
+| Type | Completes | Resolved by |
+|------|-----------|-------------|
+| `@path` | Files and folders under the session's working directory, drilling in one level at a time | The agent in the pane — Assist only enumerates candidates |
+| `/name` | Skills from `~/.claude/skills` and installed plugins | The agent in the pane |
+| `[handle]` | **Segments** — your own reusable blocks of prompt text | **Assist**, server-side, at send time |
+
+### Segments
+
+A segment is a favorite you have given a short handle. Typing `[sol-dist]` sends that
+favorite's entire body, so a 600-word standing instruction costs ten characters of phone
+screen and you can stack several in one prompt:
+
+```
+tighten the poll loop [sol-dist] [house-style]
+```
+
+**To make one:** star any prompt from history, open the **Favs** tab, tap ✎, and give it a
+handle. A favorite *without* a handle keeps its original behaviour — tapping it drops its
+full text into the composer. One *with* a handle appends `[handle] ` to whatever you are
+already writing, because a segment is a block you add rather than a prompt you recall.
+
+While you type, each recognised handle shows as a green block inside the composer, with the
+expanded character count beside it. Tap a block to read that body; tap the count to see
+exactly what the pane will receive. Handles that do not exist show amber and are sent
+literally.
+
+Expansion happens on the server, immediately before the tmux send:
+
+- **Only handles that exist are substituted.** Everything else passes through untouched, so
+  `ls [abc]*`, `arr[0]` and `[0-9]` survive intact. Write `\[handle]` to force a literal.
+- **Segments can reference segments**, up to three levels deep, with a cycle guard.
+- **History stores what you typed, not what was sent** — recalling the prompt brings back the
+  compact token form.
+- Only the composer expands. The saved-command buttons post to the same endpoint and keep
+  sending shell text byte-for-byte.
+
+Segments live in `favorites.json` alongside everything else you have starred; the handle is
+just an extra field, and existing favorites gain one lazily the first time they are read.
 
 ## Connect to Studio
 
@@ -240,10 +287,10 @@ The WebSocket upgrade headers are essential — without them, the terminal falls
 ## Architecture
 
 - **`serve.py`** — Flask + flask-sock app factory, registers blueprints, starts background threads
-- **`routes/`** — Flask blueprints: `terminal`, `input`, `git`, `commands`, `autoyes`, `automate`, `container`, `settings`, `static`, `poll`, `streaming`
-- **`shared/`** — global mutable state, tmux wrappers, utilities
-- **`js/`** — 13 ES6 frontend modules (no framework, no bundler)
-- **`css/`** — 10 CSS modules, mobile-first with custom properties
+- **`routes/`** — 15 Flask blueprints, one per feature domain: `access`, `automate`, `autoyes`, `commands`, `completion`, `container`, `git`, `input`, `poll`, `settings`, `static`, `streaming`, `studio`, `tabstate`, `terminal`
+- **`shared/`** — `state` (all mutable state), `tmux` (tmux/X11 helpers), `utils`, `auth` (shared secret, device approval), `security` (origin allowlist), `agent_identity` (what is actually running in a pane), `segments` ([handle] expansion), `studio_client`, `tab_state`
+- **`js/`** — 18 ES6 frontend modules (no framework, no bundler)
+- **`css/`** — 15 CSS modules, mobile-first with custom properties
 - **`docker/`** — parameterized `Dockerfile`, `entrypoint.sh`, extension definitions (`extensions/*.json`), helper scripts
 - **`assist-ctl`** — low-level start/stop/restart/status shell script (called by `assist`)
 - **`bin/assist`** — high-level CLI installed to `~/.local/bin/assist`

@@ -1,5 +1,5 @@
 // sw.js — Service worker for Assist (network-first for static assets, cache fallback when offline)
-const VERSION = 'assist-v3-006';
+const VERSION = 'assist-v3-007';
 const STATIC_CACHE = 'assist-static-' + VERSION;
 const STATIC_URLS = [
     '/',
@@ -13,8 +13,8 @@ const STATIC_URLS = [
     '/css/widgets.css',
     '/css/commands.css',
     '/js/state.js?v=2',
-    '/js/ui.js?v=2',
-    '/js/input.js?v=4',
+    '/js/ui.js?v=3',
+    '/js/input.js?v=5',
     '/js/terminal.js?v=19',
     '/js/actions.js?v=9',
     '/js/commands.js?v=4',
@@ -53,6 +53,8 @@ self.addEventListener('fetch', event => {
         url.pathname.startsWith('/upload') ||
         url.pathname.startsWith('/history') ||
         url.pathname.startsWith('/favorite') ||
+        url.pathname.startsWith('/complete/') ||
+        url.pathname.startsWith('/segments/') ||
         url.pathname.startsWith('/sudo-password') ||
         url.pathname.startsWith('/autoyes/') ||
         url.pathname.startsWith('/access/') ||

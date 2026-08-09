@@ -71,6 +71,7 @@ async function doPaste() {
     }
     _sending = true;
     input.value = '';
+    if (typeof renderSegChips === 'function') renderSegChips();
     let finalText = raw;
 
     // Step 1: upload file if attached
@@ -111,11 +112,16 @@ async function doPaste() {
         const resp = await fetch('/type', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({text: finalText, enter: true, target: getInputTarget()}),
+            // expand:true is what turns [handle] into its segment body. Only the
+            // composer opts in — the quick-action command buttons POST here too and
+            // must keep sending shell text byte-for-byte.
+            body: JSON.stringify({text: finalText, enter: true, expand: true, target: getInputTarget()}),
         });
         const data = await resp.json();
         if (data.ok) {
-            showFlash('sent', data.via === 'tmux' ? 'Sent (tmux)' : 'Sent!');
+            const grew = data.sent_chars && data.sent_chars > finalText.length;
+            showFlash('sent', grew ? 'Sent · ' + data.sent_chars + ' ch'
+                                   : (data.via === 'tmux' ? 'Sent (tmux)' : 'Sent!'));
             lastAction = Date.now();
             updateStatusTime();
             loadHistory();
@@ -163,7 +169,13 @@ async function toggleFavorite(text, event) {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({text: text}),
         });
-        await resp.json();
+        const data = await resp.json();
+        // The server refuses to unstar a named segment on a bare tap — other prompts
+        // may reference it. Open the editor so the delete is a deliberate act.
+        if (data.action === 'kept' && data.id) {
+            segEdit(data.id);
+            return;
+        }
         loadHistory();
     } catch (e) {}
 }

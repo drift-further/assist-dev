@@ -9,6 +9,7 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
+import shared.segments as segments
 import shared.state as state
 from shared.agent_identity import declare_agent_command
 from shared.tmux import (
@@ -31,12 +32,21 @@ from shared.utils import (
 input_bp = Blueprint("input_bp", __name__)
 
 
+def _load_favorites():
+    """Favorites with stable ids guaranteed, persisting the upgrade if it minted any."""
+    favs = load_json(state.FAVORITES_FILE, default=[])
+    favs, changed = segments.ensure_ids(favs)
+    if changed:
+        save_json(state.FAVORITES_FILE, favs)
+    return favs
+
+
 @input_bp.route("/history")
 def history():
     return jsonify(
         {
             "history": load_json(state.HISTORY_FILE, default=[]),
-            "favorites": load_json(state.FAVORITES_FILE, default=[]),
+            "favorites": _load_favorites(),
         }
     )
 
@@ -48,17 +58,96 @@ def favorite():
     if not text:
         return jsonify({"ok": False, "error": "No text provided"}), 400
 
-    favs = load_json(state.FAVORITES_FILE, default=[])
-    existing = [f for f in favs if f["text"] == text]
+    favs = _load_favorites()
+    existing = next((f for f in favs if f.get("text") == text), None)
     if existing:
-        favs = [f for f in favs if f["text"] != text]
+        # A favorite carrying a handle is a named segment other prompts may reference,
+        # so a stray star tap must not silently delete it. The caller re-sends with
+        # force to confirm.
+        if segments.normalize_handle(existing.get("handle")) and not data.get("force"):
+            return jsonify({
+                "ok": True,
+                "action": "kept",
+                "reason": "segment",
+                "id": existing.get("id"),
+                "handle": existing.get("handle"),
+            })
+        favs = [f for f in favs if f.get("text") != text]
         action = "removed"
     else:
-        favs.insert(0, {"text": text, "ts": time.strftime("%Y-%m-%dT%H:%M:%S")})
+        favs.insert(0, {
+            "id": "f_" + uuid.uuid4().hex[:8],
+            "text": text,
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        })
         action = "added"
 
     save_json(state.FAVORITES_FILE, favs)
     return jsonify({"ok": True, "action": action})
+
+
+@input_bp.route("/favorite/<fid>", methods=["PATCH"])
+def update_favorite(fid):
+    """Assign or clear a handle, edit the body, retitle. Promotes a favorite to a segment."""
+    data = request.get_json(silent=True) or {}
+    favs = _load_favorites()
+    fav = next((f for f in favs if f.get("id") == fid), None)
+    if fav is None:
+        return jsonify({"ok": False, "error": "No such favorite"}), 404
+
+    if "handle" in data:
+        handle = segments.normalize_handle(data.get("handle"))
+        if handle:
+            if not segments.valid_handle(handle):
+                return jsonify({
+                    "ok": False,
+                    "error": "Handle must be 2-32 chars: lowercase letters, digits, . _ -",
+                }), 400
+            owner = segments.handle_owner(favs, handle, ignore_id=fid)
+            if owner is not None:
+                return jsonify({"ok": False, "error": f"[{handle}] is already taken"}), 409
+            fav["handle"] = handle
+        else:
+            fav.pop("handle", None)
+
+    if "text" in data:
+        text = (data.get("text") or "").strip()
+        if not text:
+            return jsonify({"ok": False, "error": "Body cannot be empty"}), 400
+        fav["text"] = text
+
+    if "label" in data:
+        label = (data.get("label") or "").strip()
+        if label:
+            fav["label"] = label
+        else:
+            fav.pop("label", None)
+
+    save_json(state.FAVORITES_FILE, favs)
+    return jsonify({"ok": True, "favorite": fav})
+
+
+@input_bp.route("/favorite/<fid>", methods=["DELETE"])
+def delete_favorite(fid):
+    favs = _load_favorites()
+    remaining = [f for f in favs if f.get("id") != fid]
+    if len(remaining) == len(favs):
+        return jsonify({"ok": False, "error": "No such favorite"}), 404
+    save_json(state.FAVORITES_FILE, remaining)
+    return jsonify({"ok": True})
+
+
+@input_bp.route("/segments/expand", methods=["POST"])
+def expand_segments():
+    """Authoritative preview: exactly what /type would send for this composer text."""
+    data = request.get_json(silent=True) or {}
+    text = data.get("text") or ""
+    seg_map = segments.segment_map(_load_favorites())
+    return jsonify({
+        "ok": True,
+        "expanded": segments.expand(text, seg_map),
+        "tokens": segments.find_tokens(text, seg_map),
+    })
 
 
 @input_bp.route("/history", methods=["DELETE"])
@@ -126,10 +215,16 @@ def type_text():
     if text and enter:
         text = fix_first_word_case(text)
 
+    # Only the composer opts in. The quick-action command buttons also POST here and
+    # must keep sending shell text byte-for-byte, brackets and all.
+    send_text = text
+    if text and data.get("expand"):
+        send_text = segments.expand(text, segments.segment_map(_load_favorites()))
+
     target = resolve_target(data)
 
     if target and tmux_target_exists(target):
-        if text and not tmux_send_text(target, text):
+        if send_text and not tmux_send_text(target, send_text):
             return jsonify({"ok": False, "error": "tmux send-keys failed"}), 500
         if enter:
             time.sleep(0.05)
@@ -139,15 +234,17 @@ def type_text():
         if text and enter:
             declare_agent_command(target, text)
         state.touch_activity(target)
+        # History stores what was typed, not what was sent — so reloading a prompt
+        # built from segments brings back the compact token form.
         if text and not no_history:
             add_to_history(text)
-        return jsonify({"ok": True, "via": "tmux"})
+        return jsonify({"ok": True, "via": "tmux", "sent_chars": len(send_text)})
 
     if _IS_MAC:
         return jsonify({"ok": False, "error": "No active tmux target — open a session first"}), 500
 
     proc = subprocess.run(
-        ["xdotool", "type", "--clearmodifiers", "--delay", "12", text],
+        ["xdotool", "type", "--clearmodifiers", "--delay", "12", send_text],
         timeout=10,
     )
     if proc.returncode != 0:
@@ -159,7 +256,7 @@ def type_text():
 
     if not no_history:
         add_to_history(text)
-    return jsonify({"ok": True, "via": "xdotool"})
+    return jsonify({"ok": True, "via": "xdotool", "sent_chars": len(send_text)})
 
 
 _UPLOAD_CHUNK = 1024 * 1024  # stream to disk 1MB at a time — never buffer whole file

@@ -23,6 +23,10 @@ function _acDetect() {
     // semantics and avoids false positives on shell paths like `ls /etc`).
     let m = left.match(/^(\s*)\/([^\s/]*)$/);
     if (m) return { type: '/', start: m[1].length, partial: m[2] };
+    // Segment ref: same containment rule as @ — at start or after whitespace, so
+    // `arr[0]` and `ls [ab]*` never open the popup mid-token.
+    m = left.match(/(^|\s)\[([a-z0-9._-]*)$/);
+    if (m) return { type: '[', start: caret - m[2].length - 1, partial: m[2] };
     // File ref: at start or after whitespace; the path may contain slashes.
     m = left.match(/(^|\s)@([^\s]*)$/);
     if (m) return { type: '@', start: caret - m[2].length - 1, partial: m[2] };
@@ -53,6 +57,17 @@ async function _acFetch(d, seq) {
                 primary: '/' + s.name,
                 secondary: s.description || '',
                 insert: '/' + s.name + ' ',
+                keepOpen: false,
+            }));
+        } else if (d.type === '[') {
+            const r = await fetch('/complete/segments?q=' + encodeURIComponent(d.partial));
+            const data = await r.json();
+            if (seq !== _acSeq) return;
+            items = (data.segments || []).map(s => ({
+                kind: 'segment',
+                primary: '[' + s.handle + ']',
+                secondary: s.label || '',
+                insert: '[' + s.handle + '] ',
                 keepOpen: false,
             }));
         } else {
@@ -92,6 +107,8 @@ function _acRender(items) {
     section.className = 'ac-section';
     if (_acType === '/') {
         section.textContent = '/ skills';
+    } else if (_acType === '[') {
+        section.textContent = '[ segments';
     } else {
         const tail = (_acCwd || '').split('/').filter(Boolean).pop() || 'files';
         section.textContent = '@ ' + tail;
@@ -138,6 +155,8 @@ function acActivate(i) {
     const pos = (before + it.insert).length;
     try { input.setSelectionRange(pos, pos); } catch (e) {}
     input.focus();
+    // Setting .value directly fires no input event, so the chip strip is stale.
+    if (typeof renderSegChips === 'function') renderSegChips();
     if (it.keepOpen) {
         // Folder picked: drill in — re-detect from the new caret and re-fetch.
         _acOnInput();
