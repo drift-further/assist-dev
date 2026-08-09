@@ -48,8 +48,8 @@ For **docker**, you may need additional setup:
 ## Quick install
 
 ```bash
-gh repo clone drift-further/assist-dev ~/.local/share/claude-assist
-cd ~/.local/share/claude-assist
+gh repo clone drift-further/assist-dev ~/.local/share/assist-dev
+cd ~/.local/share/assist-dev
 ./install.sh
 ```
 
@@ -301,7 +301,7 @@ The WebSocket upgrade headers are essential — without them, the terminal falls
 assist stop                             # stop the server first
 rm ~/.local/bin/assist
 rm -rf ~/.config/claude-assist
-rm -rf ~/.local/share/claude-assist     # or wherever you cloned
+rm -rf ~/.local/share/assist-dev        # or wherever you cloned
 ```
 
 Runtime files in `/tmp/assist-server.{pid,log}` can also be removed.
