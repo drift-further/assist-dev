@@ -352,6 +352,21 @@ const SMART_PATTERNS = [
     {
         id: 'claude-resume',
         desc: 'Resume Claude session',
+        // PASSIVE: offer the buttons, but never mark the tab or notify.
+        //
+        // Claude Code prints "Resume this session with: claude --resume <uuid>"
+        // as its FAREWELL and drops back to a shell. That text then sits in the
+        // pane's last 6 lines forever, so this pattern used to badge the tab as
+        // needing input permanently — measured 2026-08-10 at 8 of 18 live panes
+        // continuously flagged, every one of them an exited session with nothing
+        // waiting on anybody. It is the dominant source of gotcha 528's "reaction
+        // patterns fire on panes that are not waiting on anything".
+        //
+        // The offer itself is still useful when you are looking at the pane, so
+        // this is not a deletion: `passive` keeps the action bar and drops only
+        // the pending-question signalling. Distinct from notifyOnly, which is
+        // the opposite trade (mark and notify, but draw no bar).
+        passive: true,
         // Proper UUID: 8-4-4-4-12 hex, and must be in last 6 lines (not stale scrollback)
         _uuidRe: /claude\s+--resume\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/,
         match: function(tail) {
@@ -617,11 +632,15 @@ function detectSmartActions(content, target, agentKind) {
         const match = pattern.match(tail);
         if (match) {
             const notifyOnly = !!(pattern.notifyOnly && pattern.notifyOnly(tail));
+            // Static, not a predicate: whether a pattern represents something
+            // WAITING on the human is a property of the pattern, not of the
+            // pane's current text.
+            const passive = !!pattern.passive;
             if (pattern.getActions) {
                 const actions = pattern.getActions(tail, match);
-                if (actions) return { id: pattern.id, desc: pattern.desc, actions, notifyOnly };
+                if (actions) return { id: pattern.id, desc: pattern.desc, actions, notifyOnly, passive };
             } else {
-                return { id: pattern.id, desc: pattern.desc, actions: pattern.actions, notifyOnly };
+                return { id: pattern.id, desc: pattern.desc, actions: pattern.actions, notifyOnly, passive };
             }
         }
     }

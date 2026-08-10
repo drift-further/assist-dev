@@ -111,6 +111,19 @@ _NUMBERED_FOOTER_RE = re.compile(
 # fell outside the region, _NUMBERED_YES_RE missed, and auto-yes silently never
 # fired. The footer-distance gate below (depth*4) is what keeps stale prompts
 # out, so widening this window does not resurrect answered prompts.
+# Luna kill-switch. A codex pane running luna is NEVER auto-answered, however
+# the session's auto-yes toggle is set. Daniel's rule, 2026-08-10: whenever
+# 'luna' appears, auto-yes does not work for codex tabs.
+#
+# Deliberately matched against the whole captured tail rather than the resolved
+# model, and deliberately word-boundaried rather than a bare substring: the
+# resolved model can lag a mid-session switch by a poll or two (shared/agent_model.py
+# gates publication on _MIN_CONFIRM_SECONDS of agreement), and the failure this
+# guards against is answering ONE prompt during that window. Suppressing is the
+# safe direction — the human can always answer by hand — so it errs wide, while
+# the word boundary keeps it off substrings like "lunar".
+_LUNA_RE = re.compile(r"\bluna\b", re.IGNORECASE)
+
 _OPTION_REGION_LOOKBACK = 60
 _OPTION_SEP_RE = re.compile(r"^\s*─{10,}")
 _OPTION_LINE_RE = re.compile(r"^\s*(?:[^\d\s]\s*)?\d+[.)]\s+\S")
@@ -520,6 +533,14 @@ def _autoyes_scan_tick():
         agent_kind = refine_with_content(process_kind, tail)
         phash = _prompt_hash(tail)
         detected = _detect_autoyes_prompt(tail, agent_kind)
+
+        # Luna kill-switch (see _LUNA_RE). Applied AFTER detection rather than
+        # instead of it, so a countdown already ticking when luna appears is
+        # cancelled by the `if not detected` branch below rather than being
+        # left to fire.
+        if detected and agent_kind == "codex" and _LUNA_RE.search(tail):
+            log.info("autoyes: luna on %s — suppressed %s", target, detected[0])
+            detected = None
 
         # Collect broadcast event to fire AFTER releasing the lock
         # (broadcast_autoyes_event also acquires autoyes_lock — avoid deadlock).

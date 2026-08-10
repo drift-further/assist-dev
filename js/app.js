@@ -501,11 +501,16 @@ function _applyScanData(scanPanes) {
         const isActive = _termOpen && pane.target === _termTarget;
         if (isActive) continue;
 
-        const detected = detectSmartActions(
+        const raw = detectSmartActions(
             stripAnsi(pane.tail),
             pane.target,
             pane.agent_kind
         );
+        // A passive detection is an OFFER, not a question — nothing is waiting
+        // on the human, so it must not badge the tab or fire a notification.
+        // Without this, Claude Code's "claude --resume <uuid>" farewell keeps a
+        // dead pane's tab marked as needing input forever (gotcha 528).
+        const detected = (raw && raw.passive) ? null : raw;
         const tab = document.querySelector(`.session-tab[data-target="${CSS.escape(pane.target)}"]`);
 
         if (detected) {
