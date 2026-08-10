@@ -116,6 +116,20 @@ _OPTION_SEP_RE = re.compile(r"^\s*─{10,}")
 _OPTION_LINE_RE = re.compile(r"^\s*(?:[^\d\s]\s*)?\d+[.)]\s+\S")
 
 
+def _has_internal_divider(lines, start, end):
+    """True if a ──── rule sits INSIDE the option block.
+
+    That rule is what tells a long-form AskUserQuestion apart from a yes/no
+    permission gate: the question splits its "Chat about this" escape hatch off
+    with a second separator. Those are design questions put to the human, and
+    auto-yes must never answer one however much the first option reads
+    "1. Yes: …". js/actions.js already withholds its one-tap buttons on this
+    signal (_hasInternalDivider); the server scanner never got the same guard,
+    so it answered them.
+    """
+    return any(_OPTION_SEP_RE.match(ln) for ln in lines[start:end])
+
+
 def _option_region_start(lines, footer_line, search_floor):
     """Top of the numbered-option block above `footer_line`, or None.
 
@@ -213,6 +227,12 @@ def _detect_autoyes_prompt(tail, agent_kind):
             anchored = _option_region_start(lines, footer_line, search_floor)
             if anchored is not None:
                 region_start = anchored
+                # Only trustworthy when the block's real top was found: in the
+                # unanchored case region_start is an arbitrary 60-line window
+                # that can swallow a separator from earlier output, and reading
+                # that as a question would silently stop auto-yes entirely.
+                if _has_internal_divider(lines, region_start, footer_line):
+                    return None
             region = "\n".join(lines[region_start:footer_line + 1])
             if _NUMBERED_YES_RE.search(region):
                 return ("numbered-yes", "", True, _extract_summary(tail, "numbered"))
