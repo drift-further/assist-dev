@@ -1,5 +1,5 @@
 // sw.js — Service worker for Assist (network-first for static assets, cache fallback when offline)
-const VERSION = 'assist-v3-019';
+const VERSION = 'assist-v3-021';
 const STATIC_CACHE = 'assist-static-' + VERSION;
 const STATIC_URLS = [
     '/',
@@ -7,8 +7,8 @@ const STATIC_URLS = [
     '/css/fonts.css',
     '/css/base.css?v=1',
     '/css/status-bar.css?v=3',
-    '/css/input.css?v=3',
-    '/css/terminal.css?v=10',
+    '/css/input.css?v=4',
+    '/css/terminal.css?v=11',
     '/css/chrome.css?v=3',
     '/css/studio.css?v=4',
     '/css/drawers.css?v=1',
@@ -16,12 +16,13 @@ const STATIC_URLS = [
     '/css/commands.css',
     '/js/state.js?v=4',
     '/js/ui.js?v=4',
-    '/js/input.js?v=6',
-    '/js/terminal.js?v=21',
+    '/js/input.js?v=7',
+    '/js/drafts.js?v=2',
+    '/js/terminal.js?v=22',
     '/js/actions.js?v=9',
     '/js/commands.js?v=4',
     '/js/monitor.js?v=4',
-    '/js/app.js?v=11',
+    '/js/app.js?v=12',
 ];
 
 self.addEventListener('install', event => {

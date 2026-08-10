@@ -9,6 +9,7 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
+import shared.drafts as drafts
 import shared.state as state
 import shared.tab_state as tab_state
 from shared.agent_identity import resolve_process
@@ -572,9 +573,11 @@ def terminal_rename():
         suffix = state.tmux_target[len(old_name) :]
         state.tmux_target = new_name + suffix
 
-    # Carry pin/order/snooze across the rename. Server-side, so every connected
-    # device sees the fix-up, not just the one that issued the rename.
+    # Carry pin/order/snooze and any composer drafts across the rename.
+    # Server-side, so every connected device sees the fix-up, not just the one
+    # that issued the rename.
     tab_state.rename_session(old_name, new_name)
+    drafts.rename_session(old_name, new_name)
 
     return jsonify(
         {"ok": True, "old": old_name, "new": new_name, "target": state.tmux_target}

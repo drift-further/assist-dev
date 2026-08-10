@@ -18,8 +18,10 @@ input.addEventListener('keydown', function(e) {
         return;
     }
 
-    // Enter key → Send
+    // Enter key → Send, unless this tab's Enter lock is disarmed (spec §4.1),
+    // in which case the keypress falls through untouched and inserts a newline.
     if (e.key === 'Enter' && !e.shiftKey) {
+        if (typeof draftEnterArmed === 'function' && !draftEnterArmed()) return;
         e.preventDefault();
         if (!_sending) doPaste();
     }
@@ -28,6 +30,12 @@ input.addEventListener('keydown', function(e) {
 // Poll for trailing newlines — safety net for mobile IMEs that insert \n on submit
 // Only strips trailing newlines; internal newlines (from paste) are preserved
 setInterval(function() {
+    // Disarmed Enter lock: FULLY inert for this target (spec §4.2). Not "strip
+    // but don't send" — the moment Enter means newline, a trailing newline is
+    // legitimate content, and stripping it would silently delete what was just
+    // typed. There is no Shift+Enter on a phone keyboard, so this timer, not
+    // the keydown above, is what makes a multi-line prompt possible at all.
+    if (typeof draftEnterArmed === 'function' && !draftEnterArmed()) return;
     const val = input.value;
     if (val.endsWith('\n') || val.endsWith('\r')) {
         input.value = val.replace(/[\r\n]+$/, '');
@@ -104,6 +112,11 @@ async function consolidatedPoll() {
 
         // Scan — prompt detection + activity on background tabs
         _applyScanData(data.scan || []);
+
+        // Composer drafts — tab markers, plus the resync that lets a draft
+        // written on one device turn up on the other. Runs after the strip is
+        // rebuilt so the markers land on the fresh nodes.
+        if (typeof _applyDraftsData === 'function') _applyDraftsData(data.drafts || null);
 
         // Status bar enrichment
         const sessionCount = (data.sessions || []).length;
@@ -373,6 +386,10 @@ function _applySessionsData(panes, activeTarget) {
     }
 
     _modelSeenSweep(panes, _termTarget);
+
+    // The strip was rebuilt from scratch, so the draft markers went with it.
+    // Mirrors loadSessions() in terminal.js — keep the two in sync.
+    if (typeof _renderDraftMarks === 'function') _renderDraftMarks();
 
     // Hook: reorder tabs (pinned first, then saved order)
     if (typeof _postTabRender === 'function') _postTabRender();

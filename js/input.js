@@ -52,6 +52,8 @@ function addAttachment(file) {
     };
     _attachments.push(entry);
     renderAttachments();
+    // The tray travels with the tab's draft, so every mutation is a draft edit.
+    if (typeof saveDraftSoon === 'function') saveDraftSoon();
     _uploadAttachment(entry, file);
 }
 
@@ -73,6 +75,9 @@ async function _uploadAttachment(entry, file) {
         showFlash('error', file.name + ': upload failed');
     }
     renderAttachments();
+    // Only now does the entry carry a path, which is the part the draft can
+    // actually store — save again so the tray survives a tab switch.
+    if (typeof saveDraftSoon === 'function') saveDraftSoon();
 }
 
 function renderAttachments() {
@@ -95,6 +100,12 @@ function renderAttachments() {
 
 async function doPaste() {
     if (_sending) return;
+    // The tab whose draft this message IS. Captured up front: a tab switch
+    // mid-send must not clear the wrong tab's draft. Note this is _termTarget,
+    // not getInputTarget() — input routing can aim the send at a split pane,
+    // but the composer still belongs to the tab on screen.
+    const draftTarget = (typeof _draftTarget === 'function') ? _draftTarget() : '';
+    if (typeof draftCancelPendingSave === 'function') draftCancelPendingSave(draftTarget);
     const raw = input.value.replace(/\r/g, '').replace(/\n+$/, '').trim();
     if (_attachments.some(a => a.uploading)) {
         showFlash('uploading', 'Still uploading…');
@@ -139,13 +150,18 @@ async function doPaste() {
             lastAction = Date.now();
             updateStatusTime();
             loadHistory();
+            // Sent: the draft is consumed. The Enter lock survives — it is a
+            // property of the tab, not of the message (see clearDraftAfterSend).
+            if (typeof clearDraftAfterSend === 'function') clearDraftAfterSend(draftTarget);
         } else {
             showFlash('error', data.error || 'Failed');
             input.value = raw;
+            if (typeof saveDraftSoon === 'function') saveDraftSoon();
         }
     } catch (e) {
         showFlash('error', 'Offline');
         input.value = raw;
+        if (typeof saveDraftSoon === 'function') saveDraftSoon();
     } finally {
         _sending = false;
     }
@@ -163,6 +179,7 @@ function onFileSelected(inp) {
 function removeAttachment(id) {
     _attachments = _attachments.filter(a => a.id !== id);
     renderAttachments();
+    if (typeof saveDraftSoon === 'function') saveDraftSoon();
 }
 
 function clearAttachments() {

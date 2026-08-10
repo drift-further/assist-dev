@@ -141,6 +141,39 @@
 .btn-upload { color: var(--amber); border-color: rgba(255, 149, 0, 0.4); }
 .btn-upload:active { background: rgba(255, 149, 0, 0.15); box-shadow: 0 0 16px rgba(255, 149, 0, 0.3); }
 
+/* Enter lock — per tab, armed by default.
+   Armed is the status quo and stays quiet; DISARMED is the state that changes
+   what a keypress does, so that is the one that lights up. The glyph is struck
+   through when disarmed: Enter no longer submits. Fixed width rather than
+   flex:1 so the five labelled buttons keep their room at 390px. */
+.btn-enter-lock {
+    flex: 0 0 40px;
+    position: relative;
+    font-size: 17px;
+    letter-spacing: 0;
+    color: var(--text-dim);
+    border-color: var(--border);
+}
+.btn-enter-lock:active { background: rgba(191, 90, 242, 0.12); }
+.btn-enter-lock.unlocked {
+    color: var(--purple);
+    border-color: rgba(191, 90, 242, 0.55);
+    background: rgba(191, 90, 242, 0.1);
+    box-shadow: 0 0 10px rgba(191, 90, 242, 0.22);
+}
+/* The strike is a pseudo-element on the button, not a character, so the glyph
+   itself stays crisp at 17px in a monospace face. */
+.btn-enter-lock.unlocked::after {
+    content: '';
+    position: absolute;
+    left: 22%;
+    right: 22%;
+    top: 50%;
+    height: 1px;
+    background: currentColor;
+    transform: rotate(-20deg);
+}
+
 /* File attach bar */
 /* One chip per attached file, scrolling sideways so N files never cost a second
    row of height on a phone. */

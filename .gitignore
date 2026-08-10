@@ -12,6 +12,7 @@ history.json
 favorites.json
 idle_state.json
 tab_state.json
+drafts.json
 claude_mode.txt
 automate_state.json
 settings.json

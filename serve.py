@@ -123,6 +123,7 @@ def create_app():
     from routes.completion import completion_bp
     from routes.studio import studio_bp
     from routes.tabstate import tabstate_bp
+    from routes.drafts import drafts_bp
 
     app.register_blueprint(static_bp)
     app.register_blueprint(access_bp)
@@ -137,6 +138,7 @@ def create_app():
     app.register_blueprint(completion_bp)
     app.register_blueprint(studio_bp)
     app.register_blueprint(tabstate_bp)
+    app.register_blueprint(drafts_bp)
 
     from routes.settings import settings_bp, init_start_time
 
@@ -158,10 +160,12 @@ app = create_app()
 # mode (direct execution, WSGI, flask run) — not just __main__.
 from routes.autoyes import autoyes_scanner, restore_autoyes_from_settings  # noqa: E402
 from routes.automate import automate_recover  # noqa: E402
+from routes.drafts import start_sweeper as start_drafts_sweeper  # noqa: E402
 from routes.studio import studio_refresher  # noqa: E402
 
 threading.Thread(target=autoyes_scanner, daemon=True).start()
 threading.Thread(target=studio_refresher, daemon=True).start()
+start_drafts_sweeper()
 restore_autoyes_from_settings()
 automate_recover()
 

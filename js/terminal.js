@@ -547,7 +547,9 @@ async function loadSessions() {
 
         if (typeof _modelSeenSweep === 'function') _modelSeenSweep(panes, _termTarget);
 
-        // Same hook _applySessionsData runs — pin markers on this render path too.
+        // Same hooks _applySessionsData runs — pin and draft markers on this
+        // render path too.
+        if (typeof _renderDraftMarks === 'function') _renderDraftMarks();
         if (typeof _postTabRender === 'function') _postTabRender();
     } catch(e) {}
 }
@@ -580,6 +582,10 @@ function selectTab(target) {
         return;
     }
     _lastTabTapTime = Date.now();
+    // The composer belongs to the tab: flush what is on screen to the tab we
+    // are leaving, then swap in the new one's text, tray and Enter lock. Must
+    // run BEFORE _termTarget moves — the draft module reads it for "here".
+    if (typeof onTabSwitchDraft === 'function') onTabSwitchDraft(_termTarget, target);
     _termTarget = target;
     // Opening a tab is the act of looking — clear its model caret.
     if (typeof _markModelSeen === 'function') _markModelSeen(target);

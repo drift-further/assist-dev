@@ -11,6 +11,7 @@ from pathlib import Path
 from flask import Blueprint, jsonify, request
 
 import shared.auth as auth
+import shared.drafts as drafts
 import shared.state as state
 import shared.tab_state as tab_state
 from shared.agent_identity import (
@@ -433,6 +434,12 @@ def consolidated_poll():
     tab_state.sweep_wakes(live_targets, now)
     result["sessions"] = tab_state.apply_order(panes)
     result["tab_state"] = tab_state.get_tab_state()
+
+    # --- Composer drafts ---
+    # Markers + revision stamps only; the bodies come from GET /api/draft. A
+    # draft can be thousands of characters and this payload ships every 5s to
+    # every open browser.
+    result["drafts"] = drafts.poll_block()
 
     # --- Automate status ---
     with state.automate_lock:

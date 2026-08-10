@@ -9,8 +9,8 @@
     <link rel="stylesheet" href="/css/fonts.css">
     <link rel="stylesheet" href="/css/base.css?v=1">
     <link rel="stylesheet" href="/css/status-bar.css?v=3">
-    <link rel="stylesheet" href="/css/input.css?v=3">
-    <link rel="stylesheet" href="/css/terminal.css?v=10">
+    <link rel="stylesheet" href="/css/input.css?v=4">
+    <link rel="stylesheet" href="/css/terminal.css?v=11">
     <link rel="stylesheet" href="/css/drawers.css?v=1">
     <link rel="stylesheet" href="/css/widgets.css">
     <link rel="stylesheet" href="/css/commands.css">
@@ -506,6 +506,12 @@
         </div>
 
         <div class="btn-row">
+            <!-- Enter lock, per tab and armed by default. Disarmed, Enter makes
+                 a newline, the IME auto-send timer goes inert, and enterkeyhint
+                 stops advertising a Send key — see js/drafts.js. -->
+            <button class="action-btn btn-enter-lock" id="enter-lock" onclick="toggleEnterLock()"
+                    aria-pressed="false" aria-label="Enter key behaviour"
+                    title="Enter sends &mdash; tap for multi-line">&#8629;</button>
             <button class="action-btn btn-hist" onclick="toggleBottomDrawer()">Hist</button>
             <button class="action-btn btn-upload" onclick="triggerUpload()">File</button>
             <button class="action-btn btn-paste" onclick="doPaste()">Send</button>
@@ -532,10 +538,11 @@
 
     <script src="/js/state.js?v=4"></script>
     <script src="/js/ui.js?v=4"></script>
-    <script src="/js/input.js?v=6"></script>
+    <script src="/js/input.js?v=7"></script>
     <script src="/js/autocomplete.js?v=2"></script>
     <script src="/js/segments.js?v=1"></script>
-    <script src="/js/terminal.js?v=21"></script>
+    <script src="/js/drafts.js?v=2"></script>
+    <script src="/js/terminal.js?v=22"></script>
     <script src="/js/actions.js?v=9"></script>
     <script src="/js/commands.js?v=4"></script>
     <script src="/js/container.js"></script>
@@ -546,7 +553,7 @@
     <script src="/js/notifications.js"></script>
     <script src="/js/tabs.js?v=6"></script>
     <script src="/js/settings.js?v=5"></script>
-    <script src="/js/app.js?v=11"></script>
+    <script src="/js/app.js?v=12"></script>
     <script src="/js/selection.js?v=2"></script>
     <script>
     if ('serviceWorker' in navigator) {
