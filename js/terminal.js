@@ -508,6 +508,12 @@ async function loadSessions() {
             dot.className = 'tab-dot';
             tab.appendChild(dot);
 
+            // Mirrors _applySessionsData() in app.js — keep the two in sync.
+            // Guarded: app.js loads after terminal.js, so the symbol only
+            // exists by the time this runs, which is the same pattern
+            // _postTabRender and _applyTabState already use here.
+            if (typeof applyTabModel === 'function') applyTabModel(tab, p);
+
             // Restore prompt indicator if previously detected
             if (_sessionPrompts[p.target]) {
                 tab.classList.add('has-prompt');
@@ -538,6 +544,8 @@ async function loadSessions() {
             updateTmuxIndicator();
             document.getElementById('term-display').classList.remove('hidden');
         }
+
+        if (typeof _modelSeenSweep === 'function') _modelSeenSweep(panes, _termTarget);
 
         // Same hook _applySessionsData runs — pin markers on this render path too.
         if (typeof _postTabRender === 'function') _postTabRender();
@@ -573,6 +581,8 @@ function selectTab(target) {
     }
     _lastTabTapTime = Date.now();
     _termTarget = target;
+    // Opening a tab is the act of looking — clear its model caret.
+    if (typeof _markModelSeen === 'function') _markModelSeen(target);
     // Selecting a snoozed tab wakes it (covers any selection path).
     if (typeof _wakeSnoozed === 'function') _wakeSnoozed(target);
     markActiveTab(target);
@@ -793,14 +803,9 @@ function _doRender(content, info, target) {
         if (target === _termTarget) _updateTuiChip(target);
     }
 
-    // Update toggle status
-    if (target) {
-        const paneInfo = (_sessionPanes || []).find(p => p.target === target);
-        const displayName = (paneInfo && paneInfo.agent_name)
-            ? agentDisplayName(paneInfo)
-            : shortName(target.split(':')[0]);
-        document.getElementById('term-toggle-status').textContent = displayName;
-    }
+    // The active session used to be spelled out in .term-toggle-status. That
+    // element is gone: the active tab in the session rail carries the same name,
+    // and now reads as active structurally (connected shelf, see terminal.css).
 
     // Content-based activity detection for background tabs
     if (target && content !== _termLastContent && _termLastContent !== '') {
@@ -1204,7 +1209,6 @@ async function killSession() {
             document.getElementById('term-content').textContent = '';
             document.getElementById('term-display').classList.add('hidden');
             document.getElementById('term-new-output').classList.remove('visible');
-            document.getElementById('term-toggle-status').textContent = '';
             // Show projects
             _termShowProjects = true;
             document.getElementById('term-projects').classList.remove('hidden');

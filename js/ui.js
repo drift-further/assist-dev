@@ -261,6 +261,14 @@ function togglePlusMenu() {
     btn.classList.toggle('active', !visible);
 }
 
+function toggleViewMenu() {
+    const menu = document.getElementById('view-menu');
+    const btn = document.getElementById('btn-view');
+    const visible = menu.classList.contains('visible');
+    menu.classList.toggle('visible', !visible);
+    btn.classList.toggle('active', !visible);
+}
+
 // Swipe gestures for drawers
 (function() {
     let startX = 0, startY = 0;

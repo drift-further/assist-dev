@@ -157,6 +157,126 @@ async function consolidatedPoll() {
     }
 }
 
+// Per-browser record of which model changes this user has actually looked at.
+// The server's model_changed_at says WHEN it changed; this says whether we care.
+const _MODEL_SEEN_KEY = 'assist.modelSeen';
+
+function _modelSeenRead() {
+    try { return JSON.parse(localStorage.getItem(_MODEL_SEEN_KEY)) || {}; }
+    catch (e) { return {}; }
+}
+
+function _modelSeenWrite(seen) {
+    try { localStorage.setItem(_MODEL_SEEN_KEY, JSON.stringify(seen)); } catch (e) {}
+}
+
+// Clear a tab's caret: we have now looked at it. Writes localStorage AND
+// strips the class from the live DOM node immediately (S1) — without the DOM
+// write, the caret lingers until the next strip rebuild (~5s), or
+// indefinitely while polling is failing, because nothing else re-renders it
+// between now and then. Uses the same CSS.escape(target) idiom
+// markActiveTab() already uses for its `.session-tab[data-target="…"]`
+// selector, for the same reason: `target` can contain characters CSS.escape
+// must neutralize.
+function _markModelSeen(target) {
+    const pane = (_sessionPanes || []).find(p => p.target === target);
+    if (!pane) return;
+    const seen = _modelSeenRead();
+    const changed = pane.model_changed_at || 0;
+    // Never move a seen value backwards (S3) — see _modelSeenSweep() below
+    // for why an overlapping renderer can otherwise hand this a stale value.
+    if (changed > (seen[target] || 0)) seen[target] = changed;
+    _modelSeenWrite(seen);
+    const line = document.querySelector(
+        `.session-tab[data-target="${CSS.escape(target)}"] .tab-model`
+    );
+    if (line) line.classList.remove('changed');
+}
+
+// Runs once per render, after the strip is rebuilt: clears the active tab's
+// caret (a switch you watched happen should not leave one on the tab you are
+// looking at) and prunes targets that no longer exist so the key cannot grow
+// without bound.
+//
+// The `seen` write is monotonic (S3): _applySessionsData() (poll-driven) and
+// loadSessions() (/terminal/sessions — launch/kill-driven) both call this
+// and can be in flight at once. If a delayed loadSessions() response
+// carrying an OLDER model_changed_at were allowed to lower a `seen` entry a
+// newer render already raised, the next poll would see its own
+// model_changed_at as newer than the (now-lowered) seen value again and
+// resurrect a caret for a change already viewed. Also strips the caret from
+// the live DOM node immediately for the active target, same reasoning as
+// _markModelSeen() (S1) — a render-driven sweep is not a click, so nothing
+// else would clear it before the next full rebuild otherwise.
+function _modelSeenSweep(panes, activeTarget) {
+    const live = new Set(panes.map(p => p.target));
+    const seen = _modelSeenRead();
+    let dirty = false;
+    for (const key of Object.keys(seen)) {
+        if (!live.has(key)) { delete seen[key]; dirty = true; }
+    }
+    for (const key of Object.keys(_paneModelLast)) {
+        if (!live.has(key)) delete _paneModelLast[key];
+    }
+    if (activeTarget && live.has(activeTarget)) {
+        const pane = panes.find(p => p.target === activeTarget);
+        const changed = (pane && pane.model_changed_at) || 0;
+        if (changed > (seen[activeTarget] || 0)) {
+            seen[activeTarget] = changed;
+            dirty = true;
+        }
+        const line = document.querySelector(
+            `.session-tab[data-target="${CSS.escape(activeTarget)}"] .tab-model`
+        );
+        if (line) line.classList.remove('changed');
+    }
+    if (dirty) _modelSeenWrite(seen);
+}
+
+// Shared by both tab strips — _applySessionsData() here and loadSessions() in
+// terminal.js. The strip is rebuilt from scratch every poll, so this runs on a
+// fresh element each time and must not assume prior DOM state.
+function applyTabModel(tab, pane) {
+    const model = pane.model || '';
+    const effort = pane.model_effort || '';
+    const text = model ? (effort ? model + '·' + effort : model) : '';
+    let line = tab.querySelector('.tab-model');
+    if (!line) {
+        line = document.createElement('span');
+        line.className = 'tab-model';
+        tab.appendChild(line);
+    }
+    line.textContent = text;
+    if (!text) return;
+
+    const target = pane.target;
+    const changed = pane.model_changed_at || 0;
+
+    // Pulse once, on the render where the value actually moved. The
+    // already-defined guard suppresses a pulse on first sight after a page
+    // load — otherwise every reload would strobe the whole strip.
+    //
+    // _paneModelLast is monotonic (S3): _applySessionsData() (poll-driven)
+    // and loadSessions() (/terminal/sessions — launch/kill-driven) both call
+    // this and can be in flight at once. A delayed loadSessions() response
+    // carrying an OLDER model_changed_at must not overwrite a newer value a
+    // poll already recorded — that would kill an already-fired pulse and let
+    // the NEXT poll see `changed > prev` again and pulse a second time for a
+    // change already shown. Math.max refuses to move the value backwards no
+    // matter which renderer runs last.
+    const prev = _paneModelLast[target];
+    if (prev !== undefined && changed > prev) line.classList.add('pulse');
+    _paneModelLast[target] = Math.max(prev === undefined ? 0 : prev, changed);
+
+    // Caret persists until this browser opens the tab. An absent seen entry
+    // counts as 0, so a switch missed while the page was closed still shows.
+    // (The write side of this same monotonic rule — never LOWERING a stored
+    // seen value — lives in _markModelSeen() and _modelSeenSweep() above,
+    // S3, since this function only reads `seen`.)
+    const seen = _modelSeenRead()[target] || 0;
+    if (changed > seen) line.classList.add('changed');
+}
+
 // Extract session tab rendering from loadSessions() into a data-driven function
 function _applySessionsData(panes, activeTarget) {
     // Skip the rebuild while a tab drag or reorder placement is in progress —
@@ -211,6 +331,9 @@ function _applySessionsData(panes, activeTarget) {
         dotEl.className = 'tab-dot';
         tab.appendChild(dotEl);
 
+        // Mirrors loadSessions() in terminal.js — keep the two in sync.
+        applyTabModel(tab, p);
+
         if (_sessionPrompts[p.target]) {
             tab.classList.add('has-prompt');
         }
@@ -248,6 +371,8 @@ function _applySessionsData(panes, activeTarget) {
             document.getElementById('term-projects').classList.add('hidden');
         }
     }
+
+    _modelSeenSweep(panes, _termTarget);
 
     // Hook: reorder tabs (pinned first, then saved order)
     if (typeof _postTabRender === 'function') _postTabRender();

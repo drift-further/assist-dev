@@ -18,6 +18,7 @@ from shared.agent_identity import (
     refine_with_content,
     resolve_process,
 )
+from shared.agent_model import observe as observe_model
 from shared.tmux import prettify_command
 from routes.terminal import enrich_panes_with_agents
 
@@ -313,6 +314,21 @@ def consolidated_poll():
             tail = cap.stdout.rstrip("\n")
             agent_kind = refine_with_content(process_kinds.get(target), tail)
             pane["agent_kind"] = agent_kind
+            # One regex pass over <=5 lines of a capture already taken. The
+            # memo write happens here, on the /poll request path — which may
+            # run concurrently, one handler per browser — so other request
+            # handlers never resolve a model themselves, only read the memo.
+            # Concurrent writers racing here are safe because observe_model()
+            # gates publication on _MIN_CONFIRM_SECONDS of wall-clock agreement,
+            # not merely two adjacent calls. pane_id keys the memo to this
+            # generation of the pane (Step 1, S4) so a killed-and-recreated
+            # pane at the same target does not inherit the old model.
+            model, model_effort, model_changed_at = observe_model(
+                target, agent_kind, pane.get("pane_id"), tail
+            )
+            pane["model"] = model
+            pane["model_effort"] = model_effort
+            pane["model_changed_at"] = model_changed_at
             if tail:
                 content_hash = hashlib.md5(tail.encode()).hexdigest()
                 with state._activity_lock:
@@ -337,6 +353,9 @@ def consolidated_poll():
     # Clean up stale targets no longer in tmux
     if proc.returncode == 0:
         tab_state.sweep_agent_declarations(live_targets)
+        with state._activity_lock:
+            for stale in set(state.pane_model) - live_targets:
+                state.pane_model.pop(stale, None)
     with state._activity_lock:
         for stale in set(state.pane_content_hash) - live_targets:
             state.pane_content_hash.pop(stale, None)

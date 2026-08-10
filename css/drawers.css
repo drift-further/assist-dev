@@ -72,24 +72,42 @@
     left: 0;
     transform: translateY(-50%);
     z-index: 20;
+    width: 40px;
+    min-width: 40px;
+    height: 54px;
+    min-height: 40px;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    color: transparent;
+    font-family: var(--font);
+    font-size: 0;
+    font-weight: 700;
+    text-transform: uppercase;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.edge-tab-left::before {
+    content: 'More';
+    position: absolute;
+    inset: 0 auto 0 0;
+    box-sizing: border-box;
+    width: 19px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     writing-mode: vertical-rl;
     text-orientation: mixed;
-    padding: 12px 4px;
     background: rgba(10, 22, 14, 0.9);
     border: 1px solid var(--border);
     border-left: none;
     border-radius: 0 4px 4px 0;
     color: var(--text-dim);
-    font-family: var(--font);
     font-size: 8px;
-    font-weight: 700;
     letter-spacing: 2px;
-    text-transform: uppercase;
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
     transition: all 0.15s;
 }
-.edge-tab-left:active {
+.edge-tab-left:active::before {
     color: var(--green);
     border-color: rgba(0, 255, 65, 0.3);
     background: rgba(0, 255, 65, 0.08);
@@ -197,6 +215,7 @@
 /* Inline keys panel (toggle show/hide like git panel) */
 .keys-panel {
     display: none; flex-shrink: 0; padding: 8px;
+    width: 100%; max-width: 720px; align-self: center;
     background: linear-gradient(180deg, rgba(0, 255, 65, 0.06) 0%, rgba(0, 255, 65, 0.02) 100%);
     border: 1px solid rgba(0, 255, 65, 0.2); animation: fadeSlide 0.2s ease-out;
 }

@@ -93,7 +93,7 @@
 .status-studio.grey { color: var(--text-muted); border-color: rgba(122, 138, 153, 0.4); background: transparent; }
 .status-studio.locked { color: var(--amber); border-color: rgba(255, 149, 0, 0.5); }
 .studio-badge {
-    position: absolute; top: -7px; right: -7px; background: var(--amber);
+    position: absolute; top: 1px; right: 1px; background: var(--amber);
     color: #080c10; font-size: 9px; font-weight: 700; border-radius: 8px;
     padding: 0 5px; line-height: 14px; min-width: 6px; text-align: center;
 }

@@ -18,6 +18,21 @@
     min-height: 80px;
     max-height: 35dvh;
 }
+
+/* Keep the composer and its deck at a usable instrument width on desktops. */
+.input-wrap,
+.attach-bar,
+.btn-row,
+.route-indicator {
+    width: 100%;
+    max-width: 720px;
+    align-self: center;
+}
+/* The shared Drift launcher is injected at bottom-right. Reserve its 44px
+   footprint plus a gap only while the centered deck reaches that corner. */
+.btn-row {
+    padding-right: clamp(0px, calc(432px - 50vw), 64px);
+}
 #text-input {
     width: 100%;
     height: 100%;

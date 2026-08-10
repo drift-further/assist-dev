@@ -535,6 +535,15 @@ WS_HEARTBEAT_INTERVAL = DEFAULT_SETTINGS["connection"]["ws_heartbeat_sec"]
 # ---------------------------------------------------------------------------
 pane_content_hash = {}  # target -> hash of last captured content
 pane_last_activity = {}  # target -> time.time() of last content change
+# target -> {model, effort, changed_at, candidate, candidate_since, kind}
+# Written on the /poll request path under _activity_lock — that path may run
+# concurrently, one handler per open browser, which is why the lock is held
+# and why shared/agent_model.py's _MIN_CONFIRM_SECONDS gate is time-based
+# rather than counting consecutive calls.
+# Deliberately NOT persisted by save_idle_state(): it re-derives within two
+# polls (~10s) after a restart, and a changed_at carried across a restart
+# would caret tabs whose model never moved.
+pane_model = {}
 _activity_lock = threading.Lock()
 _IDLE_STATE_FILE = DATA_DIR / "idle_state.json"
 _idle_save_pending = False  # coalesce saves

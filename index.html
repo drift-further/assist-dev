@@ -7,19 +7,19 @@
     <link rel="icon" type="image/png" href="/icons/assist-dev-a.png?v=1">
     <link rel="apple-touch-icon" href="/icons/assist-dev-a.png?v=1">
     <link rel="stylesheet" href="/css/fonts.css">
-    <link rel="stylesheet" href="/css/base.css">
-    <link rel="stylesheet" href="/css/status-bar.css">
-    <link rel="stylesheet" href="/css/input.css">
-    <link rel="stylesheet" href="/css/terminal.css?v=4">
-    <link rel="stylesheet" href="/css/drawers.css">
+    <link rel="stylesheet" href="/css/base.css?v=1">
+    <link rel="stylesheet" href="/css/status-bar.css?v=3">
+    <link rel="stylesheet" href="/css/input.css?v=3">
+    <link rel="stylesheet" href="/css/terminal.css?v=10">
+    <link rel="stylesheet" href="/css/drawers.css?v=1">
     <link rel="stylesheet" href="/css/widgets.css">
     <link rel="stylesheet" href="/css/commands.css">
     <link rel="stylesheet" href="/css/autocomplete.css">
     <link rel="stylesheet" href="/css/segments.css">
     <link rel="stylesheet" href="/css/container.css">
-    <link rel="stylesheet" href="/css/studio.css?v=3">
+    <link rel="stylesheet" href="/css/studio.css?v=4">
     <link rel="stylesheet" href="/css/access.css?v=2">
-    <link rel="stylesheet" href="/css/chrome.css?v=1">
+    <link rel="stylesheet" href="/css/chrome.css?v=3">
     <link rel="stylesheet" href="/css/notifications.css">
 </head>
 <body>
@@ -30,20 +30,40 @@
               document.body.classList.add('chrome-collapsed'); } catch (e) {}
     </script>
 
-    <!-- Collapsed-chrome grabber: takes over the safe-area inset the status bar holds. -->
-    <div id="chrome-grabber" onclick="toggleChrome(false)" title="Show status bar">
-        <span class="grab-dot" id="grab-dot"></span>
-        <span class="grab-handle"></span>
-        <span class="grab-badge" id="grab-badge"></span>
-    </div>
+    <!-- Top chrome: a utility bar over a full-width session rail. The badge
+         headroom the tabs need lives INSIDE the rail's scrollport (8px of top
+         padding on a 48px rail holding 40px tabs), because .session-tabs is
+         overflow-x:auto and a non-visible overflow-x forces overflow-y to
+         compute as auto — vertical overflow can never escape it, whichever row
+         it sits in. .top-chrome owns the safe-area inset for both rows so
+         collapsing row 1 never pulls the rail under the sensor housing. -->
+    <header class="top-chrome">
+        <div class="status-bar">
+            <div id="status-dot" class="status-dot"></div>
+            <div class="status-title">Assist <span>// Claude Code</span></div>
+            <span class="conn-indicator" id="conn-indicator"></span>
+            <div id="tmux-ind" class="tmux-indicator"></div>
+            <span class="chrome-spacer"></span>
+            <button class="term-tui-chip hidden" id="term-tui-chip" onclick="cycleTuiMode()" title="Terminal mode — tap to override auto-detect">TUI</button>
+            <button id="btn-studio" class="status-studio" onclick="openStudio()" title="Open the current project in Studio">&#9671;<span class="studio-label"> Studio</span><span id="studio-lock" class="studio-lock hidden" title="Studio rejected the API token">&#128274;</span><span id="studio-badge" class="studio-badge hidden"></span></button>
+            <button class="term-view-btn" id="btn-view" onclick="toggleViewMenu()" title="View controls">&#8943;</button>
+            <button class="btn-plus" id="btn-plus" onclick="togglePlusMenu()" title="More actions">+</button>
+            <div id="status-time" class="status-time"></div>
+        </div>
 
-    <div class="status-bar">
-        <div id="status-dot" class="status-dot"></div>
-        <div class="status-title">Assist <span>// Claude Code</span></div>
-        <div id="tmux-ind" class="tmux-indicator"></div>
-        <button id="btn-studio" class="status-studio" onclick="openStudio()" title="Open the current project in Studio">&#9671; Studio<span id="studio-lock" class="studio-lock hidden" title="Studio rejected the API token">&#128274;</span><span id="studio-badge" class="studio-badge hidden"></span></button>
-        <div id="status-time" class="status-time"></div>
-    </div>
+        <div class="session-rail">
+            <!-- When chrome is collapsed this replaces the identity controls while
+                 the session strip remains available in the rail. -->
+            <div id="chrome-grabber" onclick="toggleChrome(false)" title="Show status bar">
+                <span class="grab-dot" id="grab-dot"></span>
+                <span class="grab-handle"></span>
+                <span class="grab-badge" id="grab-badge"></span>
+            </div>
+            <div class="session-tabs" id="session-tabs">
+                <span class="session-tabs-empty">No sessions</span>
+            </div>
+        </div>
+    </header>
 
     <!-- Open-access alarm strip: in flow, so it pushes the app down. -->
     <div class="access-strip" id="access-strip" aria-hidden="true" onclick="accessClose()"></div>
@@ -187,26 +207,21 @@
     </div>
 
     <div class="content">
-        <!-- Terminal header (always visible) -->
-        <div class="term-toggle" id="term-toggle">
-            <span class="term-toggle-label">Terminal</span>
-            <span class="term-toggle-status" id="term-toggle-status"></span>
-            <span class="conn-indicator" id="conn-indicator"></span>
-            <button class="term-font-btn" onclick="termFontSmaller()">A-</button>
-            <button class="term-font-btn" onclick="termFontLarger()">A+</button>
-            <button class="term-font-btn" id="btn-fit" onclick="toggleFitMenu()" title="Fit terminal to screen">Fit</button>
-            <button class="term-chrome-btn" id="term-chrome-btn" onclick="toggleChrome()" title="Hide status bar">&#9652;</button>
-            <button class="term-search-toggle" onclick="toggleTermSearch()" title="Search">&#128269;</button>
-        </div>
+        <!-- The display bezel that used to live here is gone: its controls moved
+             into .status-bar, and the session rail carries the active-session
+             identity that .term-toggle-status used to spell out. The menus below
+             stay inside .term-panel so their terminal-relative overlay and
+             stacking behaviour is unchanged — only their triggers moved. -->
         <div class="term-panel" id="term-panel">
-            <div class="term-bar">
-                <div class="session-tabs" id="session-tabs">
-                    <span class="session-tabs-empty">No sessions</span>
-                </div>
-                <button class="btn-info" id="btn-info" onclick="toggleClaudeInfo()" title="Claude session info">i</button>
-                <button class="btn-sudo" id="btn-sudo" onclick="toggleSudoPassword()" title="Sudo password">&#128274;</button>
-                <button class="btn-insert" id="btn-insert" onclick="sendInsertMode()" title="Send 'i' to enter insert mode">I</button>
-                <button class="btn-plus" id="btn-plus" onclick="togglePlusMenu()" title="More actions">+</button>
+            <div class="view-menu" id="view-menu">
+                <button class="term-font-btn" onclick="termFontSmaller(); toggleViewMenu();">A-</button>
+                <button class="term-font-btn" onclick="termFontLarger(); toggleViewMenu();">A+</button>
+                <button class="term-font-btn" id="btn-fit" onclick="toggleFitMenu(); toggleViewMenu();" title="Fit terminal to screen">Fit</button>
+                <button class="term-search-toggle" onclick="toggleTermSearch(); toggleViewMenu();" title="Search">&#128269;</button>
+                <button class="btn-info" id="btn-info" onclick="toggleClaudeInfo(); toggleViewMenu();" title="Claude session info">i</button>
+                <button class="btn-sudo" id="btn-sudo" onclick="toggleSudoPassword(); toggleViewMenu();" title="Sudo password">&#128274;</button>
+                <button class="btn-insert" id="btn-insert" onclick="sendInsertMode(); toggleViewMenu();" title="Send 'i' to enter insert mode">I</button>
+                <button class="term-chrome-btn" id="term-chrome-btn" onclick="toggleChrome(); toggleViewMenu();" title="Hide status bar">&#9652;</button>
             </div>
 
             <div class="term-search hidden" id="term-search">
@@ -403,9 +418,6 @@
 
             <div class="term-display hidden" id="term-display">
                 <div class="term-info" id="term-info">
-                    <!-- Tap cycles the pane's mode: auto -> pinned -> auto.
-                         A dot means pinned (auto-detect overridden here). -->
-                    <button class="term-tui-chip hidden" id="term-tui-chip" onclick="cycleTuiMode()" title="Terminal mode — tap to override auto-detect">TUI</button>
                     <span class="term-info-cmd" id="term-info-cmd"></span>
                     <span class="term-info-dim" id="term-info-dim"></span>
                     <!-- TUI panes have no browser-side scrollback (alt screen),
@@ -518,12 +530,12 @@
         </div>
     </div>
 
-    <script src="/js/state.js?v=3"></script>
-    <script src="/js/ui.js?v=3"></script>
+    <script src="/js/state.js?v=4"></script>
+    <script src="/js/ui.js?v=4"></script>
     <script src="/js/input.js?v=6"></script>
     <script src="/js/autocomplete.js?v=2"></script>
     <script src="/js/segments.js?v=1"></script>
-    <script src="/js/terminal.js?v=19"></script>
+    <script src="/js/terminal.js?v=21"></script>
     <script src="/js/actions.js?v=9"></script>
     <script src="/js/commands.js?v=4"></script>
     <script src="/js/container.js"></script>
@@ -532,9 +544,9 @@
     <script src="/js/chrome.js?v=1"></script>
     <script src="/js/monitor.js?v=4"></script>
     <script src="/js/notifications.js"></script>
-    <script src="/js/tabs.js?v=5"></script>
+    <script src="/js/tabs.js?v=6"></script>
     <script src="/js/settings.js?v=5"></script>
-    <script src="/js/app.js?v=9"></script>
+    <script src="/js/app.js?v=11"></script>
     <script src="/js/selection.js?v=2"></script>
     <script>
     if ('serviceWorker' in navigator) {

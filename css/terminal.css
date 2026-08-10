@@ -1,42 +1,19 @@
 /* terminal.css — Terminal panel, session tabs, project launcher, display, scrollbars */
 
-.term-toggle {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 0;
-    user-select: none;
-    flex-shrink: 0;
-}
-.term-toggle-label {
-    font-size: 9px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    color: var(--text-dim);
-}
-.term-toggle-label::after {
-    content: '';
-    display: inline-block;
-    width: 60px;
-    height: 1px;
-    background: linear-gradient(90deg, var(--border), transparent);
-    vertical-align: middle;
-    margin-left: 8px;
-}
-.term-toggle-status {
-    font-size: 8px;
-    font-weight: 500;
-    color: var(--cyan);
-    letter-spacing: 1px;
-    margin-left: auto;
-}
+/* .term-toggle is gone. It was a 40px band that was 74% (phone) to 87%
+   (desktop) empty flex, existing mainly to place two touch targets, and its
+   left half duplicated what the highlighted tab already said. Its controls
+   moved into .status-bar. Do NOT recycle it as the session rail: its
+   height: 40px, max-width: 720px and align-self: center reproduce the clipped
+   badges, the starved strip, and the centred desktop island exactly. */
+
 .conn-indicator {
     font-size: 7px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 1px;
-    margin-left: 6px;
+    margin-left: 0;
+    flex-shrink: 0;
     opacity: 0.8;
 }
 .conn-good { color: var(--green); }
@@ -54,26 +31,70 @@
     min-height: 0;
 }
 
-/* Terminal top bar */
-.term-bar {
+/* --- Session rail (row 2 of the top chrome) -------------------------------
+   48px tall, full width, edge to edge. The 8px of top padding on .session-tabs
+   is the badge headroom, and it is load-bearing: .tab-idle-time sits at
+   top: -7px and a running .tab-dot at top: -4px, so inside this rail they land
+   at y=1 and y=4 — visible, and still inside the scrollport.
+
+   They must stay inside it. .session-tabs is overflow-x: auto, and per CSS
+   Overflow a non-visible overflow-x forces overflow-y: visible to compute as
+   auto, so vertical overflow can never escape a horizontally scrolling strip.
+   Do not "fix" a clipped badge with overflow-y: visible — add headroom here
+   instead. */
+.session-rail {
+    position: relative;
+    box-sizing: border-box;
     display: flex;
-    gap: 6px;
-    align-items: center;
+    width: 100%;
+    height: 48px;
+    min-height: 48px;
+    padding: 0 8px;
+    overflow: hidden;
+    background: linear-gradient(180deg, #0a1210 0%, #060e0a 100%);
+    /* An INSET shadow, not border-bottom: a border would eat 1px of the 48px
+       content box (box-sizing: border-box) and clip the tabs' bottom edge, and
+       the active tab could never paint over it. An inset shadow paints above
+       the background but below descendants, so the shelf punches through. */
+    box-shadow: inset 0 -1px 0 var(--border);
+    flex-shrink: 0;
+}
+/* The glow rule that used to sit under .status-bar — it marks the outer edge
+   of the whole chrome, not the divider between the two rows. Kept at bottom:0,
+   not -1px: the rail clips its overflow, so a negative offset erased it. */
+.session-rail::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent 0%, var(--green) 30%, var(--green) 70%, transparent 100%);
+    opacity: 0.4;
+    z-index: 1;
 }
 
 /* Session tabs (horizontal scroll) */
 .session-tabs {
+    box-sizing: border-box;
+    /* Above .session-rail::after, so the active tab's fill covers the hairline
+       and the glow at its own x-range — that IS the connected shelf. */
+    position: relative;
+    z-index: 2;
     display: flex;
     gap: 4px;
     overflow-x: auto;
     overflow-y: hidden;
-    flex: 1;
+    flex: 1 1 0;
+    width: auto;
+    max-width: none;
     min-width: 0;
+    height: 48px;
+    align-items: stretch;
     scrollbar-width: none;
     -ms-overflow-style: none;
     -webkit-overflow-scrolling: touch;
     scroll-snap-type: x proximity;
-    padding: 10px 0 2px;
+    padding: 8px 0 0;
     /* Fade-mask on right edge so tabs scrolling under the stale pill dissolve. */
     -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
     mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
@@ -81,7 +102,10 @@
 .session-tabs::-webkit-scrollbar { display: none; }
 .session-tab {
     position: relative;
+    box-sizing: border-box;
     flex-shrink: 0;
+    height: 40px;
+    min-height: 40px;
     padding: 6px 10px;
     border: 1px solid var(--border);
     background: transparent;
@@ -97,23 +121,36 @@
     scroll-snap-align: start;
 }
 .session-tab:active { transform: scale(0.95); }
+
+/* Active: a connected shelf. The tab punches through the rail's bottom border
+   and reads as the open document. This is a STRUCTURAL cue, which is the point
+   — the active tab no longer competes on colour with a neighbour mid-pulse, so
+   it survives glare, colour-blindness, and the loss of the old
+   .term-toggle-status text that used to name the active session in words. */
 .session-tab.active {
-    color: var(--green);
-    border-color: rgba(0, 255, 65, 0.5);
-    background: rgba(0, 255, 65, 0.08);
-    text-shadow: 0 0 6px rgba(0, 255, 65, 0.3);
-}
-/* Background tab with activity: pulsing green border (replaces conic-gradient wire
-   which forced 60fps @property repaint per running tab — now compositable) */
-.session-tab.running:not(.active) {
+    color: #d8ffe4;
     border-color: var(--green);
+    border-bottom-color: transparent;
+    background: rgba(0, 255, 65, 0.18);
+    text-shadow: 0 0 6px rgba(0, 255, 65, 0.35);
+}
+
+/* Background tab with activity: pulsing green border (replaces conic-gradient wire
+   which forced 60fps @property repaint per running tab — now compositable).
+   Held at 55% alpha so full-opacity green belongs to .active alone: at full
+   opacity this state out-shouted the active tab, because a brighter border
+   plus a glow plus motion beats a faint fill. The keyframes carry the same
+   ceiling — an animation beats a normal declaration, so capping only the rule
+   above would leave the border repainting at full green anyway. */
+.session-tab.running:not(.active) {
+    border-color: rgba(0, 255, 65, 0.55);
     box-shadow: 0 0 8px rgba(0, 255, 65, 0.15);
     color: var(--green);
     animation: runningBorderPulse 1.5s ease-in-out infinite;
 }
 @keyframes runningBorderPulse {
-    0%, 100% { border-color: var(--green); box-shadow: 0 0 8px rgba(0, 255, 65, 0.15); }
-    50% { border-color: rgba(0, 255, 65, 0.25); box-shadow: 0 0 3px rgba(0, 255, 65, 0.05); }
+    0%, 100% { border-color: rgba(0, 255, 65, 0.55); box-shadow: 0 0 8px rgba(0, 255, 65, 0.15); }
+    50% { border-color: rgba(0, 255, 65, 0.22); box-shadow: 0 0 3px rgba(0, 255, 65, 0.05); }
 }
 .session-tab .tab-dot {
     position: absolute;
@@ -295,12 +332,16 @@
 }
 
 .session-tabs-empty {
+    display: flex;
+    align-items: center;
     flex: 1;
+    height: 40px;
     font-size: 9px;
     font-weight: 500;
     color: var(--text-muted);
-    padding: 6px 8px;
+    padding: 0 8px;
     letter-spacing: 0.5px;
+    white-space: nowrap;
 }
 
 /* Fit menu (terminal width presets) */
@@ -317,7 +358,7 @@
     font-family: var(--font); font-size: 10px; font-weight: 700;
     letter-spacing: 0.5px; text-transform: uppercase; cursor: pointer;
     transition: all 0.12s; -webkit-tap-highlight-color: transparent;
-    flex: 1; text-align: center; min-width: 70px;
+    flex: 1; text-align: center; min-width: 70px; min-height: 40px;
 }
 .fit-item:active { transform: scale(0.93); background: rgba(0, 212, 255, 0.15); }
 .fit-item.active { background: rgba(0, 212, 255, 0.12); border-color: rgba(0, 212, 255, 0.6); }
@@ -337,6 +378,7 @@
     font-family: var(--font); font-size: 13px; font-weight: 700;
     text-align: center; -webkit-appearance: none; appearance: none;
     -webkit-tap-highlight-color: transparent;
+    min-height: 40px;
 }
 .fit-custom-input:focus { outline: none; border-color: rgba(0, 212, 255, 0.6); }
 .fit-custom-input::-webkit-outer-spin-button,
@@ -350,6 +392,7 @@
     font-family: var(--font); font-size: 14px; font-weight: 700;
     cursor: pointer; -webkit-tap-highlight-color: transparent;
     transition: all 0.12s; line-height: 1;
+    width: 40px; min-width: 40px; height: 40px; min-height: 40px;
 }
 .btn-plus:active { transform: scale(0.9); background: rgba(0, 255, 65, 0.15); }
 .btn-plus.active { background: rgba(0, 255, 65, 0.1); border-color: rgba(0, 255, 65, 0.5); }
@@ -364,6 +407,7 @@
     font-family: var(--font); font-size: 10px; font-weight: 700;
     letter-spacing: 0.5px; text-transform: uppercase; cursor: pointer;
     transition: all 0.12s; -webkit-tap-highlight-color: transparent; flex: 1; text-align: center;
+    min-width: 40px; min-height: 40px;
 }
 .plus-item:active { transform: scale(0.93); }
 .plus-proj { color: var(--amber); border-color: rgba(255, 149, 0, 0.3); }
@@ -373,6 +417,44 @@
 .plus-autoyes { color: #777; border-color: rgba(255, 149, 0, 0.3); }
 .plus-autoyes.active { color: var(--amber); border-color: rgba(255, 149, 0, 0.5); background: rgba(255, 149, 0, 0.1); }
 .plus-autoyes:active { background: rgba(255, 149, 0, 0.15); }
+
+/* View overflow: the resident bezel keeps only state, mode, view and panels. */
+.term-view-btn {
+    width: 40px; min-width: 40px; height: 40px; min-height: 40px;
+    padding: 0; background: transparent; border: 1px solid var(--border);
+    color: var(--text-dim); border-radius: 4px;
+    font-family: var(--font); font-size: 16px; line-height: 1;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.term-view-btn:active { background: var(--bg-term); }
+.term-view-btn.active { color: var(--cyan); border-color: rgba(0, 212, 255, 0.5); }
+.view-menu {
+    display: none; flex-shrink: 0; padding: 6px;
+    background: linear-gradient(180deg, rgba(0, 212, 255, 0.06) 0%, rgba(0, 212, 255, 0.02) 100%);
+    border: 1px solid rgba(0, 212, 255, 0.2); animation: fadeSlide 0.2s ease-out;
+}
+.view-menu.visible {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(40px, 1fr));
+    gap: 6px;
+}
+.view-menu > button {
+    min-width: 40px; min-height: 40px; margin: 0; padding: 0 8px;
+}
+.view-menu #btn-sudo::after {
+    content: ' PW';
+    font-size: 9px;
+    letter-spacing: 0.5px;
+}
+
+/* Phone-shaped control modules stay grouped instead of spanning a monitor. */
+.view-menu,
+.fit-menu,
+.plus-menu {
+    width: 100%;
+    max-width: 720px;
+    align-self: center;
+}
 
 /* Auto-Yes delay picker */
 .autoyes-picker {
@@ -661,6 +743,8 @@
 .term-search.hidden { display: none; }
 .term-search-input {
     flex: 1;
+    min-width: 0;
+    min-height: 40px;
     background: var(--bg-term);
     border: 1px solid var(--border);
     color: var(--text);
@@ -681,7 +765,9 @@
     border: 1px solid var(--border);
     color: var(--text-dim);
     font-size: 10px;
-    padding: 3px 6px;
+    min-width: 40px;
+    min-height: 40px;
+    padding: 0 6px;
     cursor: pointer;
 }
 .term-search-nav:active, .term-search-close:active { background: var(--bg-term); }
@@ -844,6 +930,40 @@
 .tab-badge-prompt { background: var(--amber); color: #000; }
 .tab-badge-done { background: var(--green); color: #000; }
 
+/* Second line inside a session tab: the running model, and the reasoning
+   effort where the CLI has one. 8px at line-height 1.2 adds ~9.6px to the
+   ~10.8px the 9px label occupies — ~20.4px inside the ~28px content box of a
+   40px tab, so the tab height does not move and .session-tab keeps its own
+   font-size and padding. Additive: no rule above is edited.
+   Do not add a font-weight here: the line inherits .session-tab's 600, which
+   is what mockup 655 was measured with, and changing it changes tab widths. */
+.tab-model {
+    display: block;
+    font-size: 8px;
+    line-height: 1.2;
+    letter-spacing: 0;
+    color: var(--text-dim);
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* Shell panes and pre-first-poll tabs reserve no gap at all. */
+.tab-model:empty { display: none; }
+.tab-model.changed::before {
+    content: '\2039';
+    color: var(--amber);
+    margin-right: 2px;
+}
+.tab-model.pulse { animation: tab-model-pulse 3s ease-out 1; }
+@keyframes tab-model-pulse {
+    0%, 100% { color: var(--text-dim); }
+    12% {
+        color: var(--amber);
+        text-shadow: 0 0 6px rgba(255, 149, 0, 0.5);
+    }
+}
+
 /* --- Stale pill (right edge of tab strip) ----------------------------- */
 .stale-pill-wrap {
     position: sticky;
@@ -851,11 +971,15 @@
     flex-shrink: 0;
     margin-left: auto;
     width: 40px;
-    height: 40px;
+    /* Spans the full rail, padding included, so the tabs scrolling underneath
+       are hidden by a panel that matches the rail rather than by a 40px block
+       of a different colour floating in it. */
+    height: 48px;
+    margin-top: -8px;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--bg);
+    background: linear-gradient(180deg, #0a1210 0%, #060e0a 100%);
     -webkit-tap-highlight-color: transparent;
     cursor: pointer;
     z-index: 2;
@@ -1035,9 +1159,12 @@
     color: var(--purple);
     border: 1px solid var(--purple);
     border-radius: 3px;
-    padding: 0 6px;
-    margin-right: 6px;
-    min-height: 22px;
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    min-height: 40px;
+    padding: 0 4px;
+    margin-right: 0;
     font-family: inherit;
     font-size: 10px;
     letter-spacing: 0.5px;

@@ -327,6 +327,15 @@ def terminal_sessions():
 
     panes = []
     seen_sessions = set()
+    # Snapshot the model memo once. terminal_sessions() is the first-load
+    # renderer and the poll-failure fallback, so it must never resolve a model
+    # itself — the /poll request path owns that work (and may run
+    # concurrently, one handler per browser; observe_model()'s
+    # _MIN_CONFIRM_SECONDS gate is what makes that concurrency safe). Before
+    # the first poll lands these fields are simply absent and the tab line
+    # renders empty.
+    with state._activity_lock:
+        model_memo = {key: dict(value) for key, value in state.pane_model.items()}
     for line in proc.stdout.strip().split("\n"):
         if not line:
             continue
@@ -343,6 +352,7 @@ def terminal_sessions():
             is_subpane = parts[0] in seen_sessions
             seen_sessions.add(parts[0])
             agent_kind = resolve_process(target, pane_pid, parts[3])
+            memo = model_memo.get(target) or {}
             panes.append(
                 {
                     "target": target,
@@ -359,6 +369,9 @@ def terminal_sessions():
                     "is_subpane": is_subpane,
                     "command_display": prettify_command(parts[3]),
                     "agent_kind": agent_kind or "unknown",
+                    "model": memo.get("model"),
+                    "model_effort": memo.get("effort"),
+                    "model_changed_at": memo.get("changed_at", 0.0),
                 }
             )
 

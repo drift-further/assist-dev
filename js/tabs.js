@@ -5,6 +5,14 @@ const _TAB_LONG_PRESS_MS = 500;
 let _tabLongPressTimer = null;
 let _tabContextTarget = null;
 
+// A tab button now holds a second line (.tab-model) plus its badges, so its raw
+// textContent is no longer the label. Everything that wants the label goes here.
+function _tabLabelText(tab) {
+    const c = tab.cloneNode(true);
+    c.querySelectorAll('.tab-badge, .tab-idle-time, .tab-dot, .tab-model').forEach(n => n.remove());
+    return c.textContent.trim();
+}
+
 // Server-owned state, refreshed from every /poll. Pin and order are keyed by
 // SESSION (a session's panes stay contiguous so team-lead/agent grouping
 // survives a reorder); snooze is keyed by TARGET so one agent pane can be
@@ -575,7 +583,7 @@ function _enterReorderMode(tab) {
     // Show cancel banner
     const banner = document.createElement('div');
     banner.className = 'reorder-banner';
-    banner.innerHTML = 'Tap a slot to place <b>' + escHtml((tab.textContent || '').trim().split('\n')[0]) +
+    banner.innerHTML = 'Tap a slot to place <b>' + escHtml(_tabLabelText(tab)) +
         '</b> &mdash; <span class="reorder-cancel">cancel</span>';
     banner.querySelector('.reorder-cancel').onclick = () => _exitReorderMode();
     container.parentElement.insertBefore(banner, container);
@@ -860,9 +868,7 @@ function _buildTabRow(tab, isTucked) {
 
     const name = document.createElement('span');
     name.className = 'row-name';
-    const label = tab.cloneNode(true);
-    Array.from(label.querySelectorAll('.tab-badge, .tab-idle-time, .tab-dot')).forEach(n => n.remove());
-    name.textContent = label.textContent.trim() || session;
+    name.textContent = _tabLabelText(tab) || session;
     row.appendChild(name);
 
     const idleSec = parseInt(tab.dataset.idleSeconds || '0', 10);

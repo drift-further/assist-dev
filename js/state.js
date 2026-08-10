@@ -90,6 +90,7 @@ function getInputTarget() {
 // Session state
 let _sessionPanes = [];
 let _sessionPrompts = {};       // target -> true if prompt detected
+let _paneModelLast = {};        // target -> last model_changed_at this page has rendered
 let _sessionStates = {};        // target -> { state, since, prevState }
 // _sessionRefreshTimer removed — session refresh handled by consolidatedPoll()
 

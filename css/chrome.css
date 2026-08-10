@@ -1,18 +1,17 @@
 /* chrome.css — collapsible top chrome, to reclaim vertical space on phones. */
 
-/* The grabber only exists while collapsed. It inherits the safe-area inset the
-   status bar was holding — without this it renders under the notch and the one
-   control that restores everything becomes unreachable. */
+/* The grabber only exists while collapsed. It occupies the identity end of the
+   rail while the session tabs remain reachable beside it. */
 #chrome-grabber {
     display: none;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    height: 12px;
-    box-sizing: content-box;
-    padding-top: env(safe-area-inset-top, 0px);
+    gap: 3px;
+    width: 44px;
+    min-width: 44px;
+    height: 48px;
     background: linear-gradient(180deg, #0a1210 0%, #060e0a 100%);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 0;
     flex-shrink: 0;
     cursor: pointer;
     user-select: none;
@@ -22,7 +21,7 @@ body.chrome-collapsed #chrome-grabber { display: flex; }
 
 /* The handle: a short bar, the universal "pull me" affordance. */
 #chrome-grabber .grab-handle {
-    width: 34px; height: 3px; border-radius: 2px;
+    width: 16px; height: 3px; border-radius: 2px;
     background: var(--text-dim); opacity: 0.55;
 }
 
@@ -40,29 +39,32 @@ body.chrome-collapsed #chrome-grabber { display: flex; }
 }
 #chrome-grabber .grab-badge.visible { display: block; }
 
-/* max-height rather than display:none — display cannot transition, and an
-   instant jump on a phone reads as a rendering fault. Both rows are in-flow
-   flex children with flex-shrink:0, so zeroing box metrics collapses them
-   without disturbing the flex layout. */
-.status-bar,
-.term-toggle {
+/* Collapse now removes the whole utility row and keeps the session rail, which
+   is the row worth keeping on a phone. The old rules that stripped individual
+   children out of .status-bar are gone with it: the grabber and the tab strip
+   are no longer children of .status-bar, so they would have been dead or
+   actively fighting the row-level collapse. */
+.status-bar {
     overflow: hidden;
     max-height: 120px;
     transition: max-height 0.18s ease-out, opacity 0.18s ease-out,
                 padding 0.18s ease-out;
 }
 
-body.chrome-collapsed .status-bar,
-body.chrome-collapsed .term-toggle {
+body.chrome-collapsed .status-bar {
     max-height: 0;
+    min-height: 0;
     opacity: 0;
     padding-top: 0;
     padding-bottom: 0;
     border-bottom-width: 0;
 }
 
-/* The status bar's ::after glow would otherwise survive the collapse. */
-body.chrome-collapsed .status-bar::after { display: none; }
+/* The grabber takes the identity end of the surviving rail. */
+body.chrome-collapsed .session-rail {
+    gap: 0;
+    padding-left: 0;
+}
 
 /* Collapse chevron, in the toggle row beside A-/A+/Fit — costs no vertical space. */
 .term-chrome-btn {
