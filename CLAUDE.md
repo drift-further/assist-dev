@@ -71,6 +71,42 @@ Three-tier settings with deep-merge defaults in `shared/state.py`:
 
 All three are gitignored (runtime data). Defaults live in `shared/state.py` as `DEFAULT_SETTINGS`, `DEFAULT_PROJECT_SETTINGS`, `DEFAULT_CONTAINER_CONFIG`.
 
+## CLI
+
+| Command | Purpose |
+|---------|---------|
+| `assist start` | Start the server in the background |
+| `assist stop` | Stop the server |
+| `assist restart` | Restart the server |
+| `assist status` | Show server status |
+| `assist logs [N\|-f\|--follow]` | Tail the last N log lines (default 100), or follow the log |
+| `assist config` | Print resolved paths, ports, and environment settings |
+| `assist doctor` | Check prerequisites and server health |
+| `assist container status` | Show image details and running `claude-session-*` containers |
+| `assist container build` | Build the container image and stream the log |
+| `assist container config` | Print the container build configuration |
+| `assist container extensions` | List registered extension bundles |
+| `assist container kill <name>` | Kill a running `claude-session-*` container |
+| `assist ls [--json] [--cwd]` | List sessions and panes |
+| `assist view <session> [-n N] [--pane P]` | Capture a session pane |
+| `assist send <session> [<text>\|--file F] [--enter] [--pane P] [--wait] [--timeout N] [--autoyes]` | Send text, optionally wait, and temporarily arm auto-yes |
+| `assist wait <session> [--timeout N] [--pane P] [--autoyes]` | Wait for a pane to settle |
+| `assist launch --session N [--cwd P] [--cols C] [--rows R] [--wait] [--timeout N]` | Create a bare shell; takes no command. Spawn an agent with `launch`, then `send` |
+| `assist kill <session> [--pane P]` | Kill a tmux session |
+| `assist autoyes <session> (--on\|--off\|--status) [--delay N]` | Persistently set or inspect auto-yes; enabled delays are clamped to 0.1–30 seconds |
+| `assist studio [args]` | Delegate to the Studio operator command |
+| `assist help` | Show the full command reference |
+
+Every session verb supports `-h`/`--help`, with descriptions for each positional argument and flag. `--autoyes` on `send` or `wait` applies only during that one wait and restores the prior setting afterward; `assist autoyes` changes the persistent per-session setting, and its `--delay` is valid only with `--on`.
+
+Successful `ls`, `view`, `send`, `wait`, and `launch` commands print a measured `next:` suggestion to stderr. `ls` uses the first printed row's session name and omits the hint when no rows exist. Set `ASSIST_NO_HINTS=1` to suppress hints; `assist ls --json` suppresses them automatically and keeps stdout as parseable JSON.
+
+| Wait exit | State | Meaning |
+|-----------|-------|---------|
+| `0` | idle | Pane went quiet, no prompt |
+| `10` | prompt | Quiet because it is asking something; summary printed |
+| `75` | working | Still changing at deadline; not an error, re-run `assist wait` |
+
 ## Development Cycle
 
 1. Edit files in this repo

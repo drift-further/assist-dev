@@ -217,7 +217,7 @@ def type_text():
     no_history = bool(data.get("no_history"))
     if not text and not enter:
         return jsonify({"ok": False, "error": "No text provided"}), 400
-    if text and enter:
+    if text and enter and not data.get("raw"):
         text = fix_first_word_case(text)
 
     # Only the composer opts in. The quick-action command buttons also POST here and

@@ -1,374 +1,19 @@
-#!/usr/bin/env bash
-#
-# assist — CLI for Claude Assist (server control + container ops).
-#
-# Installed by install.sh as a symlink at ~/.local/bin/assist.
-# Resolves the install location from ~/.config/claude-assist/config.env,
-# or falls back to the parent of this script when invoked via symlink.
-#
-set -euo pipefail
+#!/usr/bin/env python3
+"""Command-line dispatcher for Claude Assist."""
 
-# ---- resolve ASSIST_HOME ---------------------------------------------------
-CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/claude-assist/config.env"
-if [[ -f "$CONFIG_FILE" ]]; then
-    # shellcheck disable=SC1090
-    source "$CONFIG_FILE"
-fi
+import argparse
+import sys
+from pathlib import Path
 
-if [[ -z "${ASSIST_HOME:-}" ]]; then
-    self="${BASH_SOURCE[0]}"
-    while [[ -L "$self" ]]; do
-        self="$(readlink "$self")"
-    done
-    ASSIST_HOME="$(cd "$(dirname "$self")/.." && pwd)"
-fi
 
-[[ -d "$ASSIST_HOME" ]] || { echo "assist: ASSIST_HOME not found: $ASSIST_HOME" >&2; exit 1; }
+SCRIPT_PATH = Path(__file__).resolve()
+sys.path.insert(0, str(SCRIPT_PATH.parent.parent))
 
-# ---- load .env (if present) ------------------------------------------------
-if [[ -f "$ASSIST_HOME/.env" ]]; then
-    set -a
-    # shellcheck disable=SC1090
-    source "$ASSIST_HOME/.env"
-    set +a
-fi
+from cli import container, http, proc, session, wait as wait_cli
+from cli.config import ConfigError, resolve
 
-PORT="${ASSIST_PORT:-8089}"
-API="http://127.0.0.1:$PORT"
-PY="$ASSIST_HOME/.venv/bin/python"
-[[ -x "$PY" ]] || PY="python3"
 
-# ---- helpers ---------------------------------------------------------------
-say()  { printf '\033[36m==>\033[0m %s\n' "$*"; }
-warn() { printf '\033[33mWARN:\033[0m %s\n' "$*" >&2; }
-err()  { printf '\033[31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
-
-pretty_json() { "$PY" -m json.tool 2>/dev/null || cat; }
-
-# HTTP helpers — always report failures loudly instead of exiting silently
-# under `set -euo pipefail`. curl alone with -f swallows the body, which is
-# useless for diagnosing 4xx/5xx responses.
-api_get() {
-    local path="$1"
-    if command -v curl >/dev/null; then
-        local resp status body
-        resp="$(curl -sS --max-time 10 -w $'\n__STATUS__%{http_code}' "$API$path" 2>&1)" || {
-            err "Request to $API$path failed: $resp"
-        }
-        status="${resp##*__STATUS__}"
-        body="${resp%$'\n'__STATUS__*}"
-        if [[ ! "$status" =~ ^2 ]]; then
-            err "GET $path → HTTP $status: $(printf '%s' "$body" | head -c 300)"
-        fi
-        printf '%s\n' "$body"
-    else
-        ASSIST_URL="$API$path" "$PY" - <<'PY'
-import os, sys, urllib.request, urllib.error
-try:
-    with urllib.request.urlopen(os.environ["ASSIST_URL"], timeout=10) as r:
-        sys.stdout.write(r.read().decode())
-except urllib.error.HTTPError as e:
-    sys.stderr.write(f"GET {e.url} → HTTP {e.code}: {e.read().decode()[:300]}\n")
-    sys.exit(1)
-except Exception as e:
-    sys.stderr.write(f"Request failed: {e}\n")
-    sys.exit(1)
-PY
-    fi
-}
-
-api_post() {
-    local path="$1" data="${2:-{}}"
-    if command -v curl >/dev/null; then
-        local resp status body
-        resp="$(curl -sS --max-time 30 -X POST -H 'Content-Type: application/json' \
-                -d "$data" -w $'\n__STATUS__%{http_code}' "$API$path" 2>&1)" || {
-            err "Request to $API$path failed: $resp"
-        }
-        status="${resp##*__STATUS__}"
-        body="${resp%$'\n'__STATUS__*}"
-        if [[ ! "$status" =~ ^2 ]]; then
-            err "POST $path → HTTP $status: $(printf '%s' "$body" | head -c 300)"
-        fi
-        printf '%s\n' "$body"
-    else
-        ASSIST_API="$API$path" ASSIST_DATA="$data" "$PY" - <<'PY'
-import json, os, sys, urllib.request, urllib.error
-req = urllib.request.Request(os.environ["ASSIST_API"], method="POST")
-req.add_header("Content-Type", "application/json")
-body = os.environ["ASSIST_DATA"].encode()
-try:
-    with urllib.request.urlopen(req, body, timeout=30) as r:
-        sys.stdout.write(r.read().decode())
-except urllib.error.HTTPError as e:
-    sys.stderr.write(f"POST {e.url} → HTTP {e.code}: {e.read().decode()[:300]}\n")
-    sys.exit(1)
-except Exception as e:
-    sys.stderr.write(f"Request failed: {e}\n")
-    sys.exit(1)
-PY
-    fi
-}
-
-require_server() {
-    if ! api_get /health >/dev/null 2>&1; then
-        err "Server not running on $API. Start it with: assist start"
-    fi
-}
-
-# ---- process commands (delegate to assist-ctl) -----------------------------
-cmd_start()   { "$ASSIST_HOME/assist-ctl" start; }
-cmd_stop()    { "$ASSIST_HOME/assist-ctl" stop; }
-cmd_restart() { "$ASSIST_HOME/assist-ctl" restart; }
-cmd_status()  { "$ASSIST_HOME/assist-ctl" status; }
-
-cmd_logs() {
-    local log="/tmp/assist-server.log"
-    [[ -f "$log" ]] || err "Log file not found: $log"
-    case "${1:-}" in
-        -f|--follow) tail -f "$log" ;;
-        *)           tail -n "${1:-100}" "$log" ;;
-    esac
-}
-
-# ---- config / diagnostics --------------------------------------------------
-cmd_config() {
-    cat <<EOF
-ASSIST_HOME        $ASSIST_HOME
-Port               $PORT
-Python             $PY
-Venv               $ASSIST_HOME/.venv
-User config file   $CONFIG_FILE
-Env file           $ASSIST_HOME/.env
-Projects dir       ${ASSIST_PROJECTS_DIR:-$HOME/projects}
-Skills dir         ${ASSIST_SKILLS_DIR:-$HOME/.claude/skills}
-Session init cmd   ${ASSIST_SESSION_INIT_CMD:-(none)}
-API base           $API
-EOF
-}
-
-cmd_doctor() {
-    local ok_all=1
-    local mark_ok=$'\033[32m\xe2\x9c\x93\033[0m'
-    local mark_fail=$'\033[31m\xe2\x9c\x97\033[0m'
-    local mark_warn=$'\033[33m\xe2\x97\x8b\033[0m'
-
-    check() {
-        local name="$1" cmd="$2" required="${3:-no}"
-        if command -v "$cmd" >/dev/null 2>&1; then
-            printf "  %s %s (%s)\n" "$mark_ok" "$name" "$(command -v "$cmd")"
-        else
-            if [[ "$required" == "yes" ]]; then
-                printf "  %s %s (required)\n" "$mark_fail" "$name"
-                ok_all=0
-            else
-                printf "  %s %s (optional)\n" "$mark_warn" "$name"
-            fi
-        fi
-    }
-
-    echo "Environment:"
-    check "python3"  python3  yes
-    check "tmux"     tmux     yes
-    check "xclip"    xclip
-    check "xdotool"  xdotool
-    check "docker"   docker
-    check "curl"     curl
-    check "nginx"    nginx
-
-    # npx or claude binary
-    if command -v npx >/dev/null 2>&1; then
-        printf "  %s npx (%s)\n" "$mark_ok" "$(command -v npx)"
-    elif command -v claude >/dev/null 2>&1; then
-        printf "  %s claude (%s) — set claude_mode to 'claude'\n" "$mark_ok" "$(command -v claude)"
-    else
-        printf "  %s npx/claude (neither found — Claude Code launch will fail)\n" "$mark_warn"
-    fi
-
-    # Docker daemon reachable?
-    if command -v docker >/dev/null; then
-        if docker ps >/dev/null 2>&1; then
-            printf "  %s docker daemon reachable\n" "$mark_ok"
-        else
-            printf "  %s docker installed but user lacks permission\n" "$mark_warn"
-        fi
-    fi
-
-    echo
-    echo "Install:"
-    if [[ -x "$PY" ]]; then
-        printf "  %s venv (%s)\n" "$mark_ok" "$PY"
-    else
-        printf "  %s venv missing — run install.sh\n" "$mark_fail"
-        ok_all=0
-    fi
-    if [[ -f "$ASSIST_HOME/.env" ]]; then
-        printf "  %s .env present\n" "$mark_ok"
-    else
-        printf "  %s .env missing — run install.sh\n" "$mark_warn"
-    fi
-    if [[ -f "$CONFIG_FILE" ]]; then
-        printf "  %s user config (%s)\n" "$mark_ok" "$CONFIG_FILE"
-    else
-        printf "  %s user config missing\n" "$mark_warn"
-    fi
-    if [[ -w "$ASSIST_HOME" ]]; then
-        printf "  %s data directory writable\n" "$mark_ok"
-    else
-        printf "  %s data directory NOT writable (%s)\n" "$mark_fail" "$ASSIST_HOME"
-        ok_all=0
-    fi
-
-    echo
-    echo "Server:"
-    if api_get /health >/dev/null 2>&1; then
-        printf "  %s responding on :%s\n" "$mark_ok" "$PORT"
-    else
-        printf "  %s not running on :%s\n" "$mark_warn" "$PORT"
-    fi
-
-    echo
-    if [[ "$ok_all" == "1" ]]; then
-        echo "OK"
-    else
-        echo "Problems found — see above"
-        exit 1
-    fi
-}
-
-# ---- container commands ----------------------------------------------------
-cmd_container() {
-    local sub="${1:-status}"
-    shift || true
-    case "$sub" in
-        status)      container_status ;;
-        build)       container_build ;;
-        config)      container_config_show ;;
-        extensions)  container_extensions_list ;;
-        kill)        container_kill "${1:-}" ;;
-        help|-h|--help) container_help ;;
-        *)           err "Unknown container subcommand: $sub (try: $(container_subs))" ;;
-    esac
-}
-
-container_subs() { echo "status | build | config | extensions | kill <name>"; }
-
-container_help() {
-    cat <<EOF
-Usage: assist container <subcommand>
-
-Subcommands:
-  status                 Show image info + running claude-session-* containers
-  build                  Trigger a container image build and stream the log
-  config                 Print the current container build config
-  extensions             List registered extensions (SDK/tool bundles)
-  kill <name>            Kill a running claude-session-* container
-
-EOF
-}
-
-container_status() {
-    require_server
-    api_get /api/container/status | pretty_json
-}
-
-container_config_show() {
-    require_server
-    api_get /api/container/config | pretty_json
-}
-
-container_extensions_list() {
-    require_server
-    api_get /api/container/extensions | pretty_json
-}
-
-container_kill() {
-    local name="$1"
-    [[ -n "$name" ]] || err "Usage: assist container kill <container-name>"
-    require_server
-    api_post "/api/container/kill/$name" | pretty_json
-}
-
-container_build() {
-    require_server
-    ASSIST_API="$API" "$PY" - <<'PY'
-import json, os, sys, time, urllib.request
-
-API = os.environ["ASSIST_API"]
-
-def fetch(path, method="GET", data=None):
-    req = urllib.request.Request(API + path, method=method)
-    body = None
-    if data is not None:
-        req.add_header("Content-Type", "application/json")
-        body = json.dumps(data).encode()
-    with urllib.request.urlopen(req, body, timeout=30) as r:
-        return json.loads(r.read())
-
-try:
-    resp = fetch("/api/container/build/status")
-except Exception as e:
-    print(f"Could not reach build status API: {e}", file=sys.stderr)
-    sys.exit(2)
-
-if resp.get("active"):
-    print("==> Build already in progress — attaching to live log")
-else:
-    print("==> Triggering container build")
-    try:
-        r = fetch("/api/container/build", method="POST", data={})
-    except Exception as e:
-        print(f"Failed to start build: {e}", file=sys.stderr)
-        sys.exit(2)
-    if not r.get("ok"):
-        print(f"Failed to start build: {r.get('error')}", file=sys.stderr)
-        sys.exit(2)
-
-last = 0
-while True:
-    try:
-        resp = fetch("/api/container/build/status")
-    except Exception as e:
-        print(f"(poll error: {e})", file=sys.stderr)
-        time.sleep(2)
-        continue
-    log = resp.get("log") or []
-    for line in log[last:]:
-        print(line, flush=True)
-    last = len(log)
-    if not resp.get("active"):
-        success = resp.get("success")
-        print()
-        if success is True:
-            print("\033[32m✓ build succeeded\033[0m")
-            sys.exit(0)
-        elif success is False:
-            print("\033[31m✗ build failed\033[0m")
-            sys.exit(1)
-        else:
-            print("(build finished with unknown status)")
-            sys.exit(0)
-    time.sleep(1)
-PY
-}
-
-# ---- help ------------------------------------------------------------------
-cmd_studio() {
-    # Delegate to Studio's own operator command — never reimplement Studio ops here
-    # (effort-138 decision 463). Prefer the standalone 'studio' command; fall back to
-    # 'karen studio' until Studio ships it (Phase-1 T6).
-    if command -v studio >/dev/null 2>&1; then
-        exec studio "$@"
-    elif command -v karen >/dev/null 2>&1; then
-        exec karen studio "$@"
-    else
-        err "No 'studio' or 'karen' command on PATH to delegate to"
-    fi
-}
-
-cmd_help() {
-    cat <<EOF
-assist — control the Claude Assist web terminal
+HELP_TEXT = """assist — control the Claude Assist web terminal
 
 Usage: assist <command> [args]
 
@@ -377,11 +22,44 @@ Server:
   stop                   Stop the server
   restart                Restart the server
   status                 Show server status
-  logs [N | -f]          Tail last N lines (default 100), or follow with -f
+  logs [N | -f | --follow]
+                         Tail last N lines (default 100), or follow
 
 Config & diagnostics:
   config                 Print resolved paths, ports, and env
   doctor                 Check prerequisites + server health
+
+Sessions:
+  ls [--json] [--cwd]    List sessions and panes
+  view SESSION [-n N] [--pane P]
+                         Capture a session pane
+  send SESSION [TEXT | --file F] [--enter] [--pane P]
+      [--wait] [--timeout N] [--autoyes]
+                         Send text to a session pane
+  wait SESSION [--timeout N] [--pane P] [--autoyes]
+                         Wait for a session pane to settle
+  launch --session N [--cwd P] [--cols C] [--rows R]
+      [--wait] [--timeout N]
+                         Create a bare shell; takes no command
+                         Spawn an agent with launch, then send
+  kill SESSION [--pane P]
+                         Kill a tmux session
+  autoyes SESSION (--on | --off | --status) [--delay N]
+                         Persistently set or inspect auto-yes
+
+Auto-yes:
+  --autoyes on send/wait is temporary for that one wait and is restored
+  afterward. `assist autoyes` changes the persistent session setting.
+
+Next-step hints:
+  Successful ls/view/send/wait/launch commands print a measured `next:`
+  suggestion to stderr. Set ASSIST_NO_HINTS=1 to suppress it; ls --json
+  suppresses it automatically.
+
+Wait exit codes:
+  0   idle    — the pane went quiet, no prompt
+  10  prompt  — quiet because it is asking something (summary printed)
+  75  working — still changing at the deadline; not an error, re-run `assist wait`
 
 Container:
   container status       Image info + running claude-session-* containers
@@ -398,24 +76,384 @@ Misc:
   help                   Show this message
 
 Install / reinstall:
-  cd \$ASSIST_HOME && ./install.sh
+  cd $ASSIST_HOME && ./install.sh
 
-EOF
+"""
+
+PROCESS_HANDLERS = {
+    "start": proc.start,
+    "stop": proc.stop,
+    "restart": proc.restart,
+    "status": proc.status,
+}
+PLACEHOLDER_COMMANDS = set()
+COMMANDS = {
+    *PROCESS_HANDLERS,
+    "logs",
+    "config",
+    "doctor",
+    "container",
+    "ls",
+    "view",
+    "send",
+    "wait",
+    "launch",
+    "kill",
+    "autoyes",
+    "studio",
+    "help",
+    *PLACEHOLDER_COMMANDS,
 }
 
-# ---- dispatch --------------------------------------------------------------
-cmd="${1:-help}"
-shift || true
-case "$cmd" in
-    start)       cmd_start "$@" ;;
-    stop)        cmd_stop "$@" ;;
-    restart)     cmd_restart "$@" ;;
-    status)      cmd_status "$@" ;;
-    logs)        cmd_logs "$@" ;;
-    config)      cmd_config "$@" ;;
-    doctor)      cmd_doctor "$@" ;;
-    container)   cmd_container "$@" ;;
-    studio)      cmd_studio "$@" ;;
-    help|-h|--help) cmd_help ;;
-    *)           err "Unknown command: $cmd (try: assist help)" ;;
-esac
+
+class ArgumentError(Exception):
+    """An argparse error that should not produce a traceback."""
+
+
+class AssistArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        raise ArgumentError(message)
+
+
+def build_parser() -> AssistArgumentParser:
+    parser = AssistArgumentParser(prog="assist", add_help=False)
+    subparsers = parser.add_subparsers(dest="verb", required=True)
+
+    for verb in PROCESS_HANDLERS:
+        command_parser = subparsers.add_parser(verb, add_help=False)
+        command_parser.add_argument("arguments", nargs=argparse.REMAINDER)
+
+    logs_parser = subparsers.add_parser("logs", add_help=False)
+    logs_parser.add_argument("-f", "--follow", action="store_true")
+    logs_parser.add_argument("lines", nargs="?", default="100")
+
+    ls_parser = subparsers.add_parser(
+        "ls",
+        description="List Assist tmux sessions and panes.",
+    )
+    ls_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="emit the full merged response as JSON and suppress next-step hints",
+    )
+    ls_parser.add_argument(
+        "--cwd",
+        action="store_true",
+        dest="include_cwd",
+        help="include each pane's working directory (one HTTP request per row)",
+    )
+
+    view_parser = subparsers.add_parser(
+        "view",
+        description="Capture and print a session pane.",
+    )
+    view_parser.add_argument(
+        "session",
+        nargs="?",
+        help="tmux session name",
+    )
+    view_parser.add_argument(
+        "-n",
+        dest="lines",
+        metavar="N",
+        type=int,
+        help="capture the last N lines instead of the server default",
+    )
+    view_parser.add_argument(
+        "--pane",
+        default="0.0",
+        metavar="P",
+        help="pane selector within SESSION (default: 0.0)",
+    )
+
+    send_parser = subparsers.add_parser(
+        "send",
+        description="Send text to a session pane, optionally waiting for it to settle.",
+    )
+    send_parser.add_argument(
+        "session",
+        nargs="?",
+        help="tmux session name",
+    )
+    send_parser.add_argument(
+        "text",
+        nargs="?",
+        help="text to send (mutually exclusive with --file)",
+    )
+    send_parser.add_argument(
+        "--file",
+        dest="file_path",
+        metavar="F",
+        help="read text from F, or from stdin when F is -",
+    )
+    send_parser.add_argument(
+        "--enter",
+        action="store_true",
+        help="press Enter after sending the text",
+    )
+    send_parser.add_argument(
+        "--pane",
+        default="0.0",
+        metavar="P",
+        help="pane selector within SESSION (default: 0.0)",
+    )
+    send_parser.add_argument(
+        "--wait",
+        action="store_true",
+        dest="wait_for_completion",
+        help="wait for the pane to settle after sending",
+    )
+    send_parser.add_argument(
+        "--autoyes",
+        action="store_true",
+        help=(
+            "temporarily enable auto-yes for this wait, then restore its "
+            "prior state (requires --wait)"
+        ),
+    )
+    send_parser.add_argument(
+        "--timeout",
+        default=wait_cli.DEFAULT_TIMEOUT,
+        metavar="N",
+        type=float,
+        help=f"wait at most N seconds (default: {wait_cli.DEFAULT_TIMEOUT:g})",
+    )
+
+    wait_parser = subparsers.add_parser(
+        "wait",
+        description="Wait for a session pane to become idle or present a prompt.",
+    )
+    wait_parser.add_argument(
+        "session",
+        nargs="?",
+        help="tmux session name",
+    )
+    wait_parser.add_argument(
+        "--timeout",
+        default=wait_cli.DEFAULT_TIMEOUT,
+        metavar="N",
+        type=float,
+        help=f"wait at most N seconds (default: {wait_cli.DEFAULT_TIMEOUT:g})",
+    )
+    wait_parser.add_argument(
+        "--pane",
+        default="0.0",
+        metavar="P",
+        help="pane selector within SESSION (default: 0.0)",
+    )
+    wait_parser.add_argument(
+        "--autoyes",
+        action="store_true",
+        help=(
+            "temporarily enable auto-yes for this wait, then restore its "
+            "prior state"
+        ),
+    )
+
+    launch_parser = subparsers.add_parser(
+        "launch",
+        description="Create or reuse a bare tmux shell session.",
+    )
+    launch_parser.add_argument(
+        "--session",
+        help="required session name (the server sanitizes tmux-unsafe characters)",
+    )
+    launch_parser.add_argument(
+        "--cwd",
+        help="starting working directory or project name",
+    )
+    launch_parser.add_argument(
+        "--cols",
+        type=int,
+        help="requested pane width in columns",
+    )
+    launch_parser.add_argument(
+        "--rows",
+        type=int,
+        help="requested pane height in rows",
+    )
+    launch_parser.add_argument(
+        "--wait",
+        action="store_true",
+        dest="wait_for_completion",
+        help="wait for the new shell to settle",
+    )
+    launch_parser.add_argument(
+        "--timeout",
+        default=wait_cli.DEFAULT_TIMEOUT,
+        metavar="N",
+        type=float,
+        help=f"wait at most N seconds (default: {wait_cli.DEFAULT_TIMEOUT:g})",
+    )
+
+    kill_parser = subparsers.add_parser(
+        "kill",
+        description="Kill an entire tmux session.",
+    )
+    kill_parser.add_argument(
+        "session",
+        nargs="?",
+        help="tmux session name",
+    )
+    kill_parser.add_argument(
+        "--pane",
+        default="0.0",
+        metavar="P",
+        help="pane selector accepted for session-command consistency (default: 0.0)",
+    )
+
+    autoyes_parser = subparsers.add_parser(
+        "autoyes",
+        description=(
+            "Persistently set or inspect auto-yes for a session. Unlike the "
+            "temporary --autoyes flag on send/wait, this setting is not restored."
+        ),
+    )
+    autoyes_parser.add_argument(
+        "session",
+        nargs="?",
+        help="tmux session name",
+    )
+    autoyes_mode = autoyes_parser.add_mutually_exclusive_group(required=True)
+    autoyes_mode.add_argument(
+        "--on",
+        action="store_const",
+        const="on",
+        dest="mode",
+        help="leave persistent auto-yes enabled",
+    )
+    autoyes_mode.add_argument(
+        "--off",
+        action="store_const",
+        const="off",
+        dest="mode",
+        help="leave persistent auto-yes disabled",
+    )
+    autoyes_mode.add_argument(
+        "--status",
+        action="store_const",
+        const="status",
+        dest="mode",
+        help="print the current persistent state and enabled delay",
+    )
+    autoyes_parser.add_argument(
+        "--delay",
+        metavar="N",
+        type=float,
+        help="delay in seconds with --on (the server clamps it to 0.1-30)",
+    )
+
+    for verb in (
+        "config",
+        "doctor",
+        "container",
+        "studio",
+        "help",
+        *sorted(PLACEHOLDER_COMMANDS),
+    ):
+        command_parser = subparsers.add_parser(verb, add_help=False)
+        command_parser.add_argument("arguments", nargs=argparse.REMAINDER)
+
+    return parser
+
+
+def main(arguments: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if arguments is None else arguments)
+    verb = argv[0] if argv else "help"
+
+    try:
+        resolved = resolve(SCRIPT_PATH)
+    except ConfigError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
+    if not argv or verb in {"-h", "--help"}:
+        argv = ["help"]
+        verb = "help"
+
+    if verb not in COMMANDS:
+        proc.print_error(f"Unknown command: {verb} (try: assist help)")
+        return 1
+
+    try:
+        parsed = build_parser().parse_args(argv)
+    except ArgumentError as exc:
+        proc.print_error(str(exc))
+        return 1
+
+    if parsed.verb in PROCESS_HANDLERS:
+        return PROCESS_HANDLERS[parsed.verb](resolved)
+    if parsed.verb == "logs":
+        return proc.logs(lines=parsed.lines, follow=parsed.follow)
+    if parsed.verb == "config":
+        return proc.config(resolved)
+    if parsed.verb == "doctor":
+        return proc.doctor(resolved)
+    if parsed.verb == "container":
+        return container.dispatch(parsed.arguments)
+    if parsed.verb == "ls":
+        return session.list_sessions(parsed.json_output, parsed.include_cwd)
+    if parsed.verb == "view":
+        return session.view(parsed.session, parsed.pane, parsed.lines)
+    if parsed.verb == "send":
+        return session.send(
+            parsed.session,
+            parsed.text,
+            parsed.file_path,
+            parsed.enter,
+            parsed.pane,
+            parsed.wait_for_completion,
+            parsed.timeout,
+            parsed.autoyes,
+        )
+    if parsed.verb == "wait":
+        return wait_cli.command(
+            parsed.session,
+            parsed.timeout,
+            parsed.pane,
+            parsed.autoyes,
+        )
+    if parsed.verb == "launch":
+        return session.launch(
+            parsed.session,
+            parsed.cwd,
+            parsed.cols,
+            parsed.rows,
+            parsed.wait_for_completion,
+            parsed.timeout,
+        )
+    if parsed.verb == "kill":
+        return session.kill(parsed.session, parsed.pane)
+    if parsed.verb == "autoyes":
+        return session.autoyes(
+            parsed.session,
+            parsed.mode,
+            parsed.delay,
+        )
+    if parsed.verb == "studio":
+        return proc.studio(parsed.arguments)
+    if parsed.verb == "help":
+        print(HELP_TEXT, end="")
+        return 0
+    if parsed.verb in PLACEHOLDER_COMMANDS:
+        return proc.not_implemented(parsed.verb)
+
+    proc.print_error(f"Unknown command: {parsed.verb} (try: assist help)")
+    return 1
+
+
+if __name__ == "__main__":
+    try:
+        exit_code = main()
+    except KeyboardInterrupt:
+        exit_code = 130
+    except http.ApiError as exc:
+        exit_code = http.report_error(exc)
+    except wait_cli.WaitError as exc:
+        print(exc, file=sys.stderr)
+        exit_code = exc.exit_code
+    except Exception as exc:
+        proc.print_error(f"{type(exc).__name__}: {exc}")
+        exit_code = 1
+    raise SystemExit(exit_code)

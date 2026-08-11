@@ -118,16 +118,17 @@ def tmux_send_keys(target, *keys):
 def tmux_send_text(target, text):
     """Send literal text to a tmux pane (no key interpretation).
 
-    For small text, uses `send-keys -l` (fast path, unchanged behavior).
-    For text over ~8 KB, uses `load-buffer -` + `paste-buffer -p` to bypass
-    tmux's internal `send-keys` command buffer limit (~16 KB). The `-p` flag
+    For small text without newlines, uses `send-keys -l` (fast path).
+    For text over ~8 KB or containing a newline, uses `load-buffer -` +
+    `paste-buffer -p` to bypass tmux's internal `send-keys` command buffer
+    limit (~16 KB). The `-p` flag
     enables bracketed paste when the receiving app has requested it, so
     Claude Code / readline treat large pastes as a single paste block
     instead of N individual keystrokes.
     """
     byte_len = len(text.encode("utf-8", errors="replace"))
 
-    if byte_len <= _SEND_KEYS_BYTE_LIMIT:
+    if byte_len <= _SEND_KEYS_BYTE_LIMIT and "\n" not in text:
         proc = subprocess.run(
             ["tmux", "send-keys", "-t", target, "-l", text],
             timeout=5,

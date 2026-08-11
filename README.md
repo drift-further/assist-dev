@@ -74,7 +74,7 @@ Once installed, `assist` manages everything:
 | `assist stop` | Stop the server |
 | `assist restart` | Restart the server |
 | `assist status` | Server status + health check |
-| `assist logs [N\|-f]` | Tail last N lines (default 100), or follow with `-f` |
+| `assist logs [N\|-f\|--follow]` | Tail last N lines (default 100), or follow with `-f`/`--follow` |
 | `assist config` | Print resolved paths, ports, env |
 | `assist doctor` | Check prereqs, venv, .env, server health |
 | `assist container status` | Image info + running `claude-session-*` containers |
@@ -82,9 +82,29 @@ Once installed, `assist` manages everything:
 | `assist container config` | Print current container build config |
 | `assist container extensions` | List registered extension bundles |
 | `assist container kill <name>` | Kill a running `claude-session-*` container |
+| `assist ls [--json] [--cwd]` | List sessions and panes, optionally with working directories |
+| `assist view <session> [-n N] [--pane P]` | Capture a session pane |
+| `assist send <session> [<text>\|--file F] [--enter] [--pane P] [--wait] [--timeout N] [--autoyes]` | Send text to a session pane, optionally waiting for it to settle |
+| `assist wait <session> [--timeout N] [--pane P] [--autoyes]` | Wait for a session pane to settle |
+| `assist launch --session N [--cwd P] [--cols C] [--rows R] [--wait] [--timeout N]` | Create a bare shell; takes no command (spawn an agent with `launch`, then `send`) |
+| `assist kill <session> [--pane P]` | Kill a tmux session |
+| `assist autoyes <session> (--on\|--off\|--status) [--delay N]` | Persistently set or inspect auto-yes; enabled delays are clamped to 0.1–30 seconds |
+| `assist studio [args]` | Delegate to the Studio operator command |
 | `assist help` | Full command reference |
 
 The process commands delegate to `./assist-ctl`. The container commands hit the running server's HTTP API (`/api/container/*`), so the server must be running for them to work.
+
+Each session verb (`ls`, `view`, `send`, `wait`, `launch`, `kill`, and `autoyes`) supports `-h`/`--help`; its generated help describes every argument and flag. `--autoyes` on `send` or `wait` is a temporary window scoped to that one wait and restores the prior state afterward. `assist autoyes` changes the persistent per-session setting instead; `--delay` is valid only with `--on`.
+
+After a successful `ls`, `view`, `send`, `wait`, or `launch`, the CLI prints a measured `next:` suggestion to stderr, leaving stdout safe for captures and pipelines. `ls` uses the first printed row's session name and omits the hint when there are no rows. Set `ASSIST_NO_HINTS=1` to suppress hints for any command; `assist ls --json` suppresses them automatically so its stdout remains parseable JSON.
+
+Session wait commands use these exit codes:
+
+| Code | State | Meaning |
+|------|-------|---------|
+| `0` | idle | The pane went quiet with no prompt |
+| `10` | prompt | The pane is quiet because it is asking something; a summary is printed |
+| `75` | working | The pane is still changing at the deadline; this is not an error, so re-run `assist wait` |
 
 ## Configuration
 
