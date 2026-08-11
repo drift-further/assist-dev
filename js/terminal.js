@@ -592,6 +592,8 @@ function selectTab(target) {
     // Selecting a snoozed tab wakes it (covers any selection path).
     if (typeof _wakeSnoozed === 'function') _wakeSnoozed(target);
     markActiveTab(target);
+    // The key panels describe whichever CLI this tab is running.
+    if (typeof applyKeyLabels === 'function') applyKeyLabels(target);
     _termPaused = false;
     _tabSwitchScrollLock = true;  // suppress scroll-freeze until content renders
     _termLines = 2000;
@@ -807,6 +809,9 @@ function _doRender(content, info, target) {
             (info.width && info.height) ? `${info.width}x${info.height}` : '';
         _paneTui[target] = _isTuiInfo(info, target);
         if (target === _termTarget) _updateTuiChip(target);
+        // agent_kind can arrive (or be refined by the content fingerprint) after
+        // the tab was selected, so re-apply on the frame that carries it.
+        if (target === _termTarget && typeof applyKeyLabels === 'function') applyKeyLabels(target);
     }
 
     // The active session used to be spelled out in .term-toggle-status. That

@@ -164,7 +164,11 @@ def send_key():
     if not keys:
         return jsonify({"ok": False, "error": "No keys provided"}), 400
 
-    allowed = set(TMUX_KEY_MAP.keys()) | {"Escape Escape", "ctrl+c ctrl+c"}
+    allowed = set(TMUX_KEY_MAP.keys()) | {
+        "Escape Escape",
+        "ctrl+c ctrl+c",
+        "ctrl+b ctrl+b",
+    }
     if keys not in allowed:
         return jsonify({"ok": False, "error": "Key combo not allowed"}), 403
 
@@ -182,14 +186,15 @@ def send_key():
                 pass
             return jsonify({"ok": False, "error": "clipboard read failed"}), 500
 
-        if keys == "Escape Escape":
-            tmux_send_keys(target, "Escape")
-            tmux_send_keys(target, "Escape")
-            return jsonify({"ok": True, "via": "tmux"})
-
-        if keys == "ctrl+c ctrl+c":
-            tmux_send_keys(target, "C-c")
-            tmux_send_keys(target, "C-c")
+        # Double-taps. The allowlist above decides which pairs exist; every one of
+        # them is the same key twice, sent back-to-back with no delay.
+        first, _, second = keys.partition(" ")
+        if second and first == second:
+            repeated = TMUX_KEY_MAP.get(first)
+            if not repeated:
+                return jsonify({"ok": False, "error": "Key combo not allowed"}), 403
+            tmux_send_keys(target, repeated)
+            tmux_send_keys(target, repeated)
             return jsonify({"ok": True, "via": "tmux"})
 
         tmux_key = TMUX_KEY_MAP.get(keys)

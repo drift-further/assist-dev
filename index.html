@@ -82,8 +82,8 @@
             <span>More Keys</span>
             <button class="drawer-close" onclick="closeLeftDrawer()">&times;</button>
         </div>
-        <div class="hk-group-label">Claude Code</div>
-        <div class="hk-grid">
+        <div class="hk-group-label" id="hk-cmd-label">Claude Code</div>
+        <div class="hk-grid" id="hk-cmd-grid">
             <button class="hk-btn hk-cyan" onclick="typeCmd('/compact')"><span class="hk-label">/compact</span></button>
             <button class="hk-btn hk-cyan" onclick="typeCmd('/clear')"><span class="hk-label">/clear</span></button>
             <button class="hk-btn hk-cyan" onclick="typeCmd('/help')"><span class="hk-label">/help</span></button>
@@ -95,21 +95,26 @@
         </div>
         <div class="hk-group-label">Terminal</div>
         <div class="hk-grid">
-            <button class="hk-btn hk-dim" onclick="sendKey('ctrl+l')"><span class="hk-label">Ctrl+L</span><span class="hk-sub">clear</span></button>
-            <button class="hk-btn hk-dim" onclick="sendKey('ctrl+r')"><span class="hk-label">Ctrl+R</span><span class="hk-sub">search</span></button>
-            <button class="hk-btn hk-dim" onclick="sendKey('Tab')"><span class="hk-label">Tab</span><span class="hk-sub">complete</span></button>
-            <button class="hk-btn hk-dim" onclick="sendKey('ctrl+d')"><span class="hk-label">Ctrl+D</span><span class="hk-sub">exit</span></button>
-            <button class="hk-btn hk-dim" onclick="sendKey('ctrl+u')"><span class="hk-label">Ctrl+U</span><span class="hk-sub">del line</span></button>
-            <button class="hk-btn hk-dim" onclick="sendKey('ctrl+a')"><span class="hk-label">Ctrl+A</span><span class="hk-sub">home</span></button>
-            <button class="hk-btn hk-dim" onclick="sendKey('ctrl+e')"><span class="hk-label">Ctrl+E</span><span class="hk-sub">end</span></button>
-            <button class="hk-btn hk-dim" onclick="sendKey('ctrl+k')"><span class="hk-label">Ctrl+K</span><span class="hk-sub">del fwd</span></button>
+            <button class="hk-btn hk-dim" data-key="ctrl+l" onclick="sendKey('ctrl+l')"><span class="hk-label">Ctrl+L</span><span class="hk-sub">clear</span></button>
+            <button class="hk-btn hk-dim" data-key="ctrl+r" onclick="sendKey('ctrl+r')"><span class="hk-label">Ctrl+R</span><span class="hk-sub">search</span></button>
+            <button class="hk-btn hk-dim" data-key="Tab" onclick="sendKey('Tab')"><span class="hk-label">Tab</span><span class="hk-sub">complete</span></button>
+            <button class="hk-btn hk-dim" data-key="ctrl+d" onclick="sendKey('ctrl+d')"><span class="hk-label">Ctrl+D</span><span class="hk-sub">exit</span></button>
+            <button class="hk-btn hk-dim" data-key="ctrl+u" onclick="sendKey('ctrl+u')"><span class="hk-label">Ctrl+U</span><span class="hk-sub">del line</span></button>
+            <button class="hk-btn hk-dim" data-key="ctrl+a" onclick="sendKey('ctrl+a')"><span class="hk-label">Ctrl+A</span><span class="hk-sub">home</span></button>
+            <button class="hk-btn hk-dim" data-key="ctrl+e" onclick="sendKey('ctrl+e')"><span class="hk-label">Ctrl+E</span><span class="hk-sub">end</span></button>
+            <button class="hk-btn hk-dim" data-key="ctrl+k" onclick="sendKey('ctrl+k')"><span class="hk-label">Ctrl+K</span><span class="hk-sub">del fwd</span></button>
         </div>
         <div class="hk-group-label">Modes</div>
         <div class="hk-grid">
-            <button class="hk-btn hk-amber" onclick="sendKey('shift+Tab')"><span class="hk-label">Shift+Tab</span><span class="hk-sub">perm mode</span></button>
-            <button class="hk-btn hk-amber" onclick="sendKey('ctrl+o')"><span class="hk-label">Ctrl+O</span><span class="hk-sub">verbose</span></button>
-            <button class="hk-btn hk-amber" onclick="sendKey('ctrl+t')"><span class="hk-label">Ctrl+T</span><span class="hk-sub">tasks</span></button>
-            <button class="hk-btn hk-amber" onclick="sendKey('ctrl+g')"><span class="hk-label">Ctrl+G</span><span class="hk-sub">editor</span></button>
+            <button class="hk-btn hk-amber" data-key="shift+Tab" onclick="sendKey('shift+Tab')"><span class="hk-label">Shift+Tab</span><span class="hk-sub">perm mode</span></button>
+            <button class="hk-btn hk-amber" data-key="ctrl+o" onclick="sendKey('ctrl+o')"><span class="hk-label">Ctrl+O</span><span class="hk-sub">verbose</span></button>
+            <button class="hk-btn hk-amber" data-key="ctrl+t" onclick="sendKey('ctrl+t')"><span class="hk-label">Ctrl+T</span><span class="hk-sub">tasks</span></button>
+            <button class="hk-btn hk-amber" data-key="ctrl+g" onclick="sendKey('ctrl+g')"><span class="hk-label">Ctrl+G</span><span class="hk-sub">editor</span></button>
+            <button class="hk-btn hk-amber" data-key="alt+period" onclick="sendKey('alt+period')"><span class="hk-label">Alt+.</span><span class="hk-sub">reason +</span></button>
+            <button class="hk-btn hk-amber" data-key="alt+comma" onclick="sendKey('alt+comma')"><span class="hk-label">Alt+,</span><span class="hk-sub">reason -</span></button>
+            <button class="hk-btn hk-amber" data-key="alt+r" onclick="sendKey('alt+r')"><span class="hk-label">Alt+R</span><span class="hk-sub">raw</span></button>
+            <button class="hk-btn hk-amber" data-key="ctrl+y" onclick="sendKey('ctrl+y')"><span class="hk-label">Ctrl+Y</span><span class="hk-sub">resume</span></button>
+            <button class="hk-btn hk-amber" data-key="ctrl+slash" onclick="sendKey('ctrl+slash')"><span class="hk-label">Ctrl+/</span><span class="hk-sub">model</span></button>
         </div>
         <div class="hk-group-label">Session</div>
         <div class="hk-grid">
@@ -486,11 +491,11 @@
                 <div class="keys-left">
                     <div class="hk-group-label">Controls</div>
                     <div class="hk-grid hk-grid-2col">
-                        <button class="hk-btn hk-amber" onclick="sendKey('Escape')"><span class="hk-label">Esc</span><span class="hk-sub">dismiss</span></button>
-                        <button class="hk-btn hk-amber" onclick="sendKey('Escape Escape')"><span class="hk-label">Esc x2</span><span class="hk-sub">rewind</span></button>
-                        <button class="hk-btn hk-red" onclick="sendKey('ctrl+c')"><span class="hk-label">Ctrl+C</span><span class="hk-sub">cancel</span></button>
-                        <button class="hk-btn hk-red" onclick="sendKey('ctrl+c ctrl+c')"><span class="hk-label">Ctrl+C x2</span><span class="hk-sub">exit</span></button>
-                        <button class="hk-btn hk-green hk-wide" onclick="sendKey('Return')"><span class="hk-label">Enter</span><span class="hk-sub">submit</span></button>
+                        <button class="hk-btn hk-amber" data-key="Escape" onclick="sendKey('Escape')"><span class="hk-label">Esc</span><span class="hk-sub">dismiss</span></button>
+                        <button class="hk-btn hk-amber" data-key="Escape Escape" onclick="sendKey('Escape Escape')"><span class="hk-label">Esc x2</span><span class="hk-sub">rewind</span></button>
+                        <button class="hk-btn hk-red" data-key="ctrl+c" onclick="sendKey('ctrl+c')"><span class="hk-label">Ctrl+C</span><span class="hk-sub">cancel</span></button>
+                        <button class="hk-btn hk-red" data-key="ctrl+c ctrl+c" onclick="sendKey('ctrl+c ctrl+c')"><span class="hk-label">Ctrl+C x2</span><span class="hk-sub">exit</span></button>
+                        <button class="hk-btn hk-green hk-wide" data-key="Return" onclick="sendKey('Return')"><span class="hk-label">Enter</span><span class="hk-sub">submit</span></button>
                     </div>
                 </div>
                 <div class="keys-right">
@@ -542,7 +547,8 @@
     <script src="/js/autocomplete.js?v=2"></script>
     <script src="/js/segments.js?v=1"></script>
     <script src="/js/drafts.js?v=2"></script>
-    <script src="/js/terminal.js?v=22"></script>
+    <script src="/js/keylabels.js?v=3"></script>
+    <script src="/js/terminal.js?v=23"></script>
     <script src="/js/actions.js?v=10"></script>
     <script src="/js/commands.js?v=4"></script>
     <script src="/js/container.js"></script>

@@ -273,6 +273,11 @@
 .hk-dim { color: var(--text-dim); border-color: var(--border); }
 .hk-dim:active { background: rgba(0, 255, 65, 0.05); }
 .hk-wide { grid-column: span 2; }
+/* A key the pane's CLI has no use for (see js/keylabels.js). */
+.hk-hidden { display: none; }
+/* Codex exits on the FIRST Ctrl+C, so its x2 twin is hidden — let the survivor
+   take the whole row rather than leave a hole beside it. */
+.hk-grid:has([data-key="ctrl+c ctrl+c"].hk-hidden) [data-key="ctrl+c"] { grid-column: span 2; }
 .hk-grid-2col { grid-template-columns: repeat(2, 1fr); }
 .keys-split { display: flex; gap: 10px; align-items: flex-start; }
 .keys-left { flex: 1; min-width: 0; }

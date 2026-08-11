@@ -37,6 +37,19 @@ TMUX_KEY_MAP = {
     "ctrl+g": "C-g",
     "ctrl+z": "C-z",
     "ctrl+shift+v": None,  # handled as literal paste
+    # Codex / Cursor surface (effort 359). C-b is safe: send-keys injects into the
+    # pane's tty, so the tmux prefix — which only applies to an attached client's
+    # own keystrokes — never sees it.
+    "ctrl+j": "C-j",
+    "ctrl+y": "C-y",
+    "ctrl+b": "C-b",
+    "ctrl+f": "C-f",
+    "ctrl+s": "C-s",
+    "ctrl+slash": "C-_",
+    "alt+r": "M-r",
+    "alt+comma": "M-,",
+    "alt+period": "M-.",
+    "alt+Up": "M-Up",
     "shift+Tab": "BTab",
     "Escape": "Escape",
     "Return": "Enter",
