@@ -30,7 +30,10 @@
     position: fixed;
     left: 0;
     top: var(--status-bar-h, 37px);
-    max-height: 40vh;
+    /* 40vh was 337px at 390x844 over 549px of content, so End (kill tmux) and
+       Access sat below the fold before this effort added a row. 60vh is 506px:
+       the Claude drawer fits whole, Codex keeps one short scroll. Question 1846. */
+    max-height: 60vh;
     width: 280px;
     background: rgba(10, 22, 14, 0.97);
     backdrop-filter: blur(12px);

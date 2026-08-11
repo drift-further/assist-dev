@@ -519,6 +519,25 @@ const SMART_PATTERNS = [
             ];
         }
     },
+    // There is deliberately NO codex-specific approval pattern here, and doc 1734
+    // step 7 asking for one is refuted. It proposed a first-class pattern for a
+    // fixed y/a/p/d/n/c key set; that key set does not exist on codex-cli
+    // 0.147.0. Two independent escalations were triggered on a live pane — a
+    // write outside the workspace, and outbound network — and both rendered the
+    // SAME three-option numbered menu:
+    //     1. Yes, proceed (y)
+    //     2. Yes, and don't ask again for commands that start with `…` (p)
+    //     3. No, and tell Codex what to do differently (esc)
+    //     Press enter to confirm or esc to cancel
+    // No 'a', no 'd', no 'n', no 'c'. Both captures were fed through
+    // routes/autoyes.py::_detect_autoyes_prompt() and came back
+    // ('numbered-yes', '', True, '$ <the command>') — the generic path below
+    // already detects it, answers it correctly, and extracts a better summary
+    // than a bespoke pattern would. Note the comments at FOOTER_DEPTH_MAX and
+    // the region floor: this path was tuned FOR that dialog by an earlier
+    // effort. Adding a second matcher would only give it something to disagree
+    // with. (Untested and so not claimed either way: MCP and apply_patch
+    // approvals, which may carry a different option set.)
     {
         id: 'selected-yes',
         desc: 'Confirm selected option',

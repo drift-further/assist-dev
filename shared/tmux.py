@@ -62,6 +62,11 @@ TMUX_KEY_MAP = {
     "Page_Down": "NPage",
     "End": "End",
     "Home": "Home",
+    # Codex's transcript pager (Ctrl+T) quits on a literal q, and its own footer
+    # says so: "q to quit". Verified through this exact path — send-keys WITHOUT
+    # -l, which is what tmux_send_keys() does — on codex-cli 0.147.0: the pager
+    # closed and no stray q was left in the composer.
+    "q": "q",
 }
 
 def prettify_command(cmd):

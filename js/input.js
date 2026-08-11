@@ -261,6 +261,31 @@ async function typeCmd(cmd) {
     }
 }
 
+// A single composer prefix — '@', '!', '/', '?'. Unlike typeCmd this must NOT
+// press Enter: the whole value is the picker the CLI opens on the keystroke,
+// and submitting a bare '@' would just send it as a prompt. no_history because
+// one character is not a prompt worth recalling, and enter:false additionally
+// keeps /type's fix_first_word_case() off it (routes/input.py only applies that
+// when enter is true).
+async function typePrefix(ch) {
+    try {
+        const resp = await fetch('/type', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({text: ch, enter: false, no_history: true, target: getInputTarget()}),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            lastAction = Date.now();
+            updateStatusTime();
+        } else {
+            showFlash('error', data.error || 'Failed');
+        }
+    } catch (e) {
+        showFlash('error', 'Offline');
+    }
+}
+
 // ================================================================
 // Sudo Password — stored server-side only; the client never sees it
 // ================================================================

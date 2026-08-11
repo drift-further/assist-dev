@@ -80,6 +80,15 @@ const KEY_LABELS_BY_AGENT = {
         // audit's Ctrl+R "request review" or Ctrl+B x2 "background" bindings:
         // both were measured and did nothing. Ctrl+O and Ctrl+T likewise keep
         // their base labels.
+        //
+        // Two more of doc 1734's Cursor claims were measured and refuted, which
+        // is why index.html's prefix row gives Cursor only ! and /:
+        //   '@' file paths   — echoes as plain text, no picker. Re-tested with
+        //                      README.md and RELEASE.txt in the workspace and
+        //                      with a search term ('@RE'), in case an empty dir
+        //                      was starving it. Still nothing. Codex's '@RE' in
+        //                      the same shape opens a live filtered picker.
+        //   '&' cloud agent  — echoes as plain text, no affordance.
         'shift+Tab': 'agent/plan/ask',
         'ctrl+y': 'resume',
         'ctrl+slash': 'model',
@@ -167,6 +176,17 @@ function applyKeyLabels(target) {
     if (!t) return;
     const agentKind = _agentKindFor(t);
     const labels = keyLabelsFor(agentKind);
+
+    // Element-level visibility, for controls the null-label rule cannot express.
+    // That rule hides a button by saying "this KEY means nothing here", which
+    // needs a key: a group label has none, and a prefix button sends composer
+    // text rather than a keystroke. Space-separated list of kinds; anything not
+    // listed hides the element. The two rules never fight — no element carries
+    // both a null label and data-agent-only.
+    document.querySelectorAll('[data-agent-only]').forEach(el => {
+        const kinds = el.getAttribute('data-agent-only').split(/\s+/);
+        el.classList.toggle('hk-hidden', !kinds.includes(agentKind));
+    });
 
     document.querySelectorAll('[data-key]').forEach(btn => {
         const keys = btn.getAttribute('data-key');
