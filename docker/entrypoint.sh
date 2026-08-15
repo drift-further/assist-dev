@@ -8,7 +8,7 @@ echo "🔧 Initializing Claude Code environment with Host Tools..."
 # command instead of silently dropping it. Runs as root before the su to developer.
 if [ -n "$CLI_PROXY_NAME" ] && [ -f /usr/local/share/assist/cli-proxy.sh ]; then
     ln -sf /usr/local/share/assist/cli-proxy.sh "/usr/local/bin/${CLI_PROXY_NAME}"
-    echo "🔗 CLI proxy: ${CLI_PROXY_NAME} → cli-proxy.sh (host @ ${ASSIST_PROXY_HOST:-10.0.0.101})"
+    echo "🔗 CLI proxy: ${CLI_PROXY_NAME} → cli-proxy.sh (host @ ${ASSIST_PROXY_HOST:-unset})"
 fi
 
 # Fix home directory permissions for developer user

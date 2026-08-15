@@ -48,7 +48,16 @@ MEMORY_LIMIT=$(_cfg '.resources.memory' '16g')
 CPU_LIMIT=$(_cfg '.resources.cpus' '4')
 PIDS_LIMIT=$(_cfg '.resources.pids_limit' '512')
 BIND_ADDRESS=$(_cfg '.network.bind_address' '127.0.0.1')
-GATEWAY_HOST=$(_cfg '.network.gateway_host' '10.0.0.101')
+# The host address containers reach Assist and PostgreSQL on. It cannot be
+# loopback (that resolves inside the container, not on the host), so fall back
+# to this machine's primary source address rather than a baked-in one, and set
+# .network.gateway_host in container_config.json when the guess is wrong.
+GATEWAY_HOST=$(_cfg '.network.gateway_host' "$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}')")
+if [ -z "$GATEWAY_HOST" ]; then
+    echo "Cannot determine the host address containers should reach."
+    echo "   Set .network.gateway_host in container_config.json."
+    exit 1
+fi
 CLI_PROXY_ENABLED=$(_cfg '.cli_proxy.enabled' 'false')
 CLI_PROXY_NAME=$(_cfg '.cli_proxy.container_command' '')
 [ "$CLI_PROXY_ENABLED" != "true" ] && CLI_PROXY_NAME=""
@@ -89,9 +98,9 @@ ensure_network() {
         # Allow traffic within the container subnet (container <-> gateway for DNS/NAT)
         sudo iptables -I DOCKER-USER -s "$CLAUDE_SUBNET" -d "$CLAUDE_SUBNET" -j ACCEPT
         # Allow PostgreSQL access to host (for project databases)
-        sudo iptables -I DOCKER-USER -s "$CLAUDE_SUBNET" -d 10.0.0.101 -p tcp --dport 5432 -j ACCEPT
+        sudo iptables -I DOCKER-USER -s "$CLAUDE_SUBNET" -d "$GATEWAY_HOST" -p tcp --dport 5432 -j ACCEPT
         # Allow Assist access (host CLI proxy on port 8089 — see /api/cli-proxy)
-        sudo iptables -I DOCKER-USER -s "$CLAUDE_SUBNET" -d 10.0.0.101 -p tcp --dport 8089 -j ACCEPT
+        sudo iptables -I DOCKER-USER -s "$CLAUDE_SUBNET" -d "$GATEWAY_HOST" -p tcp --dport 8089 -j ACCEPT
         # Block all RFC1918 private networks and link-local
         sudo iptables -A DOCKER-USER -s "$CLAUDE_SUBNET" -d 10.0.0.0/8 -j DROP
         sudo iptables -A DOCKER-USER -s "$CLAUDE_SUBNET" -d 172.16.0.0/12 -j DROP

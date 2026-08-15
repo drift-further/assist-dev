@@ -15,8 +15,16 @@
 # sent in the "files" array; the original arg becomes a __PROXY_FILE_N__
 # token that the host resolves to a real path before invoking the CLI.
 
-HOST="${ASSIST_PROXY_HOST:-10.0.0.101}"
+# claude-mount.sh passes ASSIST_PROXY_HOST in (from .network.gateway_host, or
+# the host's detected address). Unset means this image is running outside that
+# launcher, and there is no address worth guessing — loopback would resolve to
+# the container itself and hang.
+HOST="${ASSIST_PROXY_HOST:-}"
 PORT="${ASSIST_PROXY_PORT:-8089}"
+if [ -z "$HOST" ]; then
+    echo "$(basename "$0"): ASSIST_PROXY_HOST is not set — cannot reach the host CLI proxy" >&2
+    exit 1
+fi
 CMD_NAME="$(basename "$0")"
 
 if [ $# -eq 0 ]; then
