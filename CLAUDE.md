@@ -73,6 +73,8 @@ All three are gitignored (runtime data). Defaults live in `shared/state.py` as `
 
 ## CLI
 
+`bin/assist` re-execs itself under `.venv/bin/python3` (guarded by `ASSIST_VENV_REEXEC` so it cannot loop), because the shebang resolves against the caller's PATH and the CLI imports flask via `routes.autoyes`. It therefore runs from any shell, with any venv active or none. With no `.venv` present it prints an `./install.sh` hint instead of an import traceback.
+
 | Command | Purpose |
 |---------|---------|
 | `assist start` | Start the server in the background |

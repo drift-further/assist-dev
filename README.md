@@ -53,7 +53,7 @@ cd ~/.local/share/assist-dev
 ./install.sh
 ```
 
-The installer creates a venv, installs Python deps, seeds `.env` from `env.example`, records the install path in `~/.config/claude-assist/config.env`, and symlinks `~/.local/bin/assist` → `bin/assist` so you get a global `assist` command.
+The installer creates a venv, installs Python deps, seeds `.env` from `env.example`, records the install path in `~/.config/claude-assist/config.env`, and symlinks `~/.local/bin/assist` → `bin/assist` so you get a global `assist` command. That command re-execs itself under the project venv, so it works from any shell whatever virtualenv happens to be active.
 
 Then:
 
@@ -286,7 +286,9 @@ ASSIST_CLI_ALLOWED=status,build,deploy
 
 Then `assist restart` and rebuild the image (`assist container build` or the Container panel). Inside any newly-launched container, `mycli status` runs against the host binary.
 
-The wrapper accepts `-f <path>` to base64-upload a file from the container — the host writes it to a temp dir and replaces the arg with the resolved path before invoking the CLI.
+The wrapper accepts `-f <path>` to base64-upload a file from the container — the host writes it to a temp dir and replaces the arg with the resolved path before invoking the CLI. The temp dir is removed whether or not the call succeeds.
+
+A `--timeout N` in the forwarded args sets how long the host waits, plus 30s of slack. It must be a non-negative integer — anything else is a 400 rather than a silent fallback — and it is capped at 600s, so a proxied call cannot hold a host subprocess open indefinitely.
 
 ## Optional: nginx reverse proxy
 
@@ -320,6 +322,7 @@ The WebSocket upgrade headers are essential — without them, the terminal falls
 - **`docker/`** — parameterized `Dockerfile`, `entrypoint.sh`, extension definitions (`extensions/*.json`), helper scripts
 - **`assist-ctl`** — low-level start/stop/restart/status shell script (called by `assist`)
 - **`bin/assist`** — high-level CLI installed to `~/.local/bin/assist`
+- **`tests/`** — the one automated test module, covering `/api/cli-proxy` argument handling (the only unauthenticated endpoint that runs a host binary): `.venv/bin/python3 -m unittest tests.test_cli_proxy`. Everything else is verified by hand against the running server.
 
 ## Uninstall
 
