@@ -6,6 +6,9 @@ let _autoyesDelays = {};  // session -> seconds (per-session active delay, mirro
 let _autoyesCountdown = null;  // { target, remaining, delay, prompt_type } or null
 let _autoyesDelay = (SETTINGS && SETTINGS.autoyes) ? SETTINGS.autoyes.default_delay : 5;  // current delay setting (persists across toggles)
 let _autoyesPickerVisible = false;
+// Mirrors the server's all-sessions switch. While enabled, every agent pane is
+// armed at _autoyesGlobal.delay and the per-session delay picker has no job.
+let _autoyesGlobal = { enabled: false, delay: 5 };
 
 function isAutoYes(session) {
     return !!_autoyesState[session];
@@ -139,7 +142,15 @@ async function _enableAutoYes(session, delay) {
 
 // Legacy name — called from +menu and inline toggle
 async function toggleAutoYes() {
-    showAutoYesPicker();
+    if (!_autoyesGlobal.enabled) {
+        showAutoYesPicker();
+        return;
+    }
+    // Global switch on: there is one delay and it is not this session's to
+    // pick, so the tap is a straight opt-out toggle with no picker.
+    const target = _smartActionTarget || _termTarget;
+    const session = target ? target.split(':')[0] : '';
+    if (session) _enableAutoYes(session, null);
 }
 
 function updateAutoYesUI(session) {
@@ -148,7 +159,11 @@ function updateAutoYesUI(session) {
     if (btn) {
         const active = session ? isAutoYes(session) : false;
         btn.classList.toggle('active', active);
-        btn.textContent = active ? '\u26A1 Auto-Yes' : 'Auto-Yes';
+        // Say WHY it is on: under the global switch a session nobody touched is
+        // armed, and "(all)" is the difference between that and a hand-armed one.
+        btn.textContent = active
+            ? (_autoyesGlobal.enabled ? '\u26A1 Auto-Yes (all)' : '\u26A1 Auto-Yes')
+            : 'Auto-Yes';
     }
     // Arming/disarming is the only moment the bar's slot may change size, and
     // it happens on a deliberate tap rather than mid-prompt.
@@ -162,6 +177,7 @@ async function syncAutoYesState() {
         const data = await resp.json();
         _autoyesState = data.sessions || {};
         _autoyesDelays = data.delays || {};
+        if (data.global) _autoyesGlobal = data.global;
         // Update countdown if any
         const target = _smartActionTarget || _termTarget;
         if (target && data.countdowns && data.countdowns[target]) {

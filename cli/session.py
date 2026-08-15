@@ -350,36 +350,85 @@ def _print_autoyes_state(
     session: str,
     enabled: bool,
     delay: object | None,
+    global_on: bool = False,
+    global_delay: object | None = None,
+    source: str | None = None,
 ) -> None:
-    if enabled:
+    # Say WHY it is on: under the global switch a session nobody touched reads
+    # "on", and "on (global…)" is the difference between that and a hand-armed
+    # session whose setting survives the switch being turned off. The delay is
+    # the global one either way while the switch is on.
+    if enabled and global_on and source == "global":
+        print(f"autoyes {session}: on (global, delay: {_delay_text(global_delay)})")
+    elif enabled and global_on:
+        print(f"autoyes {session}: on (set here, delay: {_delay_text(global_delay)})")
+    elif enabled:
         print(f"autoyes {session}: on (delay: {_delay_text(delay)})")
+    elif global_on and source == "global":
+        # In scope for the switch but nothing to act on: the switch covers agent
+        # panes only, and this session has none. Not the same as an opt-out.
+        print(f"autoyes {session}: off (no agent pane)")
+    elif global_on:
+        print(f"autoyes {session}: off (opted out of global)")
     else:
         print(f"autoyes {session}: off")
+
+
+def _autoyes_global(mode: str, delay: float | None) -> int:
+    """Set or inspect the all-sessions switch."""
+    if mode != "status":
+        payload: dict[str, object] = {"enabled": mode == "on"}
+        if delay is not None:
+            payload["delay"] = delay
+        http.post("/autoyes/global", payload)
+    status = http.get("/autoyes/status")
+    block = status.get("global") or {}
+    if block.get("enabled"):
+        print(f"autoyes --global: on (delay: {_delay_text(block.get('delay'))})")
+        armed = sorted(s for s, on in (status.get("sessions") or {}).items() if on)
+        print(f"  armed sessions: {', '.join(armed) if armed else '(none live)'}")
+    else:
+        print("autoyes --global: off")
+    return 0
 
 
 def autoyes(
     session: str | None,
     mode: str,
     delay: float | None = None,
+    global_switch: bool = False,
 ) -> int:
     """Persistently set or inspect auto-yes without accidentally re-toggling it."""
-    if not session:
-        resolve_target(session)
+    # Checked before the --global branch so the rule guards both forms.
     if delay is not None and mode != "on":
         print("assist: --delay requires --on", file=sys.stderr)
         raise SystemExit(2)
+    if global_switch:
+        return _autoyes_global(mode, delay)
+    if not session:
+        resolve_target(session)
 
     status = http.get("/autoyes/status")
+    global_block = status.get("global") or {}
+    global_on = bool(global_block.get("enabled"))
     enabled, current_delay = _autoyes_state(status, session)
     if mode != "status":
         requested = mode == "on"
         if enabled != requested:
             payload: dict[str, object] = {"session": session}
-            if requested and delay is not None:
+            # The global switch owns the delay; sending one would be ignored.
+            if requested and delay is not None and not global_on:
                 payload["delay"] = delay
             http.post("/autoyes/toggle", payload)
             status = http.get("/autoyes/status")
             enabled, current_delay = _autoyes_state(status, session)
 
-    _print_autoyes_state(session, enabled, current_delay)
+    _print_autoyes_state(
+        session,
+        enabled,
+        current_delay,
+        global_on,
+        global_block.get("delay"),
+        (status.get("sources") or {}).get(session),
+    )
     return 0

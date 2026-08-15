@@ -95,10 +95,16 @@ Sessions:
                          Kill a tmux session
   autoyes SESSION (--on | --off | --status) [--delay N]
                          Persistently set or inspect auto-yes
+  autoyes --global (--on | --off | --status) [--delay N]
+                         Set or inspect the all-sessions switch
 
 Auto-yes:
   --autoyes on send/wait is temporary for that one wait and is restored
   afterward. `assist autoyes` changes the persistent session setting.
+  `assist autoyes --global` arms every AGENT pane (claude/codex/opencode/
+  cursor/gemini) in every session at one delay, including sessions created
+  later. Plain shell panes stay manual unless that session was armed by
+  hand. A session turned off while the switch is on stays off.
 
 Next-step hints:
   Successful ls/view/send/wait/launch commands print a measured `next:`
@@ -398,6 +404,16 @@ def build_parser() -> AssistArgumentParser:
         type=float,
         help="delay in seconds with --on (the server clamps it to 0.1-30)",
     )
+    autoyes_parser.add_argument(
+        # dest is required: `global` is a keyword, so parsed.global will not parse.
+        "--global",
+        dest="global_switch",
+        action="store_true",
+        help=(
+            "act on the all-sessions switch instead of one session: arms every "
+            "agent pane at the global delay, with per-session opt-out"
+        ),
+    )
 
     for verb in (
         "config",
@@ -485,6 +501,7 @@ def main(arguments: list[str] | None = None) -> int:
             parsed.session,
             parsed.mode,
             parsed.delay,
+            parsed.global_switch,
         )
     if parsed.verb == "studio":
         return proc.studio(parsed.arguments)

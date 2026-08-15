@@ -89,12 +89,15 @@ Once installed, `assist` manages everything:
 | `assist launch --session N [--cwd P] [--cols C] [--rows R] [--wait] [--timeout N]` | Create a bare shell; takes no command (spawn an agent with `launch`, then `send`) |
 | `assist kill <session> [--pane P]` | Kill a tmux session |
 | `assist autoyes <session> (--on\|--off\|--status) [--delay N]` | Persistently set or inspect auto-yes; enabled delays are clamped to 0.1–30 seconds |
+| `assist autoyes --global (--on\|--off\|--status) [--delay N]` | Set or inspect the all-sessions switch |
 | `assist studio [args]` | Delegate to the Studio operator command |
 | `assist help` | Full command reference |
 
 The process commands delegate to `./assist-ctl`. The container commands hit the running server's HTTP API (`/api/container/*`), so the server must be running for them to work.
 
 Each session verb (`ls`, `view`, `send`, `wait`, `launch`, `kill`, and `autoyes`) supports `-h`/`--help`; its generated help describes every argument and flag. `--autoyes` on `send` or `wait` is a temporary window scoped to that one wait and restores the prior state afterward. `assist autoyes` changes the persistent per-session setting instead; `--delay` is valid only with `--on`.
+
+`assist autoyes --global` sets the all-sessions switch (also in Settings → Auto-Yes → All Sessions). While it is on, every **agent** pane — claude, codex, opencode, cursor, gemini — in every session is armed at the one global delay, including sessions created later; per-session delays do not apply and `/autoyes/set-delay` returns 409. Plain shell panes stay manual unless that session was armed by hand, so `apt`, ssh host-key and stray `(y/n)` prompts are out of scope. Turning one session off while the switch is on records an opt-out that survives a restart. `--status` on a session says which rule applied: `on (global, …)`, `on (set here, …)`, `off (opted out of global)`, or `off (no agent pane)`.
 
 After a successful `ls`, `view`, `send`, `wait`, or `launch`, the CLI prints a measured `next:` suggestion to stderr, leaving stdout safe for captures and pipelines. `ls` uses the first printed row's session name and omits the hint when there are no rows. Set `ASSIST_NO_HINTS=1` to suppress hints for any command; `assist ls --json` suppresses them automatically so its stdout remains parseable JSON.
 

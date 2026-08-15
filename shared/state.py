@@ -50,6 +50,13 @@ DEFAULT_SETTINGS = {
     "autoyes": {
         "default_delay": 5,
         "detection_depth": 8,
+        # Master switch, "on"/"off" (a string, not a bool: the settings panel's
+        # _renderToggle compares against its option strings — same shape as
+        # ui.idle_tab_tucking). When on, every AGENT pane in every tmux session
+        # is armed at default_delay, including sessions created later; a session
+        # toggled off while this is on records autoyes.global_opt_out and stays
+        # off. When off, enablement is per-session exactly as before.
+        "all_sessions": "off",
     },
     "connection": {
         "poll_interval_ms": 5000,
@@ -128,6 +135,11 @@ DEFAULT_PROJECT_SETTINGS = {
     "autoyes": {
         "delay": 5,
         "enabled_default": False,
+        # Opt-out from the all_sessions switch. Deliberately independent of
+        # enabled_default — each is authoritative in exactly one regime (switch
+        # off -> enabled_default; switch on -> not global_opt_out), so neither
+        # has to encode the other's history.
+        "global_opt_out": False,
     },
     "automate": {
         "default_prompt": "",
@@ -491,6 +503,40 @@ autoyes_countdowns = (
 autoyes_answered = {}  # target -> (prompt_hash, answered_at_timestamp)
 autoyes_delays = {}  # session_name -> seconds (per-session override)
 AUTOYES_DELAY = DEFAULT_SETTINGS["autoyes"]["default_delay"]
+# Rebuilt by the auto-yes scanner each tick: session_name -> effective enabled.
+# /autoyes/status serves it, because only the scan holds the live session list.
+autoyes_effective = {}
+# Alongside it: session_name -> "explicit" | "global", so a caller can tell a
+# hand-armed session (survives the switch being turned off) from one armed only
+# by the switch. Same publication point as autoyes_effective.
+autoyes_sources = {}
+
+
+def autoyes_enabled_for(session):
+    """Resolve a session's auto-yes state and where the answer came from.
+
+    Returns (enabled, source). `source` is "explicit" when the session decided
+    for itself — a runtime toggle this process, or a persisted enabled_default /
+    global_opt_out — and "global" when it is enabled only because the
+    all_sessions switch is on. The scanner uses the source to decide whether the
+    agent-pane filter applies: a session armed by hand keeps auto-yes on shell
+    prompts, a globally-armed one does not.
+
+    MUST be called without holding autoyes_lock — it takes that lock itself and
+    then _project_settings_lock.
+    """
+    with autoyes_lock:
+        runtime = autoyes_sessions.get(session)
+    if runtime is not None:
+        return bool(runtime), "explicit"
+    proj = get_project_settings(session)["autoyes"]
+    if get_setting("autoyes", "all_sessions") != "on":
+        return bool(proj["enabled_default"]), "explicit"
+    if proj["global_opt_out"]:
+        return False, "explicit"
+    if proj["enabled_default"]:
+        return True, "explicit"
+    return True, "global"
 
 # ---------------------------------------------------------------------------
 # Automate state

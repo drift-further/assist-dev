@@ -94,10 +94,13 @@ All three are gitignored (runtime data). Defaults live in `shared/state.py` as `
 | `assist launch --session N [--cwd P] [--cols C] [--rows R] [--wait] [--timeout N]` | Create a bare shell; takes no command. Spawn an agent with `launch`, then `send` |
 | `assist kill <session> [--pane P]` | Kill a tmux session |
 | `assist autoyes <session> (--on\|--off\|--status) [--delay N]` | Persistently set or inspect auto-yes; enabled delays are clamped to 0.1–30 seconds |
+| `assist autoyes --global (--on\|--off\|--status) [--delay N]` | Set or inspect the all-sessions switch |
 | `assist studio [args]` | Delegate to the Studio operator command |
 | `assist help` | Show the full command reference |
 
 Every session verb supports `-h`/`--help`, with descriptions for each positional argument and flag. `--autoyes` on `send` or `wait` applies only during that one wait and restores the prior setting afterward; `assist autoyes` changes the persistent per-session setting, and its `--delay` is valid only with `--on`.
+
+`assist autoyes --global` sets the all-sessions switch (`autoyes.all_sessions`, also in Settings → Auto-Yes). While it is on, every **agent** pane — claude, codex, opencode, cursor, gemini — in every session is armed at `autoyes.default_delay`, including sessions created later, and that one delay applies to all (`/autoyes/set-delay` returns 409). Plain shell panes stay manual unless that session was armed by hand, which keeps `apt`, ssh host-key and stray `(y/n)` prompts out of scope. A session toggled off while the switch is on records `autoyes.global_opt_out` and stays off. `assist autoyes <session> --status` reports which of the two is in play: `on (global, …)`, `on (set here, …)`, `off (opted out of global)`, or `off (no agent pane)`.
 
 Successful `ls`, `view`, `send`, `wait`, and `launch` commands print a measured `next:` suggestion to stderr. `ls` uses the first printed row's session name and omits the hint when no rows exist. Set `ASSIST_NO_HINTS=1` to suppress hints; `assist ls --json` suppresses them automatically and keeps stdout as parseable JSON.
 
@@ -134,7 +137,7 @@ separately via `register_streaming(sock)`.
 - **WebSocket terminal streaming**: flask-sock, captures tmux panes, streams to connected clients
 - **Smart actions**: JS pattern detection for permission prompts, numbered options, sudo — surfaces one-tap mobile actions
 - **Prompt segments**: a favorite given a handle becomes `[handle]`; `shared/segments.py` expands it server-side in `/type` (opt-in via an `expand` flag) while history keeps the token form
-- **Auto-yes**: Background scanner with per-session countdown timers for auto-approving prompts
+- **Auto-yes**: Background scanner with per-session countdown timers for auto-approving prompts. An `autoyes.all_sessions` switch arms every agent pane at once — resolved at scan time (runtime map → project settings → switch), so new sessions are covered with no backfill — with a per-session opt-out
 - **Automate**: Continuous mode — sends prompts, watches for done signals, relaunches
 
 ## Branch Strategy

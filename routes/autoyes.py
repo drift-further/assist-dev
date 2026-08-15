@@ -8,7 +8,7 @@ import time
 from flask import Blueprint, jsonify, request
 
 import shared.state as state
-from shared.agent_identity import refine_with_content, resolve_process
+from shared.agent_identity import AGENT_KINDS, refine_with_content, resolve_process
 from shared.tmux import tmux_send_keys, tmux_send_text
 from routes.streaming import broadcast_autoyes_event
 
@@ -432,6 +432,8 @@ def _scan_interval():
         active = [
             d for s, d in state.autoyes_delays.items() if state.autoyes_sessions.get(s)
         ]
+    if state.get_setting("autoyes", "all_sessions") == "on":
+        active.append(state.get_setting("autoyes", "default_delay"))
     if not active:
         return 1.0
     return max(0.1, min(1.0, min(active)))
@@ -448,19 +450,24 @@ def autoyes_scanner():
         try:
             _autoyes_scan_tick()
         except Exception:
-            pass
+            # Was a bare `pass`. A tick that dies half-way leaves the previously
+            # published effective map in place, so the failure presents as
+            # stale/wrong state rather than as an error — log it once per cause.
+            log.exception("autoyes: scan tick failed")
         time.sleep(_scan_interval())
 
 
 def _autoyes_scan_tick():
     """One scan cycle for auto-yes."""
-    with state.autoyes_lock:
-        if not state.autoyes_sessions:
-            return
-        active_sessions = {k for k, v in state.autoyes_sessions.items() if v}
-
-    if not active_sessions:
-        return
+    global_on = state.get_setting("autoyes", "all_sessions") == "on"
+    if not global_on:
+        # Fast path: nothing armed and no global switch means no work, and no
+        # reason to shell out to tmux. With the switch on, enablement is
+        # resolved per session below, once we know which sessions are live.
+        with state.autoyes_lock:
+            if not any(state.autoyes_sessions.values()):
+                state.autoyes_effective = {}
+                return
 
     proc = subprocess.run(
         [
@@ -516,12 +523,42 @@ def _autoyes_scan_tick():
             if t not in live_targets:
                 state.autoyes_answered.pop(t, None)
 
+    # Resolve once per session rather than once per pane, then publish the
+    # result: /autoyes/status has no live session list of its own. Outside the
+    # lock — autoyes_enabled_for takes it itself, then _project_settings_lock.
+    # Published once, AFTER the pane sweep — see the tail of this function. An
+    # earlier version also published here, before the filter had run, so any
+    # request landing mid-tick read the unfiltered value and a shell-only
+    # session showed as armed for most of every tick.
+    enabled_by_session = {s: state.autoyes_enabled_for(s) for s in live_sessions}
+    if not any(enabled for enabled, _source in enabled_by_session.values()):
+        with state.autoyes_lock:
+            state.autoyes_effective = dict.fromkeys(enabled_by_session, False)
+        return
+
+    # Sessions holding at least one pane the scan will actually act on. A
+    # globally-armed session whose panes are all plain shells is in scope but
+    # can never fire, and reporting it as enabled would light its Auto-Yes
+    # button for a session that does nothing. Explicitly-armed sessions are not
+    # filtered, so they are added unconditionally below.
+    qualified = set()
+
     for parts in pane_rows:
         session_name = parts[0]
-        if session_name not in active_sessions:
+        enabled, source = enabled_by_session.get(session_name, (False, "explicit"))
+        if not enabled:
             continue
 
         target = f"{parts[0]}:{parts[1]}.{parts[2]}"
+
+        # Resolve identity BEFORE capturing. resolve_process walks the pane's
+        # process tree from /proc behind a cache and needs no pane content, so a
+        # globally-armed session skips the capture entirely on a plain shell.
+        # That is both the scope rule and what keeps the tick cheap once every
+        # pane on the host is in scope.
+        process_kind = resolve_process(target, parts[3], parts[4])
+        if source == "global" and process_kind == "shell":
+            continue
 
         cap = subprocess.run(
             ["tmux", "capture-pane", "-p", "-t", target, "-S", "-60"],
@@ -535,8 +572,14 @@ def _autoyes_scan_tick():
         if not tail:
             continue
 
-        process_kind = resolve_process(target, parts[3], parts[4])
         agent_kind = refine_with_content(process_kind, tail)
+        # Globally-armed sessions cover agent panes only: apt, ssh host-key and
+        # stray (y/n) prompts in a plain shell stay manual. A session armed by
+        # hand keeps that capability — it is an existing deliberate feature and
+        # the global switch must not take it away.
+        if source == "global" and agent_kind not in AGENT_KINDS:
+            continue
+        qualified.add(session_name)
         phash = _prompt_hash(tail)
         detected = _detect_autoyes_prompt(tail, agent_kind)
 
@@ -599,13 +642,21 @@ def _autoyes_scan_tick():
                     fire_action = (send_text, with_enter, prompt_type)
                     broadcast_event = (target, "fired", detected[0])
             else:
-                # Re-check enablement: a toggle-off mid-tick must not
-                # recreate a phantom countdown that's never cleaned up.
-                if not state.autoyes_sessions.get(session_name):
+                # Re-check enablement: a toggle-off mid-tick must not recreate a
+                # phantom countdown that's never cleaned up. Every toggle writes
+                # the runtime map synchronously in both regimes, so an explicit
+                # False there is the whole signal — `not …get()` would also fire
+                # on a globally-armed session simply absent from the map.
+                if state.autoyes_sessions.get(session_name) is False:
                     state.autoyes_countdowns.pop(target, None)
                     continue
-                proj_delay = state.get_project_setting(session_name, "autoyes", "delay")
-                delay = state.autoyes_delays.get(session_name, proj_delay)
+                if global_on:
+                    delay = state.get_setting("autoyes", "default_delay")
+                else:
+                    proj_delay = state.get_project_setting(
+                        session_name, "autoyes", "delay"
+                    )
+                    delay = state.autoyes_delays.get(session_name, proj_delay)
                 summary = detected[3] if len(detected) > 3 else None
                 state.autoyes_countdowns[target] = {
                     "prompt_hash": phash,
@@ -637,10 +688,23 @@ def _autoyes_scan_tick():
         if broadcast_event:
             broadcast_autoyes_event(*broadcast_event)
 
+    # Publish only now that the pane sweep knows which sessions it can act on,
+    # so /autoyes/status never reports a globally-armed shell-only session as on.
+    with state.autoyes_lock:
+        state.autoyes_effective = {
+            s: enabled and (source != "global" or s in qualified)
+            for s, (enabled, source) in enabled_by_session.items()
+        }
+        state.autoyes_sources = {
+            s: source for s, (_enabled, source) in enabled_by_session.items()
+        }
+
 
 @autoyes_bp.route("/autoyes/status")
 def autoyes_status():
     """Return auto-yes state for all sessions."""
+    global_on = state.get_setting("autoyes", "all_sessions") == "on"
+    global_delay = state.get_setting("autoyes", "default_delay")
     with state.autoyes_lock:
         countdowns = {}
         now = time.time()
@@ -652,11 +716,22 @@ def autoyes_status():
                     "delay": cd.get("delay", state.AUTOYES_DELAY),
                     "summary": cd.get("summary"),
                 }
+        # The runtime map is the pre-first-tick answer; the scanner's effective
+        # map covers sessions nobody ever toggled, so it wins where it has one.
+        sessions = dict(state.autoyes_sessions)
+        sessions.update(state.autoyes_effective)
         return jsonify(
             {
-                "sessions": dict(state.autoyes_sessions),
+                "global": {"enabled": global_on, "delay": global_delay},
+                "sessions": sessions,
+                # session -> "explicit" | "global": whether a session's state
+                # survives the switch being turned off.
+                "sources": dict(state.autoyes_sources),
                 "countdowns": countdowns,
-                "delays": dict(state.autoyes_delays),
+                # Per-session delays do not apply while the global switch owns
+                # the delay; reporting them would have the UI show a number the
+                # scanner ignores.
+                "delays": {} if global_on else dict(state.autoyes_delays),
             }
         )
 
@@ -669,10 +744,15 @@ def autoyes_toggle():
     if not session:
         return jsonify({"ok": False, "error": "No session"}), 400
     delay = data.get("delay")
+    global_on = state.get_setting("autoyes", "all_sessions") == "on"
+    # Toggle against the EFFECTIVE state: under the global switch a session
+    # nobody touched is already on, so `autoyes_sessions.get(session, False)`
+    # would read it as off and the first tap would be a no-op.
+    current, _source = state.autoyes_enabled_for(session)
     with state.autoyes_lock:
-        current = state.autoyes_sessions.get(session, False)
         state.autoyes_sessions[session] = not current
-        if not current and delay is not None:
+        state.autoyes_effective[session] = not current
+        if not current and delay is not None and not global_on:
             # Enabling — store per-session delay
             try:
                 delay = _clamp_delay(delay)
@@ -687,11 +767,14 @@ def autoyes_toggle():
                 state.autoyes_countdowns.pop(t, None)
                 state.autoyes_answered.pop(t, None)
             state.autoyes_delays.pop(session, None)
-    # Persist auto-yes preference for restoration after restart
-    persist = {"autoyes": {"enabled_default": not current}}
-    if not current and delay is not None:
-        persist["autoyes"]["delay"] = delay
-    state.patch_project_settings(session, persist)
+    # Persist into whichever flag is authoritative in the current regime.
+    if global_on:
+        state.patch_project_settings(session, {"autoyes": {"global_opt_out": current}})
+    else:
+        persist = {"autoyes": {"enabled_default": not current}}
+        if not current and delay is not None:
+            persist["autoyes"]["delay"] = delay
+        state.patch_project_settings(session, persist)
 
     return jsonify({"ok": True, "session": session, "enabled": not current})
 
@@ -724,6 +807,13 @@ def autoyes_set_delay():
     Applies to future prompts and recomputes any in-flight countdown so the
     new delay takes effect immediately (e.g. 5s -> 2s while a countdown runs).
     """
+    if state.get_setting("autoyes", "all_sessions") == "on":
+        return jsonify(
+            {
+                "ok": False,
+                "error": "Global Auto-Yes owns the delay — change it in Settings",
+            }
+        ), 409
     data = request.get_json(silent=True) or {}
     session = (data.get("session") or "").strip()
     if not session:
@@ -759,6 +849,37 @@ def autoyes_set_delay():
     return jsonify({"ok": True, "session": session, "delay": delay})
 
 
+@autoyes_bp.route("/autoyes/global", methods=["POST"])
+def autoyes_global():
+    """Set the all-sessions switch, and optionally the delay it applies.
+
+    A convenience over PATCH /api/settings so the CLI needs no PATCH verb: both
+    write the same two keys, and the settings panel keeps using PATCH.
+    """
+    data = request.get_json(silent=True) or {}
+    patch = {}
+    if "enabled" in data:
+        patch["all_sessions"] = "on" if data["enabled"] else "off"
+    if data.get("delay") is not None:
+        try:
+            patch["default_delay"] = _clamp_delay(data["delay"])
+        except (ValueError, TypeError):
+            return jsonify({"ok": False, "error": "Invalid delay"}), 400
+    if not patch:
+        return jsonify({"ok": False, "error": "Nothing to set"}), 400
+    updated = state.patch_settings({"autoyes": patch})
+    log.info("autoyes: global switch -> %s", updated["autoyes"]["all_sessions"])
+    return jsonify(
+        {
+            "ok": True,
+            "global": {
+                "enabled": updated["autoyes"]["all_sessions"] == "on",
+                "delay": updated["autoyes"]["default_delay"],
+            },
+        }
+    )
+
+
 def restore_autoyes_from_settings():
     """Restore auto-yes for running tmux sessions that had it enabled before restart."""
     try:
@@ -772,12 +893,21 @@ def restore_autoyes_from_settings():
             return
     except Exception:
         return
+    global_on = state.get_setting("autoyes", "all_sessions") == "on"
     for session_name in proc.stdout.strip().split("\n"):
         if not session_name:
             continue
-        settings = state.get_project_settings(session_name)
-        if settings.get("autoyes", {}).get("enabled_default", False):
-            delay = settings.get("autoyes", {}).get("delay", state.AUTOYES_DELAY)
+        autoyes_cfg = state.get_project_settings(session_name).get("autoyes", {})
+        # The runtime map wins in autoyes_enabled_for, so seeding it from a
+        # stale enabled_default would override an opt-out taken under the global
+        # switch and bring the session back on after a restart.
+        if global_on and autoyes_cfg.get("global_opt_out", False):
+            with state.autoyes_lock:
+                state.autoyes_sessions[session_name] = False
+            log.info("autoyes: restored opt-out for session %s", session_name)
+            continue
+        if autoyes_cfg.get("enabled_default", False):
+            delay = autoyes_cfg.get("delay", state.AUTOYES_DELAY)
             with state.autoyes_lock:
                 state.autoyes_sessions[session_name] = True
                 state.autoyes_delays[session_name] = delay

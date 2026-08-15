@@ -31,7 +31,8 @@ const _SETTINGS_SECTIONS = [
     },
     {
         key: 'autoyes', label: 'Auto-Yes', fields: [
-            { key: 'default_delay', label: 'Default Delay', type: 'stepper', min: 1, max: 30, suffix: 's' },
+            { key: 'all_sessions', label: 'All Sessions', type: 'toggle', options: ['on', 'off'] },
+            { key: 'default_delay', label: 'Delay', type: 'stepper', min: 0.1, max: 30, suffix: 's', subSecond: true },
             { key: 'detection_depth', label: 'Detection Depth', type: 'number', min: 2, max: 30, suffix: ' lines' },
         ]
     },
@@ -154,22 +155,33 @@ function _renderToggle(sectionKey, field, current) {
 function _renderStepper(sectionKey, field, current) {
     const wrap = document.createElement('div');
     wrap.className = 'settings-stepper';
+    // subSecond fields step by 100ms below 1s and by 1s at or above it, so a
+    // 0.1-30s range is reachable in a handful of taps rather than 300, and the
+    // value reads in ms below 1s. Mirrors ayPickAdjust()/_renderAyPickVal() in
+    // js/actions.js, which already worked this way for the per-session picker.
+    const stepFor = (v, dir) => {
+        if (!field.subSecond) return field.step || 1;
+        return dir < 0 ? (v <= 1 ? 0.1 : 1) : (v < 1 ? 0.1 : 1);
+    };
+    const round1 = v => Math.round(v * 10) / 10;
     const minus = document.createElement('button');
     minus.className = 'settings-stepper-btn';
     minus.textContent = '\u2212';
     minus.onclick = () => {
-        const next = Math.max(field.min || 0, current - (field.step || 1));
+        const next = round1(Math.max(field.min || 0, current - stepFor(current, -1)));
         _saveSetting(sectionKey, field.key, next);
     };
     const display = document.createElement('span');
     display.className = 'settings-value';
-    display.textContent = current + (field.suffix || '');
+    display.textContent = (field.subSecond && current < 1)
+        ? Math.round(current * 1000) + 'ms'
+        : current + (field.suffix || '');
     display.style.cursor = 'default';
     const plus = document.createElement('button');
     plus.className = 'settings-stepper-btn';
     plus.textContent = '+';
     plus.onclick = () => {
-        const next = Math.min(field.max || 99999, current + (field.step || 1));
+        const next = round1(Math.min(field.max || 99999, current + stepFor(current, 1)));
         _saveSetting(sectionKey, field.key, next);
     };
     wrap.appendChild(minus);
