@@ -10,22 +10,27 @@ The allowlist is a FIXED set of full origins (scheme + host + port).
 Matching the request's own Host header was removed on purpose: DNS
 rebinding lets an attacker's domain resolve to this host, making
 Origin == Host true for a hostile page. Enumerating the real origins
-(assist.drift + the LAN IP the phone uses) keeps LAN access working
-while still rejecting an attacker's own origin — a rebound evil.com page
-still sends Origin: http://evil.com, which is not in this set.
+keeps LAN access working while still rejecting an attacker's own origin —
+a rebound evil.com page still sends Origin: http://evil.com, which is not
+in this set.
 
-Extra origins can be added at runtime via ASSIST_ALLOWED_ORIGINS
-(comma-separated full origins, e.g. "http://10.0.0.50:8089").
+Only loopback ships built in. The hostname and LAN address a browser
+actually uses are per-install facts, not properties of this program, so
+they belong in .env via ASSIST_ALLOWED_ORIGINS (comma-separated full
+origins):
+
+    ASSIST_ALLOWED_ORIGINS=http://assist.example.lan,http://192.0.2.10:8089
+
+Every browser origin that reaches Flask needs an entry — the LAN address
+when clients hit it directly, and every extra hostname that resolves here.
+A missing name 403s POSTs while GETs keep working, which looks like a
+broken deploy rather than a policy decision, so add all of them at once.
 """
 
 import os
 
-# Full origins as browsers send them: scheme://host[:port]. LAN clients
-# hit Flask directly on :8089 (nginx only serves the assist.drift name).
+# Full origins as browsers send them: scheme://host[:port].
 ALLOWED_ORIGINS = {
-    "http://assist.drift",
-    "http://10.0.0.101:8089",
-    "http://10.0.0.101",
     "http://localhost:8089",
     "http://127.0.0.1:8089",
 }

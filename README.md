@@ -127,7 +127,7 @@ All configuration is environment-variable based, via `.env` in the repo. See `en
 | `ASSIST_CLI_DIR` | Working directory used when invoking `ASSIST_CLI_BIN` | `~` |
 | `ASSIST_CLI_ALLOWED` | Comma-separated allowlist of subcommands (**empty = proxy disabled**) | (empty) |
 | `ASSIST_DB_NAME` | PostgreSQL DB for session history | `claude_archives` |
-| `ASSIST_ALLOWED_ORIGINS` | Extra browser origins accepted by the CSRF check, comma-separated. **Set this on any install that is not the original dev box** — the built-in list in `shared/security.py` hardcodes that machine's hostname and LAN IP, so your phone's address is rejected on POSTs until you add it | (built-in list only) |
+| `ASSIST_ALLOWED_ORIGINS` | Browser origins accepted by the CSRF check, comma-separated. **Required on any install reached from more than localhost** — `shared/security.py` ships loopback only, so list your hostname and the LAN address your phone uses or every POST from them 403s while GETs still work | (loopback only) |
 | `DISPLAY` | X11 display for clipboard/key-send | `:1` |
 
 Changes to `.env` require `assist restart` to take effect.
