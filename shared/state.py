@@ -82,7 +82,7 @@ DEFAULT_SETTINGS = {
         # web_base: what the BROWSER opens (the Studio SPA). Empty means
         # "derive from api_base" — Studio serves its SPA on the same origin as
         # its API, so a self-hosted or hosted install needs one URL, not two.
-        # Host-neutral by default: a fresh clone must not point at studio.drift.
+        # Host-neutral by default: a fresh clone must not point at anyone's Studio.
         "web_base": "",
         # api_base: server->server only. Loopback default suits a Studio running
         # beside Assist; a hosted/self-hosted Studio is an https URL.

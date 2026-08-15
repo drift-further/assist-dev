@@ -865,8 +865,8 @@ def session_history(project):
 
     # Claude Code stores transcripts under a path-munged dir name built from
     # the project's ABSOLUTE path, as {session_id}.jsonl. Current versions
-    # replace every non-alphanumeric char with "-" (e.g. /home/daniel/foo.bar
-    # -> -home-daniel-foo-bar); older versions kept underscores, so check
+    # replace every non-alphanumeric char with "-" (e.g. /home/user/foo.bar
+    # -> -home-user-foo-bar); older versions kept underscores, so check
     # both forms.
     claude_projects = Path.home() / ".claude" / "projects"
     munged_dirs = {

@@ -41,7 +41,7 @@ def create_app():
     # commands by design. This is what makes that unreachable without the token.
     #
     # /api/cli-proxy is exempt: containers call it from an isolated network
-    # (docker/claude-mount.sh iptables-pins them to 10.0.0.101:8089) and have no
+    # (docker/claude-mount.sh iptables-pins them to the host's :8089) and have no
     # way to hold the token. It is fail-closed on its own ASSIST_CLI_ALLOWED
     # allowlist, and nginx restricts it to the container subnet.
     # /health is a liveness probe (assist-ctl polls it to decide whether a
@@ -175,12 +175,12 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Claude Assist server")
     parser.add_argument("--port", type=int, default=8089, help="Port to listen on")
-    # Loopback only. nginx owns 10.0.0.101:8089 and forwards here, so LAN
-    # clients keep their existing URL while Flask is unreachable from the
-    # network — the blast radius of an unauthenticated endpoint slipping
-    # through is the host, not the LAN. Reverting this to 0.0.0.0 re-exposes
-    # every endpoint directly; see the nginx block in the KAREN repo at
-    # docker-containers/media-stack/nginx-drift-services.conf.
+    # Loopback only. nginx listens on the LAN address:port clients already use
+    # and forwards here, so no client URL changes while Flask itself is
+    # unreachable from the network — the blast radius of an unauthenticated
+    # endpoint slipping through is the host, not the LAN. Reverting this to
+    # 0.0.0.0 re-exposes every endpoint directly. The vhost lives in a separate
+    # infrastructure repo; README has the equivalent server block.
     parser.add_argument("--host", default="127.0.0.1", help="Interface to bind")
     args = parser.parse_args()
 

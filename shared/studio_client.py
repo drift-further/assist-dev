@@ -62,7 +62,7 @@ class StudioClient:
         if not base:
             return 0, None
         # EVERYTHING is inside the try, including Request construction and JSON
-        # serialization. A typo'd api_base ("studio.drift" with no scheme — easy
+        # serialization. A typo'd api_base (a bare hostname with no scheme — easy
         # to paste into the connect sheet) makes Request() raise ValueError; an
         # exception escaping here is caught by the refresher's bare `except`,
         # which leaves the snapshot frozen on its last state, so the UI reports

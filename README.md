@@ -226,7 +226,7 @@ just an extra field, and existing favorites gain one lazily the first time they 
 
 ## Connect to Studio
 
-[Studio](https://studio.drift) is the design hub agents report into — specs, plans, blocking questions, tasks and QA gates. Assist works standalone; connecting it to a Studio adds an attention inbox you can answer from your phone, a badge on the ◇ button, and a project/effort chip on the active session.
+[Studio](https://driftstudio.dev) is the design hub agents report into — specs, plans, blocking questions, tasks and QA gates. Assist works standalone; connecting it to a Studio adds an attention inbox you can answer from your phone, a badge on the ◇ button, and a project/effort chip on the active session.
 
 > **Loopback only for now.** Point `api_base` at a Studio on this machine (`http://127.0.0.1:8090`). **Do not expose Studio to a network and point Assist at it yet:** Studio does not enforce its API token, so a remote Studio would answer anyone who can reach it, and the `api_token` below would give you no protection you could rely on. Remote/hosted Studio is supported once Studio ships bearer enforcement.
 
@@ -235,7 +235,7 @@ Connect from the phone: tap **◇ Studio** while disconnected and fill the sheet
 ```json
 {
   "studio": {
-    "web_base": "https://studio.drift",
+    "web_base": "https://studio.example.com",
     "api_base": "http://127.0.0.1:8090",
     "api_token": ""
   }
@@ -297,7 +297,7 @@ Expose Assist at a friendly hostname on your LAN:
 ```nginx
 server {
     listen 80;
-    server_name assist.drift;
+    server_name assist.example.lan;   # whatever name your LAN resolves to this host
 
     location / {
         proxy_pass http://127.0.0.1:8089;

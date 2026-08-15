@@ -178,7 +178,7 @@ def is_onboarding_navigation(request):
     and collect the cookie without ever rendering the app.
 
     Sec-Fetch-Dest is stamped by the browser and a page cannot forge it. An
-    `<img src="http://assist.drift/">` on any LAN page sends `image`, a fetch
+    `<img src="http://assist.example.lan/">` on any LAN page sends `image`, a fetch
     sends `empty`, and sw.js precaching `/` sends `empty`; only an address-bar
     navigation sends `document`. Without this check a hostile or merely
     unlucky background request burns the operator's window and walks away with

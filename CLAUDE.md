@@ -1,6 +1,6 @@
 # Claude Assist
 
-Phone-friendly web terminal interface for managing Claude Code tmux sessions. Single-user tool running on the host (not Docker) behind nginx at `assist.drift`.
+Phone-friendly web terminal interface for managing Claude Code tmux sessions. Single-user tool running on the host (not Docker) behind an nginx reverse proxy. The LAN hostname is per-install and deliberately not in the repo — read it from `ASSIST_ALLOWED_ORIGINS` in `.env`.
 
 ## Architecture
 
@@ -118,14 +118,14 @@ Successful `ls`, `view`, `send`, `wait`, and `launch` commands print a measured 
 
 1. Edit files in this repo
 2. Restart: `assist restart` (canonical) — wraps `assist-ctl` (PID file, health check, logs)
-3. Verify on phone or via Playwright at `http://assist.drift`
+3. Verify on phone or via Playwright at the LAN hostname (in `.env`, `ASSIST_ALLOWED_ORIGINS`) — not `127.0.0.1`, which is out of scope for the device-approval and open-access checks
 
 Python changes (serve.py, routes/) require restart. HTML/JS/CSS are served directly but may be browser-cached.
 
 ## Deployment
 
 - Runs on host, port 8089
-- nginx reverse proxy at `assist.drift` with WebSocket upgrade headers (`Upgrade`, `Connection "upgrade"`, `proxy_read_timeout 86400`)
+- nginx reverse proxy on the LAN hostname with WebSocket upgrade headers (`Upgrade`, `Connection "upgrade"`, `proxy_read_timeout 86400`)
 - No staging environment — always edit, restart, verify live
 
 ## Blueprint Pattern
