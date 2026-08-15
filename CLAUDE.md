@@ -35,7 +35,7 @@ fresh clone of this repo will not reproduce LAN access on its own.
 
 **No build step.** Frontend is plain ES6 + CSS custom properties. No npm, no bundler, no framework. This is deliberate — zero frontend dependencies.
 
-**No test suite.** Testing is manual: edit, restart, verify on phone via Playwright or browser. Not worth adding unless the project grows significantly.
+**Testing is manual**: edit, restart, verify on phone via Playwright or browser. The one exception is `tests/test_cli_proxy.py` — `/api/cli-proxy` is the only unauthenticated endpoint that runs a host binary, so its argument handling is pinned by unit tests: `.venv/bin/python3 -m unittest tests.test_cli_proxy` from the repo root. Nothing else has automated coverage, and it is not worth adding unless the project grows significantly.
 
 ## Code Style
 

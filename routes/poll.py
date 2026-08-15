@@ -4,6 +4,7 @@ import hashlib
 import json as json_mod
 import os
 import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -24,6 +25,8 @@ from shared.tmux import prettify_command
 from routes.terminal import enrich_panes_with_agents
 
 poll_bp = Blueprint("poll_bp", __name__)
+
+CLI_PROXY_TIMEOUT_CEILING = 600
 
 def _find_project_dir(cwd):
     """Find the nearest project root for a tmux pane cwd."""
@@ -572,9 +575,35 @@ def cli_proxy():
             for i, a in enumerate(args):
                 if a == "--timeout" and i + 1 < len(args):
                     try:
-                        cmd_timeout = int(args[i + 1]) + 30
-                    except ValueError:
-                        pass
+                        requested_timeout = int(args[i + 1])
+                    except (TypeError, ValueError):
+                        return (
+                            jsonify(
+                                {
+                                    "error": (
+                                        "invalid --timeout: expected a "
+                                        "non-negative integer"
+                                    )
+                                }
+                            ),
+                            400,
+                        )
+                    if requested_timeout < 0:
+                        return (
+                            jsonify(
+                                {
+                                    "error": (
+                                        "invalid --timeout: expected a "
+                                        "non-negative integer"
+                                    )
+                                }
+                            ),
+                            400,
+                        )
+                    cmd_timeout = min(
+                        requested_timeout + 30,
+                        CLI_PROXY_TIMEOUT_CEILING,
+                    )
 
         try:
             result = subprocess.run(
@@ -599,13 +628,7 @@ def cli_proxy():
         except FileNotFoundError:
             return jsonify({"error": "CLI binary not found", "returncode": -1}), 500
     finally:
-        for f in tmp_files:
-            try:
-                os.unlink(f)
-            except OSError:
-                pass
         if tmp_dir:
-            try:
-                os.rmdir(tmp_dir)
-            except OSError:
-                pass
+            # Clean the owned tree, including files created before they could
+            # be added to tmp_files (for example, on malformed base64).
+            shutil.rmtree(tmp_dir, ignore_errors=True)
