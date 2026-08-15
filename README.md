@@ -151,7 +151,7 @@ To rotate: delete `auth_token` and restart. A new secret is generated and every 
 
 Only three things are exempt: `/login`, `/health` (a liveness probe carrying no data), and `/api/cli-proxy` — containers have no way to hold the token, so that endpoint is instead restricted to the container subnet at the proxy layer and remains fail-closed on its own `ASSIST_CLI_ALLOWED` allowlist.
 
-**Flask binds `127.0.0.1` only.** nginx is the sole ingress. Historically LAN clients reached Flask directly on `<lan-ip>:8089` because the vhost answered only to the `assist.drift` name, which left every endpoint exposed to the whole network. nginx now listens on that same address and port and forwards to loopback, so **no client URL changes** — binding a specific IP in nginx does not collide with Flask's loopback bind.
+**Flask binds `127.0.0.1` only.** nginx is the sole ingress. Historically LAN clients reached Flask directly on `<lan-ip>:8089` because the vhost answered only to the hostname, which left every endpoint exposed to the whole network. nginx now listens on that same address and port and forwards to loopback, so **no client URL changes** — binding a specific IP in nginx does not collide with Flask's loopback bind.
 
 If you self-host this, the equivalent server block is:
 
