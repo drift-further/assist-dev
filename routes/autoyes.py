@@ -99,9 +99,15 @@ _SELECTED_YES_RE = re.compile(r"(?:^|\n)\s*❯\s*Yes\b", re.IGNORECASE)
 # above all miss it and the whole numbered branch was skipped. Its option 1 is
 # already marked selected ("› 1. Yes, proceed (y)"), so bare Enter confirms,
 # which is exactly what numbered-yes sends.
+# "Press enter to continue" is codex's DIRECTORY-TRUST dialog, verified live on
+# codex 0.147.0 (2026-08-12): "Do you trust the contents of this directory?" over
+# "› 1. Yes, continue / 2. No, quit". Older codex closed it with the same
+# "Press enter to confirm" as its approval block, so this was covered by
+# accident; 0.147 reworded it and every delegate launch started stalling on
+# trust with auto-yes armed.
 _NUMBERED_FOOTER_RE = re.compile(
     r"(?:Enter to select|Esc to cancel|Navigate)\s*[·•]"
-    r"|Press enter to confirm"
+    r"|Press enter to (?:confirm|continue)"
 )
 # How far above the footer to look for option 1 when there is no ──── anchor.
 # codex's second option is "Yes, and don't ask again for commands that start
@@ -378,7 +384,7 @@ def _extract_summary(tail, prompt_type):
 # it would reset the countdown each tick and the prompt would never fire.
 _PROMPT_TERMINATOR_RE = re.compile(
     r"(?:Enter to select|Esc to cancel|Navigate)\s*[·•]"
-    r"|Press enter to confirm"
+    r"|Press enter to (?:confirm|continue)"
     r"|Allow once\s+Allow always\s+Reject"
     r"|Skip & tell the agent what to do instead"
     r"|Use arrow keys to navigate"
