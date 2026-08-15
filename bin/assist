@@ -2,15 +2,64 @@
 """Command-line dispatcher for Claude Assist."""
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 
 SCRIPT_PATH = Path(__file__).resolve()
-sys.path.insert(0, str(SCRIPT_PATH.parent.parent))
+ASSIST_HOME = SCRIPT_PATH.parent.parent
+sys.path.insert(0, str(ASSIST_HOME))
 
-from cli import container, http, proc, session, wait as wait_cli
-from cli.config import ConfigError, resolve
+
+def _reexec_in_project_venv() -> None:
+    """Re-exec under the project venv, so `assist` works from any shell.
+
+    The shebang is `#!/usr/bin/env python3`, which resolves against the
+    CALLER's PATH — whichever venv the caller happens to have active, else the
+    bare system interpreter. None of those carry this project's dependencies:
+    cli/wait.py imports routes.autoyes, which imports flask, so `assist` died
+    on import for EVERY verb (help included), not only the waiting ones.
+    install.sh provisions .venv next to this script and installs
+    requirements.txt into it — so use that interpreter, and derive its path
+    from __file__ (already symlink-resolved) so a moved or re-cloned repo
+    still works with no hardcoded paths.
+    """
+    if os.environ.get("ASSIST_VENV_REEXEC"):
+        return  # already re-executed once — never loop
+    venv_dir = ASSIST_HOME / ".venv"
+    venv_python = venv_dir / "bin" / "python3"
+    try:
+        # sys.prefix, NOT a resolved-path comparison: .venv/bin/python3 is a
+        # symlink to python3.12 -> /usr/bin/python3.12, so resolve() collapses
+        # the venv and the system interpreter onto the same real file and the
+        # check passes for the wrong one. sys.prefix is the venv itself.
+        if Path(sys.prefix) == venv_dir:
+            return  # already running inside the project venv
+        if not venv_python.is_file():
+            return  # no venv yet; fall through to the legible import error
+    except OSError:
+        return
+    os.environ["ASSIST_VENV_REEXEC"] = "1"
+    try:
+        os.execv(str(venv_python), [str(venv_python), str(SCRIPT_PATH), *sys.argv[1:]])
+    except OSError:
+        pass  # exec failed — carry on and let the import decide
+
+
+_reexec_in_project_venv()
+
+try:
+    from cli import container, http, proc, session, wait as wait_cli
+    from cli.config import ConfigError, resolve
+except ModuleNotFoundError as exc:  # a legible failure beats a 12-line traceback
+    print(
+        f"assist: missing dependency '{exc.name}' — the CLI needs the project venv at\n"
+        f"  {ASSIST_HOME / '.venv'}\n"
+        f"Create or repair it with:  cd {ASSIST_HOME} && ./install.sh",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
 
 
 HELP_TEXT = """assist — control the Claude Assist web terminal
