@@ -101,6 +101,8 @@ Every session verb supports `-h`/`--help`, with descriptions for each positional
 
 Successful `ls`, `view`, `send`, `wait`, and `launch` commands print a measured `next:` suggestion to stderr. `ls` uses the first printed row's session name and omits the hint when no rows exist. Set `ASSIST_NO_HINTS=1` to suppress hints; `assist ls --json` suppresses them automatically and keeps stdout as parseable JSON.
 
+`assist send` adds a `callback:` line offering the wording that asks the receiving agent to report back to the sender's own pane when it is done or stuck — the alternative to polling with `assist wait`. The reply address is the caller's tmux session, overridable with `ASSIST_REPLY_TO`, and the line is skipped outside tmux or when a session sends to itself.
+
 | Wait exit | State | Meaning |
 |-----------|-------|---------|
 | `0` | idle | Pane went quiet, no prompt |

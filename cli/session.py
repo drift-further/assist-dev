@@ -2,6 +2,8 @@
 
 import json
 import os
+import shlex
+import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import urlencode
@@ -42,6 +44,13 @@ NEXT_COMMANDS = {
 }
 
 
+CALLBACK_HINT = (
+    "callback: to be told instead of polling, send this too —\n"
+    "  when you are done, or if you hit an issue or question, run: "
+    'assist send {reply_to} "<status>" --enter'
+)
+
+
 def print_next_hint(verb: str, session: str | None) -> None:
     """Print the measured next commands for a successful session verb."""
     if os.environ.get("ASSIST_NO_HINTS") == "1" or not session:
@@ -51,6 +60,42 @@ def print_next_hint(verb: str, session: str | None) -> None:
         return
     rendered = (command.format(session=session) for command in commands)
     print("next: " + "  ·  ".join(rendered), file=sys.stderr)
+
+
+def reply_address() -> str | None:
+    """Return the caller's own tmux session — the address a delegate replies to."""
+    override = os.environ.get("ASSIST_REPLY_TO")
+    if override:
+        return override.strip() or None
+    if not os.environ.get("TMUX"):
+        return None
+    command = ["tmux", "display-message", "-p"]
+    pane = os.environ.get("TMUX_PANE")
+    if pane:
+        command += ["-t", pane]
+    command.append("#S")
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def print_callback_hint(target_session: str | None) -> None:
+    """Offer the sender a callback, so it can stop polling the pane it just wrote to."""
+    if os.environ.get("ASSIST_NO_HINTS") == "1":
+        return
+    reply_to = reply_address()
+    if not reply_to or reply_to == target_session:
+        return
+    print(CALLBACK_HINT.format(reply_to=shlex.quote(reply_to)), file=sys.stderr)
 
 
 def resolve_target(session: str | None, pane: str = "0.0") -> str:
@@ -245,7 +290,8 @@ def send(
     sent_chars = response.get("sent_chars")
     if sent_chars is None:
         sent_chars = 0
-    print(f"sent {sent_chars} chars to {target}")
+    print(f"sent {sent_chars} chars to {target}", flush=True)
+    print_callback_hint(session)
     if wait_for_completion:
         exit_code = wait_cli.run_wait(
             session,

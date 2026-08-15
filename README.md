@@ -98,6 +98,8 @@ Each session verb (`ls`, `view`, `send`, `wait`, `launch`, `kill`, and `autoyes`
 
 After a successful `ls`, `view`, `send`, `wait`, or `launch`, the CLI prints a measured `next:` suggestion to stderr, leaving stdout safe for captures and pipelines. `ls` uses the first printed row's session name and omits the hint when there are no rows. Set `ASSIST_NO_HINTS=1` to suppress hints for any command; `assist ls --json` suppresses them automatically so its stdout remains parseable JSON.
 
+`assist send` prints a second stderr line, `callback:`, carrying the sentence that asks the receiving agent to message you back when it finishes or hits a question — so the sender can be told rather than poll `assist wait`. It is a suggestion; the sender decides whether to include it. The reply address is the caller's own tmux session (`ASSIST_REPLY_TO` overrides it), and the line is omitted when there is no such address — outside tmux nothing can be replied to — or when a session is sending to itself.
+
 Session wait commands use these exit codes:
 
 | Code | State | Meaning |
@@ -116,6 +118,7 @@ All configuration is environment-variable based, via `.env` in the repo. See `en
 | `ASSIST_PROJECTS_DIR` | Root directory for project discovery | `~/projects` |
 | `ASSIST_SKILLS_DIR` | Claude skills directory | `~/.claude/skills` |
 | `ASSIST_SESSION_INIT_CMD` | Command run in new tmux sessions | (none) |
+| `ASSIST_REPLY_TO` | Reply address used by the `assist send` callback hint | (the caller's own tmux session) |
 | `ASSIST_MOUNT_SCRIPT` | Path to `claude-direct-mount.sh` for Automate | (none — required for Automate) |
 | `ASSIST_CLI_BIN` | Host CLI exposed to containers via `/api/cli-proxy` | (none — proxy disabled) |
 | `ASSIST_CLI_DIR` | Working directory used when invoking `ASSIST_CLI_BIN` | `~` |

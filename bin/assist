@@ -105,6 +105,12 @@ Next-step hints:
   suggestion to stderr. Set ASSIST_NO_HINTS=1 to suppress it; ls --json
   suppresses it automatically.
 
+  `send` also prints a `callback:` line offering the wording that asks the
+  receiving agent to report back to your own pane when it finishes or gets
+  stuck — take it or ignore it. The reply address is your tmux session, or
+  ASSIST_REPLY_TO; outside tmux there is nowhere to reply to, so the line
+  is omitted.
+
 Wait exit codes:
   0   idle    — the pane went quiet, no prompt
   10  prompt  — quiet because it is asking something (summary printed)
