@@ -10,14 +10,17 @@ from pathlib import Path
 from flask import Blueprint, jsonify, request
 
 import shared.drafts as drafts
+from shared import execution_park as park
 import shared.state as state
 import shared.tab_state as tab_state
 from shared.agent_identity import resolve_process
 from shared.tmux import (
     capture_pane,
+    create_tmux_session,
     detect_venv,
-    pane_wants_ctrl_l_heal,
+    expected_target_identity,
     prettify_command,
+    record_tmux_adoption,
     tmux_exact_target,
     tmux_send_keys,
     tmux_send_text,
@@ -27,11 +30,20 @@ from shared.tmux import (
 terminal_bp = Blueprint("terminal_bp", __name__)
 
 
+def _http_refusal(refusal):
+    return jsonify(refusal.body()), refusal.http_status
+
+
 @terminal_bp.route("/terminal/projects")
 def terminal_projects():
     """List project directories with venv detection."""
     if not state.PROJECTS_DIR.is_dir():
-        return jsonify({"projects": [], "error": "Projects dir not found"}), 404
+        return jsonify(
+            {
+                "projects": [],
+                "note": f"Projects directory does not exist: {state.PROJECTS_DIR}",
+            }
+        )
 
     projects = []
     for entry in sorted(state.PROJECTS_DIR.iterdir()):
@@ -78,14 +90,9 @@ def terminal_launch():
         timeout=5,
     )
     if check.returncode == 0:
-        state.tmux_target = f"{session_name}:0.0"
-        return jsonify(
-            {
-                "ok": True,
-                "session": session_name,
-                "target": state.tmux_target,
-                "existed": True,
-            }
+        return park.perform(
+            park.Intent.BARE_TERMINAL,
+            lambda: _existing_terminal_effect(session_name),
         )
 
     cols = data.get("cols", state.get_setting("terminal", "default_cols"))
@@ -94,29 +101,66 @@ def terminal_launch():
     cols = max(40, min(int(cols), 400))
     rows = max(60, min(int(rows), 200))
 
-    proc = subprocess.run(
-        [
-            "tmux",
-            "new-session",
-            "-d",
-            "-s",
-            session_name,
-            "-c",
-            str(project_path),
-            "-x",
-            str(cols),
-            "-y",
-            str(rows),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=10,
+    init_cmd = state.get_setting("server", "session_init_cmd")
+    skip_init = data.get("skip_init", False)
+    intent = (
+        park.Intent.TERMINAL_INIT_LAUNCH
+        if init_cmd and not skip_init
+        else park.Intent.BARE_TERMINAL
     )
-    if proc.returncode != 0:
+    result = park.perform(
+        intent,
+        lambda: _terminal_launch_effect(
+            project_path,
+            session_name,
+            cols,
+            rows,
+            init_cmd if intent is park.Intent.TERMINAL_INIT_LAUNCH else "",
+        ),
+    )
+    if park.is_refusal(result):
+        return _http_refusal(result)
+    return result
+
+
+def _existing_terminal_effect(session_name):
+    adoption = record_tmux_adoption(
+        f"{session_name}:0.0",
+        surface="existing_terminal",
+        diagnostic_alias=f"{session_name}:0.0",
+    )
+    if not adoption.ok:
+        return jsonify({"ok": False, "error": adoption.status}), 409
+    state.tmux_target = f"{session_name}:0.0"
+    identity = adoption.identity
+    return jsonify(
+        {
+            "ok": True,
+            "session": session_name,
+            "target": state.tmux_target,
+            "existed": True,
+            "expected_target_identity": identity.as_dict(),
+        }
+    )
+
+
+def _terminal_launch_effect(project_path, session_name, cols, rows, init_cmd):
+    """Create one terminal unit while the park decision lock is held."""
+
+    created = create_tmux_session(
+        session_name=session_name,
+        cwd=project_path,
+        cols=cols,
+        rows=rows,
+        surface="fresh_terminal",
+        diagnostic_alias=f"{session_name}:0.0",
+    )
+    if not created.ok:
         return (
-            jsonify({"ok": False, "error": f"tmux new-session failed: {proc.stderr}"}),
+            jsonify({"ok": False, "error": created.status}),
             500,
         )
+    identity = created.identity
 
     subprocess.run(
         [
@@ -137,19 +181,9 @@ def terminal_launch():
             capture_output=True,
             timeout=5,
         )
-        tmux_send_text(f"{session_name}:0.0", f"unset {var}")
-        tmux_send_keys(f"{session_name}:0.0", "Enter")
-    time.sleep(0.1)
 
     venv = detect_venv(project_path)
-    if venv:
-        tmux_send_text(f"{session_name}:0.0", f"source {venv}/bin/activate")
-        tmux_send_keys(f"{session_name}:0.0", "Enter")
-        time.sleep(0.3)
-
-    init_cmd = state.get_setting("server", "session_init_cmd")
-    skip_init = data.get("skip_init", False)
-    if init_cmd and not skip_init:
+    if init_cmd:
         tmux_send_text(f"{session_name}:0.0", init_cmd)
         tmux_send_keys(f"{session_name}:0.0", "Enter")
         time.sleep(0.3)
@@ -163,6 +197,7 @@ def terminal_launch():
             "venv": venv,
             "existed": False,
             "init_cmd": init_cmd or "",
+            "expected_target_identity": identity.as_dict(),
         }
     )
 
@@ -446,16 +481,6 @@ def terminal_resize():
             500,
         )
 
-    # Resizes are the main trigger for stale-cell artifacts in claude/wrapper
-    # panes (reflow + diff redraw). Follow up with C-l so the TUI repaints
-    # from a clean model. The key queues behind the SIGWINCH event, so order
-    # is safe; harmless no-op visually when the screen is already clean.
-    if pane_wants_ctrl_l_heal(session):
-        subprocess.run(
-            ["tmux", "send-keys", "-t", tmux_exact_target(session), "C-l"],
-            capture_output=True, timeout=2,
-        )
-
     return jsonify({"ok": True, "session": session, "cols": cols, "rows": rows})
 
 
@@ -492,6 +517,11 @@ def terminal_unpin():
 @terminal_bp.route("/terminal/kill", methods=["POST"])
 def terminal_kill():
     """Kill a tmux session."""
+    return park.perform(park.Intent.STOP, _terminal_kill_effect)
+
+
+def _terminal_kill_effect():
+    """Stop the exact selected terminal under the decision lock."""
     data = request.get_json(silent=True) or {}
     session = (data.get("session") or "").strip()
     if not session:
@@ -517,15 +547,11 @@ def terminal_kill():
 
 @terminal_bp.route("/terminal/clear", methods=["POST"])
 def terminal_clear():
-    """Aggressively clear a pane's tmux grid + scrollback.
+    """Clear a pane's tmux scrollback without delivering input.
 
     Used by the client's double-tap-active-tab gesture to wipe accumulated
-    artifacts from in-container TUIs (e.g. claude inside docker via
-    claude-mount.sh) that the SIGWINCH-redraw path can't reach because the
-    real TUI is several PTY hops away from the host tmux pane.
-
-    Runs `tmux clear-history` (wipes scrollback) then `send-keys C-l` (asks
-    the foreground process to clear the visible screen). Both are best-effort.
+    scrollback artifacts while retaining client-clear behavior. This automatic
+    UI action deliberately has no input-delivery behavior.
     """
     data = request.get_json(silent=True) or {}
     target = (data.get("target") or "").strip()
@@ -534,10 +560,6 @@ def terminal_clear():
 
     subprocess.run(
         ["tmux", "clear-history", "-t", tmux_exact_target(target)],
-        capture_output=True, timeout=5,
-    )
-    subprocess.run(
-        ["tmux", "send-keys", "-t", tmux_exact_target(target), "C-l"],
         capture_output=True, timeout=5,
     )
     return jsonify({"ok": True, "target": target})
@@ -611,6 +633,9 @@ def terminal_duplicate():
     if not session:
         return jsonify({"ok": False, "error": "No session specified"}), 400
 
+    init_cmd = state.get_setting("server", "session_init_cmd")
+    skip_init = data.get("skip_init", False)
+
     # Get the CWD of the source session's active pane
     cwd_proc = subprocess.run(
         ["tmux", "display-message", "-t", tmux_exact_target(session), "-p", "#{pane_current_path}"],
@@ -661,29 +686,43 @@ def terminal_duplicate():
     cols = max(40, min(int(cols), 400))
     rows = max(60, min(int(rows), 200))
 
-    proc = subprocess.run(
-        [
-            "tmux",
-            "new-session",
-            "-d",
-            "-s",
-            new_name,
-            "-c",
-            cwd,
-            "-x",
-            str(cols),
-            "-y",
-            str(rows),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=10,
+    intent = (
+        park.Intent.TERMINAL_INIT_DUPLICATE
+        if init_cmd and not skip_init
+        else park.Intent.BARE_TERMINAL
     )
-    if proc.returncode != 0:
+    result = park.perform(
+        intent,
+        lambda: _terminal_duplicate_effect(
+            new_name,
+            cwd,
+            cols,
+            rows,
+            init_cmd if intent is park.Intent.TERMINAL_INIT_DUPLICATE else "",
+        ),
+    )
+    if park.is_refusal(result):
+        return _http_refusal(result)
+    return result
+
+
+def _terminal_duplicate_effect(new_name, cwd, cols, rows, init_cmd):
+    """Create one duplicate terminal unit under the decision lock."""
+
+    created = create_tmux_session(
+        session_name=new_name,
+        cwd=cwd,
+        cols=cols,
+        rows=rows,
+        surface="duplicate",
+        diagnostic_alias=f"{new_name}:0.0",
+    )
+    if not created.ok:
         return (
-            jsonify({"ok": False, "error": f"new-session failed: {proc.stderr}"}),
+            jsonify({"ok": False, "error": created.status}),
             500,
         )
+    identity = created.identity
 
     subprocess.run(
         [
@@ -705,22 +744,9 @@ def terminal_duplicate():
             capture_output=True,
             timeout=5,
         )
-        tmux_send_text(f"{new_name}:0.0", f"unset {var}")
-        tmux_send_keys(f"{new_name}:0.0", "Enter")
-    time.sleep(0.1)
 
-    # Detect and activate venv if present
-    project_path = Path(cwd)
-    venv = detect_venv(project_path)
-    if venv:
-        tmux_send_text(f"{new_name}:0.0", f"source {venv}/bin/activate")
-        tmux_send_keys(f"{new_name}:0.0", "Enter")
-        time.sleep(0.3)
-
-    # Run session init command (daic install, claude start, etc.)
-    init_cmd = state.get_setting("server", "session_init_cmd")
-    skip_init = data.get("skip_init", False)
-    if init_cmd and not skip_init:
+    # Run the configured session initialization command.
+    if init_cmd:
         tmux_send_text(f"{new_name}:0.0", init_cmd)
         tmux_send_keys(f"{new_name}:0.0", "Enter")
         time.sleep(0.3)
@@ -735,6 +761,7 @@ def terminal_duplicate():
             "target": target,
             "cwd": cwd,
             "init_cmd": init_cmd or "",
+            "expected_target_identity": identity.as_dict(),
         }
     )
 
@@ -752,6 +779,18 @@ def terminal_run_init():
         return jsonify(
             {"ok": True, "skipped": True, "reason": "No init command configured"}
         )
+
+    result = park.perform(
+        park.Intent.TERMINAL_RUN_INIT,
+        lambda: _terminal_run_init_effect(session, init_cmd),
+    )
+    if park.is_refusal(result):
+        return _http_refusal(result)
+    return result
+
+
+def _terminal_run_init_effect(session, init_cmd):
+    """Deliver configured init only while the decision lock remains held."""
 
     # Verify session exists
     check = subprocess.run(
@@ -804,6 +843,16 @@ def terminal_capture():
 @terminal_bp.route("/terminal/explore/pick", methods=["POST"])
 def terminal_explore_pick():
     """Open a native OS folder picker dialog and return the selected path."""
+    result = park.perform(
+        park.Intent.NATIVE_FOLDER_PICKER, _terminal_explore_pick_effect
+    )
+    if park.is_refusal(result):
+        return _http_refusal(result)
+    return result
+
+
+def _terminal_explore_pick_effect():
+    """Resolve and spawn the platform picker only under the decision lock."""
     import shutil
 
     data = request.get_json(silent=True) or {}

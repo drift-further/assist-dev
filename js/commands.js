@@ -151,8 +151,8 @@ function renderCmdPanel() {
     let html = '';
     for (let i = 0; i < _currentCommands.length; i++) {
         const c = _currentCommands[i];
-        const icon = CMD_ICONS[c.icon] || CMD_ICONS.run;
-        html += `<button class="cmd-item" onclick="runSavedCommand(${i})">
+        const icon = Object.hasOwn(CMD_ICONS, c.icon) ? CMD_ICONS[c.icon] : CMD_ICONS.run;
+        html += `<button class="cmd-item" data-command-index="${i}">
             <span class="cmd-item-icon">${icon}</span>
             <div class="cmd-item-info">
                 <div class="cmd-item-name">${escHtml(c.name)}</div>
@@ -161,6 +161,15 @@ function renderCmdPanel() {
         </button>`;
     }
     list.innerHTML = html;
+    if (!list.dataset.commandDelegated) {
+        list.dataset.commandDelegated = '1';
+        list.addEventListener('click', (e) => {
+            const button = e.target.closest('.cmd-item[data-command-index]');
+            if (button && list.contains(button)) {
+                runSavedCommand(parseInt(button.dataset.commandIndex, 10));
+            }
+        });
+    }
 }
 
 async function runSavedCommand(index) {

@@ -49,6 +49,7 @@ let _filterText = '';
 // Terminal state
 let _termOpen = true;           // always open in drawer layout
 let _termTarget = null;         // active tmux target
+let _termExpectedIdentity = null; // server-selected identity from bare launch
 let _termPaused = false;        // scroll-freeze
 let _termLines = 2000;          // scrollback depth (10x default)
 let _termPollTimer = null;
@@ -92,7 +93,6 @@ let _sessionPanes = [];
 let _sessionPrompts = {};       // target -> true if prompt detected
 let _paneModelLast = {};        // target -> last model_changed_at this page has rendered
 let _sessionStates = {};        // target -> { state, since, prevState }
-// _sessionRefreshTimer removed — session refresh handled by consolidatedPoll()
 
 // Input state
 let _sending = false;
@@ -122,5 +122,3 @@ let _projSettingsOpen = false;
 
 // Idle fade: suppress for first few poll cycles so content detection can establish baseline
 const _pageLoadedAt = Date.now();
-
-

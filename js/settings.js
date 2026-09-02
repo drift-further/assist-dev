@@ -137,6 +137,80 @@ function renderSettings() {
             body.appendChild(row);
         }
     }
+
+    if (typeof vaultHandles === 'function') _renderVaultSettings(body);
+}
+
+function _renderVaultSettings(body) {
+    const hdr = document.createElement('div');
+    hdr.className = 'settings-section-hdr';
+    hdr.textContent = 'Secret vault';
+    body.appendChild(hdr);
+
+    const warning = document.createElement('div');
+    warning.className = 'settings-vault-warning';
+    warning.textContent = 'Values are stored in this browser, in plaintext.';
+    body.appendChild(warning);
+
+    const state = typeof vaultState === 'function' ? vaultState() : 'unavailable';
+    const handles = state === 'ready' ? vaultHandles() : [];
+    if (!handles.length) {
+        const empty = document.createElement('div');
+        empty.className = 'settings-vault-empty';
+        empty.textContent = state === 'locked' ? 'Vault locked. Unlock it to list entries.'
+            : (state === 'unavailable' ? 'Vault storage unavailable in this browser.'
+                                       : 'No entries. Type [$handle], then tap its chip to set one.');
+        body.appendChild(empty);
+        return;
+    }
+
+    for (const handle of handles) {
+        const row = document.createElement('div');
+        row.className = 'settings-row settings-vault-row';
+
+        const label = document.createElement('span');
+        label.className = 'settings-label settings-vault-handle';
+        label.textContent = '$' + handle;
+        row.appendChild(label);
+
+        const stored = document.createElement('span');
+        stored.className = 'settings-vault-stored';
+        stored.textContent = 'stored';
+        row.appendChild(stored);
+
+        const forget = document.createElement('button');
+        forget.className = 'settings-vault-forget';
+        forget.textContent = 'Forget';
+        forget.onclick = () => vaultForgetFromSettings(handle);
+        row.appendChild(forget);
+        body.appendChild(row);
+    }
+
+    const forgetAll = document.createElement('button');
+    forgetAll.className = 'settings-vault-forget-all';
+    forgetAll.textContent = 'Forget all vault entries';
+    forgetAll.onclick = vaultForgetAllFromSettings;
+    body.appendChild(forgetAll);
+}
+
+function vaultForgetFromSettings(handle) {
+    if (!confirm('Forget $' + handle + ' from this browser?')) return;
+    if (!vaultForget(handle)) {
+        showFlash('error', 'Browser storage unavailable');
+        return;
+    }
+    _vaultUiChanged();
+    showFlash('sent', '$' + handle + ' forgotten');
+}
+
+function vaultForgetAllFromSettings() {
+    if (!confirm('Forget every vault entry from this browser?')) return;
+    if (!vaultForgetAll()) {
+        showFlash('error', 'Browser storage unavailable');
+        return;
+    }
+    _vaultUiChanged();
+    showFlash('sent', 'Vault forgotten');
 }
 
 function _renderToggle(sectionKey, field, current) {

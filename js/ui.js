@@ -11,6 +11,34 @@ function showFlash(type, text) {
     setTimeout(() => flash.classList.remove('show'), 1200);
 }
 
+// Copies plain text, synchronous execCommand path FIRST: the phone origin is
+// plain HTTP, where navigator.clipboard is not merely blocked but absent, so
+// the async API cannot be the primary. Focus is captured and restored because
+// the scratch textarea would otherwise close the on-screen keyboard mid-compose.
+// Returns whether a copy was started.
+function copyToClipboard(text) {
+    const prev = document.activeElement;
+    let copied = false;
+    try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.setSelectionRange(0, text.length);
+        copied = document.execCommand('copy');
+        document.body.removeChild(ta);
+    } catch(e) {}
+
+    if (!copied && navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).catch(() => {});
+        copied = true;
+    }
+
+    if (prev && prev.focus) { try { prev.focus(); } catch(e) {} }
+    return copied;
+}
+
 // Escapes for HTML text and quoted-attribute contexts (both ' and " quotes).
 // NOT sufficient for a value interpolated into a JS string inside an inline
 // handler (onclick="f('...')"): the HTML parser decodes entities BEFORE the
@@ -77,8 +105,6 @@ function highlightMatch(text, query) {
     const textLower = text.toLowerCase();
     const idx = textLower.indexOf(queryLower);
     if (idx === -1) return escaped;
-    // Recompute indices on the escaped string by walking through plain text positions.
-    // Simpler: split plain text, escape each segment, join with <mark>.
     const before = text.slice(0, idx);
     const match = text.slice(idx, idx + query.length);
     const after = text.slice(idx + query.length);
@@ -96,7 +122,7 @@ function renderLists() {
             for (const f of items) {
                 const display = f.display || f.text;
                 const handle = (f.handle || '').trim();
-                html += `<div class="list-item" onclick="loadText(this)" data-text="${escHtml(f.text)}"
+                html += `<div class="list-item" data-list-action="load" data-text="${escHtml(f.text)}"
                     data-handle="${escHtml(handle)}" data-id="${escHtml(f.id || '')}">
                     ${handle ? `<span class="list-item-handle">${escHtml(handle)}</span>` : ''}
                     <span class="list-item-text">${highlightMatch(display, _filterText)}</span>
@@ -120,7 +146,7 @@ function renderLists() {
         if (items.length > 0) {
             for (const h of items) {
                 const display = h.display || h.text;
-                html += `<div class="list-item" onclick="loadText(this)" data-text="${escHtml(h.text)}">
+                html += `<div class="list-item" data-list-action="load" data-text="${escHtml(h.text)}">
                     <span class="list-item-text">${highlightMatch(display, _filterText)}</span>
                     <button class="list-item-star unfav">&#9734;</button>
                 </div>`;
@@ -135,9 +161,8 @@ function renderLists() {
     listArea.innerHTML = html;
 }
 
-// Delegated star clicks — inline onclick broke on multi-line/backslash
-// history entries (raw text injected into a JS string literal). Capture
-// phase so the parent .list-item's loadText onclick never fires.
+// Delegated list actions keep history text in data attributes rather than
+// interpolating it into executable handler source.
 listArea.addEventListener('click', function(e) {
     const edit = e.target.closest('.list-item-edit');
     if (edit) {
@@ -148,11 +173,15 @@ listArea.addEventListener('click', function(e) {
         return;
     }
     const star = e.target.closest('.list-item-star');
-    if (!star) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const item = star.closest('.list-item');
-    if (item && item.dataset.text !== undefined) toggleFavorite(item.dataset.text);
+    if (star) {
+        e.preventDefault();
+        e.stopPropagation();
+        const item = star.closest('.list-item');
+        if (item && item.dataset.text !== undefined) toggleFavorite(item.dataset.text);
+        return;
+    }
+    const item = e.target.closest('.list-item[data-list-action="load"]');
+    if (item && listArea.contains(item)) loadText(item);
 }, true);
 
 function loadText(el) {
@@ -253,20 +282,21 @@ function closeDrawers() {
     if (typeof closeStaleSheet === 'function') closeStaleSheet();
 }
 
-function togglePlusMenu() {
-    const menu = document.getElementById('plus-menu');
-    const btn = document.getElementById('btn-plus');
-    const visible = menu.classList.contains('visible');
-    menu.classList.toggle('visible', !visible);
+function toggleActionsDeck() {
+    const deck = document.getElementById('actions-deck');
+    const btn = document.getElementById('btn-actions');
+    const visible = deck.classList.contains('visible');
+    deck.classList.toggle('visible', !visible);
     btn.classList.toggle('active', !visible);
+    btn.setAttribute('aria-expanded', String(!visible));
 }
 
-function toggleViewMenu() {
-    const menu = document.getElementById('view-menu');
-    const btn = document.getElementById('btn-view');
-    const visible = menu.classList.contains('visible');
-    menu.classList.toggle('visible', !visible);
-    btn.classList.toggle('active', !visible);
+function closeActionsDeck() {
+    const deck = document.getElementById('actions-deck');
+    const btn = document.getElementById('btn-actions');
+    deck.classList.remove('visible');
+    btn.classList.remove('active');
+    btn.setAttribute('aria-expanded', 'false');
 }
 
 // Swipe gestures for drawers

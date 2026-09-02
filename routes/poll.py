@@ -13,6 +13,7 @@ from flask import Blueprint, jsonify, request
 
 import shared.auth as auth
 import shared.drafts as drafts
+from shared import execution_park as park
 import shared.state as state
 import shared.tab_state as tab_state
 from shared.agent_identity import (
@@ -98,7 +99,7 @@ def get_claude_meta(target):
     """Read Claude/OpenCode session metadata near the pane's cwd.
 
     Returns a dict with context usage, cost, task, branch, edit counts, etc.
-    Claude Code populates `.claude/state/context-usage.json` via DAIC's
+    Claude Code can populate `.claude/state/context-usage.json` via a compatible
     statusline script. OpenCode can populate `.claude/state/opencode-status.json`
     via a lightweight plugin. Git metadata is gathered independently for both.
     """
@@ -493,10 +494,7 @@ def consolidated_poll():
 
 @poll_bp.route("/health")
 def health():
-    ws_count = len(state.ws_clients)
-    return jsonify(
-        {"status": "ok", "tmux_target": state.tmux_target, "ws_clients": ws_count}
-    )
+    return jsonify({"status": "ok"})
 
 
 @poll_bp.route("/api/cli-proxy", methods=["POST"])
@@ -512,6 +510,14 @@ def cli_proxy():
     Files sent from containers are saved to a temp dir on the host, and
     __PROXY_FILE_N__ placeholders in args are replaced with the real paths.
     """
+    result = park.perform(park.Intent.CONFIGURED_CLI_PROXY, _cli_proxy_effect)
+    if park.is_refusal(result):
+        return jsonify(result.body()), result.http_status
+    return result
+
+
+def _cli_proxy_effect():
+    """Materialise and execute one configured proxy request under the park lock."""
     data = request.get_json(force=True, silent=True) or {}
     args = data.get("args", [])
     if not args:

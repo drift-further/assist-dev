@@ -25,22 +25,32 @@ def _reexec_in_project_venv() -> None:
     from __file__ (already symlink-resolved) so a moved or re-cloned repo
     still works with no hardcoded paths.
     """
-    if os.environ.get("ASSIST_VENV_REEXEC"):
-        return  # already re-executed once — never loop
     venv_dir = ASSIST_HOME / ".venv"
     venv_python = venv_dir / "bin" / "python3"
     try:
         # sys.prefix, NOT a resolved-path comparison: .venv/bin/python3 is a
-        # symlink to python3.12 -> /usr/bin/python3.12, so resolve() collapses
-        # the venv and the system interpreter onto the same real file and the
-        # check passes for the wrong one. sys.prefix is the venv itself.
+        # symlink to python3.12 -> the system interpreter, so resolve()
+        # collapses the venv and the system interpreter onto the same real file
+        # and the check passes for the wrong one. sys.prefix is the venv itself.
+        #
+        # This is the AUTHORITATIVE test and it must come FIRST. The loop guard
+        # below used to be checked ahead of it, on the bare PRESENCE of
+        # ASSIST_VENV_REEXEC — and the assist server carries that variable in
+        # its own environ, so every tmux pane it spawns inherited it, the
+        # wrapper then skipped the re-exec while NOT in the venv, and every verb
+        # died with "missing dependency 'flask'" in that pane.
         if Path(sys.prefix) == venv_dir:
             return  # already running inside the project venv
+        # Loop guard, scoped to THIS process: os.execv preserves the pid, so a
+        # stamp written in this exec chain matches getpid(), while a value
+        # inherited from any other process does not and is correctly ignored.
+        if os.environ.get("ASSIST_VENV_REEXEC") == str(os.getpid()):
+            return  # re-executed once already and still not in the venv
         if not venv_python.is_file():
             return  # no venv yet; fall through to the legible import error
     except OSError:
         return
-    os.environ["ASSIST_VENV_REEXEC"] = "1"
+    os.environ["ASSIST_VENV_REEXEC"] = str(os.getpid())
     try:
         os.execv(str(venv_python), [str(venv_python), str(SCRIPT_PATH), *sys.argv[1:]])
     except OSError:
@@ -70,6 +80,8 @@ Server:
   start                  Start the server (background, PID in /tmp)
   stop                   Stop the server
   restart                Restart the server
+  activate-park-v16 [--resume]
+                         New-first, receipted park activation
   status                 Show server status
   logs [N | -f | --follow]
                          Tail last N lines (default 100), or follow
@@ -131,7 +143,7 @@ Container:
 
 Studio (design hub):
   studio [args]          Delegate to the Studio operator command
-                         (falls back to 'karen studio' until 'studio' ships)
+                         (requires a 'studio' executable on PATH)
 
 Misc:
   help                   Show this message
@@ -147,7 +159,6 @@ PROCESS_HANDLERS = {
     "restart": proc.restart,
     "status": proc.status,
 }
-PLACEHOLDER_COMMANDS = set()
 COMMANDS = {
     *PROCESS_HANDLERS,
     "logs",
@@ -163,7 +174,7 @@ COMMANDS = {
     "autoyes",
     "studio",
     "help",
-    *PLACEHOLDER_COMMANDS,
+    "activate-park-v16",
 }
 
 
@@ -421,10 +432,16 @@ def build_parser() -> AssistArgumentParser:
         "container",
         "studio",
         "help",
-        *sorted(PLACEHOLDER_COMMANDS),
     ):
         command_parser = subparsers.add_parser(verb, add_help=False)
         command_parser.add_argument("arguments", nargs=argparse.REMAINDER)
+
+    activation_parser = subparsers.add_parser(
+        "activate-park-v16",
+        description="Perform the receipted new-first park activation.",
+        add_help=False,
+    )
+    activation_parser.add_argument("--resume", action="store_true")
 
     return parser
 
@@ -434,7 +451,12 @@ def main(arguments: list[str] | None = None) -> int:
     verb = argv[0] if argv else "help"
 
     try:
-        resolved = resolve(SCRIPT_PATH)
+        resolved = resolve(
+            SCRIPT_PATH,
+            activation_expected_home=(
+                ASSIST_HOME if verb == "activate-park-v16" else None
+            ),
+        )
     except ConfigError as exc:
         print(exc, file=sys.stderr)
         return 1
@@ -455,8 +477,10 @@ def main(arguments: list[str] | None = None) -> int:
 
     if parsed.verb in PROCESS_HANDLERS:
         return PROCESS_HANDLERS[parsed.verb](resolved)
+    if parsed.verb == "activate-park-v16":
+        return proc.activate_park(resolved, ASSIST_HOME, parsed.resume)
     if parsed.verb == "logs":
-        return proc.logs(lines=parsed.lines, follow=parsed.follow)
+        return proc.logs(resolved, lines=parsed.lines, follow=parsed.follow)
     if parsed.verb == "config":
         return proc.config(resolved)
     if parsed.verb == "doctor":
@@ -508,9 +532,6 @@ def main(arguments: list[str] | None = None) -> int:
     if parsed.verb == "help":
         print(HELP_TEXT, end="")
         return 0
-    if parsed.verb in PLACEHOLDER_COMMANDS:
-        return proc.not_implemented(parsed.verb)
-
     proc.print_error(f"Unknown command: {parsed.verb} (try: assist help)")
     return 1
 

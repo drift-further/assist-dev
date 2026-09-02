@@ -1,10 +1,10 @@
 """Origin allowlisting for HTTP and WebSocket requests.
 
-Claude Assist is a single-user LAN tool with no auth; the browser's
-same-origin policy is the only thing standing between "any website the
-user visits" and command execution in a live tmux pane. These helpers
-reject cross-origin requests while leaving same-origin and non-browser
-(curl, no Origin header) traffic untouched.
+Claude Assist is a single-owner LAN tool protected by a shared secret. Origin
+checking is an independent browser-side defense against a hostile website
+causing command execution with an authenticated browser session. These helpers
+reject cross-origin requests while leaving same-origin and non-browser (curl,
+no Origin header) traffic untouched.
 
 The allowlist is a FIXED set of full origins (scheme + host + port).
 Matching the request's own Host header was removed on purpose: DNS

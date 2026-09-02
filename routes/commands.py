@@ -7,7 +7,8 @@ import time
 from flask import Blueprint, jsonify, request
 
 import shared.state as state
-from shared.tmux import detect_venv, tmux_send_keys, tmux_send_text
+from shared import execution_park as park
+from shared.tmux import create_tmux_split, detect_venv, tmux_send_keys, tmux_send_text
 
 commands_bp = Blueprint("commands_bp", __name__)
 
@@ -109,6 +110,14 @@ def save_commands(project):
 @commands_bp.route("/api/commands/run", methods=["POST"])
 def run_command():
     """Run a command in a tmux split pane alongside the main session."""
+    result = park.perform(park.Intent.SAVED_COMMAND, _run_command_effect)
+    if park.is_refusal(result):
+        return jsonify(result.body()), result.http_status
+    return result
+
+
+def _run_command_effect():
+    """Complete saved/request command unit under the decision lock."""
     data = request.get_json(silent=True) or {}
     session = (data.get("session") or "").strip()
     cmd = (data.get("cmd") or "").strip()
@@ -126,28 +135,29 @@ def run_command():
     )
     time.sleep(0.1)
 
-    proc = subprocess.run(
-        ["tmux", "split-window", "-v", "-l", "30%", "-d", "-t", f"{session}:0.0"],
-        capture_output=True,
-        text=True,
-        timeout=5,
+    created = create_tmux_split(
+        target=f"{session}:0.0",
+        height="30%",
+        surface="saved_command_split",
+        diagnostic_alias=target_pane,
     )
-    if proc.returncode != 0:
+    if not created.ok:
         return (
-            jsonify({"ok": False, "error": f"split-window failed: {proc.stderr}"}),
+            jsonify({"ok": False, "error": created.status}),
             500,
         )
+    delivery_target = created.identity.pane_id
 
     if project:
         project_path = state.PROJECTS_DIR / project
         venv = detect_venv(project_path) if project_path.is_dir() else None
         if venv:
-            tmux_send_text(target_pane, f"source {project_path}/{venv}/bin/activate")
-            tmux_send_keys(target_pane, "Enter")
+            tmux_send_text(delivery_target, f"source {project_path}/{venv}/bin/activate")
+            tmux_send_keys(delivery_target, "Enter")
             time.sleep(0.2)
 
-    tmux_send_text(target_pane, cmd)
-    tmux_send_keys(target_pane, "Enter")
+    tmux_send_text(delivery_target, cmd)
+    tmux_send_keys(delivery_target, "Enter")
 
     return jsonify({"ok": True, "target": target_pane})
 
@@ -155,6 +165,11 @@ def run_command():
 @commands_bp.route("/api/commands/stop", methods=["POST"])
 def stop_command():
     """Kill the split pane (pane 1) of a session."""
+    return park.perform(park.Intent.STOP, _stop_command_effect)
+
+
+def _stop_command_effect():
+    """Stop the exact command pane under the decision lock."""
     data = request.get_json(silent=True) or {}
     session = (data.get("session") or "").strip()
     if not session:

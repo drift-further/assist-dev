@@ -611,10 +611,6 @@ function _buildDropZones(container, sourceTab) {
     // Remove old zones
     container.querySelectorAll('.reorder-drop-zone').forEach(z => z.remove());
 
-    // Get all non-stale tabs in main area (stale tabs are now in the bottom sheet)
-    const tabs = Array.from(container.querySelectorAll(':scope > .session-tab, :scope > .pin-divider'));
-    const sourceTarget = sourceTab.dataset.target;
-
     // Insert a drop zone before each tab and after the last one
     const allTabs = Array.from(container.querySelectorAll(':scope > .session-tab'));
 
@@ -637,13 +633,13 @@ function _buildDropZones(container, sourceTab) {
         if (i < allTabs.length) {
             container.insertBefore(zone, allTabs[i]);
         } else {
-            // After last tab but before stale pill (if present)
-            const stalePill = container.querySelector('.stale-pill-wrap');
-            if (stalePill) {
-                container.insertBefore(zone, stalePill);
-            } else {
-                container.appendChild(zone);
-            }
+            // After the last tab. Anchoring on the tab rather than on the
+            // stale pill: the pill sits last in the default rail but FIRST
+            // while body.tabs-wrap is on (see _applyStaleGroup), and inserting
+            // before it there would put the trailing slot at the very front.
+            const lastTab = allTabs[allTabs.length - 1];
+            if (lastTab) lastTab.after(zone);
+            else container.appendChild(zone);
         }
     }
 }
@@ -838,7 +834,18 @@ function _applyStaleGroup() {
     pill.innerHTML = '<span class="stale-pill-glyph">&#9776;</span>' +
         '<span class="stale-pill-count">' + allTabs.length + '</span>';
     wrap.appendChild(pill);
-    container.appendChild(wrap);
+    // Default rail: last, where position: sticky pins it to the right edge.
+    // Wrapping rail (body.tabs-wrap): FIRST, because there it is a right
+    // float, and a float is placed on whichever line the flow has reached when
+    // it is encountered — appended last that is the bottom row, which is
+    // exactly the row the 2-row cap clips. Placed first it lands on row 1
+    // beside the chips, and the sheet it opens (which lists every tab,
+    // clipped ones included) stays reachable.
+    if (document.body.classList.contains('tabs-wrap')) {
+        container.insertBefore(wrap, container.firstChild);
+    } else {
+        container.appendChild(wrap);
+    }
 
     // Clear flash after 250ms so it only fires on count increase
     if (pill.classList.contains('flash')) {
@@ -893,6 +900,11 @@ function _buildTabRow(tab, isTucked) {
 // Hook into tab rendering — called after each poll updates tabs
 function _postTabRender() {
     _applyPinMarkers();
+    // The wrapping rail's height depends on how many rows the tabs need, so
+    // the offset the left drawer and the notification stack sit at has to be
+    // re-taken whenever the strip is rebuilt. One offsetHeight read per poll;
+    // in the default chrome the measured value never changes.
+    if (typeof measureStatusBar === 'function') measureStatusBar();
     // Stale group is applied later, after _applyStatesData populates
     // dataset.idleSeconds — calling it here would always see idle=0 and
     // bounce stale tabs back into the strip on every poll.
@@ -900,7 +912,7 @@ function _postTabRender() {
     if (_reorderModeTab) {
         const target = _reorderModeTab.dataset.target;
         const container = document.getElementById('session-tabs');
-        const restored = container ? container.querySelector('.session-tab[data-target="' + target + '"]') : null;
+        const restored = container ? container.querySelector('.session-tab[data-target="' + CSS.escape(target) + '"]') : null;
         if (restored) {
             // Clean up old state (banner was destroyed by innerHTML='')
             _reorderModeTab = null;

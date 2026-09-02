@@ -1,5 +1,6 @@
 """routes/container.py — Container management: build, status, packages, extensions."""
 
+import re
 import subprocess
 import threading
 import time
@@ -8,11 +9,13 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
+from shared import execution_park as park
 from shared import state
 
 container_bp = Blueprint("container_bp", __name__)
 
 DOCKER_DIR = Path(__file__).resolve().parent.parent / "docker"
+EXTENSION_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
 # ---------------------------------------------------------------------------
 # Build state — shared across threads
@@ -111,6 +114,10 @@ def container_config_get():
 # ---------------------------------------------------------------------------
 @container_bp.route("/api/container/config", methods=["PATCH"])
 def container_config_patch():
+    return park.perform(park.Intent.IMAGE_CONFIG, _container_config_patch_effect)
+
+
+def _container_config_patch_effect():
     data = request.get_json(silent=True) or {}
     if not data:
         return jsonify({"ok": False, "error": "No data"}), 400
@@ -123,6 +130,14 @@ def container_config_patch():
 # ---------------------------------------------------------------------------
 @container_bp.route("/api/container/build", methods=["POST"])
 def container_build():
+    result = park.perform(park.Intent.CONFIGURED_IMAGE_BUILD, _container_build_effect)
+    if park.is_refusal(result):
+        return jsonify(result.body()), result.http_status
+    return result
+
+
+def _container_build_effect():
+    """Start the configured build only while the park decision is held."""
     with _build_lock:
         if _build["active"]:
             return jsonify({"ok": False, "error": "Build already in progress"}), 409
@@ -160,14 +175,23 @@ def extensions_list():
 # ---------------------------------------------------------------------------
 @container_bp.route("/api/container/extensions", methods=["POST"])
 def extensions_add():
+    return park.perform(park.Intent.IMAGE_CONFIG, _extensions_add_effect)
+
+
+def _extensions_add_effect():
     data = request.get_json(silent=True) or {}
-    if not data.get("name"):
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "Name is required"}), 400
+    name = data.get("name")
+    if not isinstance(name, str) or not name:
         return jsonify({"ok": False, "error": "Name is required"}), 400
 
-    ext_id = data.get("id") or data["name"].lower().replace(" ", "-")
+    ext_id = data["id"] if "id" in data else name.lower().replace(" ", "-")
+    if not isinstance(ext_id, str) or EXTENSION_ID_RE.fullmatch(ext_id) is None:
+        return jsonify({"ok": False, "error": "Invalid extension id"}), 400
     ext = {
         "id": ext_id,
-        "name": data["name"],
+        "name": name,
         "builtin": False,
         "archive": data.get("archive") or None,
         "install": data.get("install", []),
@@ -184,6 +208,12 @@ def extensions_add():
 # ---------------------------------------------------------------------------
 @container_bp.route("/api/container/extensions/<ext_id>", methods=["PATCH"])
 def extensions_update(ext_id):
+    return park.perform(
+        park.Intent.IMAGE_CONFIG, lambda: _extensions_update_effect(ext_id)
+    )
+
+
+def _extensions_update_effect(ext_id):
     data = request.get_json(silent=True) or {}
     if not data:
         return jsonify({"ok": False, "error": "No data"}), 400
@@ -196,6 +226,12 @@ def extensions_update(ext_id):
 # ---------------------------------------------------------------------------
 @container_bp.route("/api/container/extensions/<ext_id>", methods=["DELETE"])
 def extensions_delete(ext_id):
+    return park.perform(
+        park.Intent.IMAGE_CONFIG, lambda: _extensions_delete_effect(ext_id)
+    )
+
+
+def _extensions_delete_effect(ext_id):
     # Check if builtin
     for ext in state.get_extensions():
         if ext.get("id") == ext_id and ext.get("builtin"):
@@ -212,6 +248,10 @@ def extensions_delete(ext_id):
 # ---------------------------------------------------------------------------
 @container_bp.route("/api/container/kill/<name>", methods=["POST"])
 def container_kill(name):
+    return park.perform(park.Intent.STOP, lambda: _container_kill_effect(name))
+
+
+def _container_kill_effect(name):
     if not name.startswith("claude-session-"):
         return jsonify({"ok": False, "error": "Invalid container name"}), 400
     try:

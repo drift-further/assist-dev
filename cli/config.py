@@ -24,6 +24,10 @@ class Config:
     python: str
     config_file: Path
     token: str | None
+    pid_file: Path
+    log_file: Path
+    control_dir: Path
+    auth_token_path: Path
 
 
 def _strip_comment(value: str) -> str:
@@ -165,7 +169,10 @@ def _load_assignments(path: Path) -> None:
             ) from exc
 
 
-def resolve(script_path: Path | None = None) -> Config:
+def resolve(
+    script_path: Path | None = None,
+    activation_expected_home: Path | None = None,
+) -> Config:
     """Resolve the active Assist configuration."""
 
     user_home = os.environ.get("HOME")
@@ -192,6 +199,21 @@ def resolve(script_path: Path | None = None) -> Config:
     if not home.is_dir():
         raise ConfigError(f"assist: ASSIST_HOME not found: {assist_home}")
 
+    # Activation validates the marker-selected checkout before reading that
+    # checkout's .env, token, or any controller path.  Thus a synthetic/default
+    # XDG marker cannot redirect an isolated CLI into canonical configuration.
+    if activation_expected_home is not None:
+        try:
+            actual = home.resolve(strict=True)
+            expected = activation_expected_home.resolve(strict=True)
+        except OSError as exc:
+            raise ConfigError(f"assist: activation_home_unresolvable: {exc}") from exc
+        if actual != expected:
+            raise ConfigError(
+                "assist: activation_home_mismatch: "
+                f"invoked={expected} resolved={actual}"
+            )
+
     env_file = home / ".env"
     if env_file.is_file():
         _load_assignments(env_file)
@@ -205,8 +227,15 @@ def resolve(script_path: Path | None = None) -> Config:
     venv_python = home / ".venv" / "bin" / "python"
     python = str(venv_python) if os.access(venv_python, os.X_OK) else "python3"
 
+    pid_file = Path(os.environ.get("ASSIST_PID_FILE", "/tmp/assist-server.pid"))
+    log_file = Path(os.environ.get("ASSIST_LOG_FILE", "/tmp/assist-server.log"))
+    control_dir = Path(os.environ.get("ASSIST_CONTROL_DIR", "/tmp/assist-park-v16"))
+    auth_token_path = Path(
+        os.environ.get("ASSIST_AUTH_TOKEN_PATH", str(home / "auth_token"))
+    )
+
     try:
-        token = (home / "auth_token").read_text(encoding="utf-8").strip()
+        token = auth_token_path.read_text(encoding="utf-8").strip()
     except (OSError, UnicodeError):
         token = None
 
@@ -217,4 +246,8 @@ def resolve(script_path: Path | None = None) -> Config:
         python=python,
         config_file=config_file,
         token=token,
+        pid_file=pid_file,
+        log_file=log_file,
+        control_dir=control_dir,
+        auth_token_path=auth_token_path,
     )

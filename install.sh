@@ -226,15 +226,15 @@ context_usage_is_fresh() {
     [[ $age -lt $STALE_AFTER_SEC ]]
 }
 
-# Prompt for replacement. Honors ASSIST_REPLACE_STATUSLINE=1 for non-interactive
-# runs and defaults to "no" when there's no TTY.
+# Prompt before changing statusLine. Honors ASSIST_REPLACE_STATUSLINE=1 for
+# non-interactive runs and defaults to "no" when there's no TTY.
 prompt_replace_statusline() {
     if [[ "${ASSIST_REPLACE_STATUSLINE:-0}" == "1" ]]; then
         echo "y"; return
     fi
     if [[ -t 0 ]]; then
         local ans=""
-        read -r -p "    Replace it with Assist's bin/statusline.sh? [y/N] " ans
+        read -r -p "    Set statusLine to Assist's bin/statusline.sh? [y/N] " ans
         echo "${ans:-n}"
     else
         echo "n"
@@ -252,10 +252,15 @@ else
         warn "could not parse $CLAUDE_SETTINGS — add statusLine manually:"
         warn "  \"statusLine\": {\"type\": \"command\", \"command\": \"$STATUSLINE_BIN\"}"
     elif [[ -z "$sl_cmd" ]]; then
-        # No statusLine — install ours.
-        write_assist_statusline
-        ok "added statusLine to $CLAUDE_SETTINGS"
-        ok "  using $STATUSLINE_BIN"
+        # No statusLine — offer ours, but never edit Claude settings silently.
+        ans="$(prompt_replace_statusline)"
+        if [[ "$ans" == "y" || "$ans" == "Y" ]]; then
+            write_assist_statusline
+            ok "added statusLine to $CLAUDE_SETTINGS"
+            ok "  using $STATUSLINE_BIN"
+        else
+            warn "skipped statusLine setup — the Assist 'i' button needs a compatible statusLine"
+        fi
     elif [[ "$sl_cmd" == "$STATUSLINE_BIN" ]]; then
         ok "Claude Code statusLine already set to Assist's bin/statusline.sh"
     else

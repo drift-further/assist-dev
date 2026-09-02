@@ -24,6 +24,7 @@ auth_token
 
 # Environment
 .env
+.env.bak*
 
 # Logs
 *.log
@@ -35,7 +36,8 @@ auth_token
 *.swo
 
 # Local dev tooling state
-.claude/
+.claude/*
+!.claude/rules/
 .superpowers/
 .playwright-mcp/
 sessions/
@@ -53,3 +55,19 @@ docs/archive/ACTIVE_CONTEXT-*.md
 /doc-*.md
 /opencode-feedback-*.md
 /sol-review-*.md
+/.assist-launch-provenance-v1/
+/.assist-launch-provenance-v1-initialization.json
+
+# Maintainer-only design process and audit artifacts
+/design/topnav-2026/
+/design/assist-dev-icon-options/browser-preview.html
+/design/assist-dev-icon-options/icon-directions.md
+/design/assist-dev-icon-options/assist-dev-icon-a-prompt-spark.png
+/design/assist-dev-icon-options/assist-dev-icon-d-bracket-agent.png
+/design/assist-dev-icon-options/assist-dev-icon-options-board.png
+/HARDENING-REPORT.md
+/docs/audits/2026-07-30-dead-code-audit.md
+/docs/dead-code-cursor-report.md
+/docs/TIERED_DOCUMENTATION_GUIDE.md
+/.doc-librarian.yml
+/icons/assist-dev-d.png

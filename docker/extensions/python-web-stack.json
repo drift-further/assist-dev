@@ -1,0 +1,12 @@
+{
+  "id": "python-web-stack",
+  "name": "Python Web and PostgreSQL Tools",
+  "builtin": true,
+  "archive": null,
+  "install": [
+    "pip install --break-system-packages psycopg2-binary fastapi uvicorn httpx beautifulsoup4 pyyaml"
+  ],
+  "env": {},
+  "path_add": null,
+  "enabled": false
+}

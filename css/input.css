@@ -116,28 +116,6 @@
 .action-btn:active { transform: scale(0.96); }
 .btn-paste { color: var(--green); border-color: rgba(0, 255, 65, 0.4); }
 .btn-paste:active { background: rgba(0, 255, 65, 0.15); box-shadow: 0 0 16px rgba(0, 255, 65, 0.3); }
-.btn-sudo-send {
-    color: var(--red); border-color: rgba(255, 0, 64, 0.4);
-    position: relative; overflow: hidden;
-}
-.btn-sudo-send:active { background: rgba(255, 0, 64, 0.15); box-shadow: 0 0 16px rgba(255, 0, 64, 0.3); }
-.btn-sudo-send.sudo-detected {
-    color: var(--green); border-color: rgba(0, 255, 65, 0.5);
-    animation: sudo-detect-pulse 1.5s ease-in-out infinite;
-}
-.btn-sudo-send.sudo-tapping-1 { color: var(--amber); border-color: rgba(255, 149, 0, 0.6); }
-.btn-sudo-send.sudo-tapping-2 { color: #ff7700; border-color: rgba(255, 119, 0, 0.6); }
-.sudo-prog {
-    display: block; position: absolute; bottom: 0; left: 0;
-    height: 3px; background: currentColor; width: 0%;
-    transition: width 0.1s ease; opacity: 0.8;
-}
-.btn-sudo-send.sudo-tapping-1 .sudo-prog { width: 33%; }
-.btn-sudo-send.sudo-tapping-2 .sudo-prog { width: 67%; }
-@keyframes sudo-detect-pulse {
-    0%, 100% { box-shadow: 0 0 4px rgba(0, 255, 65, 0.2); }
-    50% { box-shadow: 0 0 14px rgba(0, 255, 65, 0.7); }
-}
 .btn-upload { color: var(--amber); border-color: rgba(255, 149, 0, 0.4); }
 .btn-upload:active { background: rgba(255, 149, 0, 0.15); box-shadow: 0 0 16px rgba(255, 149, 0, 0.3); }
 
@@ -173,6 +151,24 @@
     background: currentColor;
     transform: rotate(-20deg);
 }
+
+/* One compact slot in the existing row, never a new mobile band. It exists only
+   while the active pane is waiting for the matching vault entry. The visible
+   handle needs a little more than the old one-glyph key, but still shares the
+   same 44px-high row on a phone. */
+.btn-vault {
+    flex: 0 0 auto;
+    min-width: 54px;
+    padding: 0 7px;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    text-transform: none;
+    color: var(--purple);
+    border-color: rgba(191, 90, 242, 0.55);
+    background: rgba(191, 90, 242, 0.1);
+}
+.btn-vault.hidden { display: none; }
+.btn-vault:active { background: rgba(191, 90, 242, 0.24); }
 
 /* File attach bar */
 /* One chip per attached file, scrolling sideways so N files never cost a second
@@ -218,4 +214,41 @@
 .route-dot.tmux { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
 .route-dot.desktop { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
 .route-label { font-size: 9px; font-weight: 500; letter-spacing: 1px; color: var(--text-dim); }
-.route-attach { font-size: 8px; color: var(--text-dim); opacity: 0.5; margin-left: auto; }
+/* The attach hint is a copy button: quiet at rest, legible the moment you
+   reach for it. Touch has no hover, so the dotted underline carries the
+   affordance there and :active does the confirming. */
+.route-attach {
+    font-family: inherit;
+    font-size: 9px;
+    color: var(--text-dim);
+    opacity: 0.55;
+    margin-left: auto;
+    padding: 3px 6px;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    border-bottom-style: dotted;
+    border-bottom-color: rgba(74, 106, 80, 0.6);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 0.15s, color 0.15s, background 0.15s, border-color 0.15s;
+    -webkit-tap-highlight-color: transparent;
+}
+.route-attach:empty { display: none; }
+.route-attach:hover, .route-attach:focus-visible {
+    opacity: 1;
+    color: var(--cyan);
+    background: rgba(0, 212, 255, 0.1);
+    border-color: rgba(0, 212, 255, 0.35);
+    outline: none;
+}
+.route-attach:active {
+    background: rgba(0, 212, 255, 0.18);
+    transform: scale(0.97);
+}
+.route-attach.copied {
+    opacity: 1;
+    color: var(--green);
+    background: rgba(0, 255, 65, 0.12);
+    border-color: rgba(0, 255, 65, 0.4);
+}

@@ -56,20 +56,37 @@ function updateRouteIndicator() {
         routeDot.className = 'route-dot tmux';
         routeLabel.textContent = 'tmux \u2192 ' + name;
         routeLabel.style.color = 'var(--cyan)';
-        routeAttach.textContent = '\u2192 tmux attach -t ' + session;
+        const cmd = 'tmux attach -t ' + session;
+        routeAttach.textContent = '\u2192 ' + cmd;
+        routeAttach.dataset.cmd = cmd;
+        routeAttach.title = 'Copy: ' + cmd;
     } else {
         routeDot.className = 'route-dot desktop';
         routeLabel.textContent = 'Desktop (focused window)';
         routeLabel.style.color = 'var(--text-dim)';
         routeAttach.textContent = '';
+        delete routeAttach.dataset.cmd;
+        routeAttach.removeAttribute('title');
+    }
+}
+
+// Copies the bare command, not the displayed arrow prefix — it goes straight
+// into a shell.
+function copyAttachCommand() {
+    const cmd = routeAttach.dataset.cmd;
+    if (!cmd) return;
+    if (copyToClipboard(cmd)) {
+        showFlash('copied', 'Copied \u2014 ' + cmd);
+        routeAttach.classList.add('copied');
+        setTimeout(() => routeAttach.classList.remove('copied'), 1200);
+    } else {
+        showFlash('error', 'Copy failed');
     }
 }
 
 // ================================================================
 // Health check + status time
 // ================================================================
-// checkHealth is now handled by consolidatedPoll() in app.js
-
 function updateStatusTime() {
     if (!lastAction) {
         statusTime.textContent = '';
@@ -83,7 +100,7 @@ function updateStatusTime() {
 }
 
 // ================================================================
-// Session state polling — now handled by consolidatedPoll() in app.js
+// Completion notifications
 // ================================================================
 
 function sendDoneNotification(session) {
@@ -106,8 +123,6 @@ function requestNotifPermission() {
         Notification.requestPermission().then(p => { _notifPermission = p; });
     }
 }
-
-// scanAllSessionsForPrompts — now handled by consolidatedPoll() in app.js
 
 function sendPromptNotification(session, detected) {
     if (_notifPermission !== 'granted') return;
@@ -237,7 +252,7 @@ async function automateRun() {
             // kept feeding the previous pane and the new pane never updated.
             if (data.target) {
                 await loadSessions();
-                selectTab(data.target);
+                selectTab(data.target, true);   // automatic, not a tap — see selectTab
             }
         } else {
             showFlash('error', data.error || 'Failed to start');
@@ -471,21 +486,27 @@ function _projRow(label, control) {
 
 function _projStepper(section, key, val, min, max, unit) {
     return `<div class="proj-stepper">
-        <button class="proj-step-btn" onclick="projStep('${section}','${key}',-1,${min},${max})">-</button>
+        <button class="proj-step-btn" data-proj-action="step"
+                data-section="${escHtml(section)}" data-key="${escHtml(key)}"
+                data-delta="-1" data-min="${min}" data-max="${max}">-</button>
         <span class="proj-step-val" id="proj-${section}-${key}">${val}</span>
         <span class="proj-step-unit">${unit}</span>
-        <button class="proj-step-btn" onclick="projStep('${section}','${key}',1,${min},${max})">+</button>
+        <button class="proj-step-btn" data-proj-action="step"
+                data-section="${escHtml(section)}" data-key="${escHtml(key)}"
+                data-delta="1" data-min="${min}" data-max="${max}">+</button>
     </div>`;
 }
 
 function _projToggle(section, key, active) {
     const cls = active ? 'proj-tog active' : 'proj-tog';
-    return `<button class="${cls}" id="proj-${section}-${key}" onclick="projToggle('${section}','${key}')">${active ? 'ON' : 'OFF'}</button>`;
+    return `<button class="${cls}" id="proj-${section}-${key}" data-proj-action="toggle"
+            data-section="${escHtml(section)}" data-key="${escHtml(key)}">${active ? 'ON' : 'OFF'}</button>`;
 }
 
 function _projTextInput(section, key, val) {
     return `<input class="proj-text" id="proj-${section}-${key}" value="${escHtml(val)}"
-        onblur="projTextSave('${section}','${key}',this.value)" placeholder="signal1, signal2">`;
+        data-proj-action="text" data-section="${escHtml(section)}"
+        data-key="${escHtml(key)}" placeholder="signal1, signal2">`;
 }
 
 async function _saveProjectSetting(section, key, value) {
@@ -550,6 +571,31 @@ function toggleProjectSettings() {
 }
 
 function _initProjectSettingsAutoSave() {
+    const projectBody = document.getElementById('auto-proj-body');
+    if (projectBody) {
+        projectBody.addEventListener('click', (e) => {
+            const control = e.target.closest('[data-proj-action]');
+            if (!control || !projectBody.contains(control)) return;
+            if (control.dataset.projAction === 'step') {
+                projStep(
+                    control.dataset.section,
+                    control.dataset.key,
+                    parseInt(control.dataset.delta, 10),
+                    parseInt(control.dataset.min, 10),
+                    parseInt(control.dataset.max, 10)
+                );
+            } else if (control.dataset.projAction === 'toggle') {
+                projToggle(control.dataset.section, control.dataset.key);
+            }
+        });
+        projectBody.addEventListener('focusout', (e) => {
+            const control = e.target.closest('[data-proj-action="text"]');
+            if (control && projectBody.contains(control)) {
+                projTextSave(control.dataset.section, control.dataset.key, control.value);
+            }
+        });
+    }
+
     const timeoutEl = document.getElementById('auto-timeout');
     if (timeoutEl) {
         timeoutEl.addEventListener('change', () => {

@@ -111,6 +111,35 @@
     background: rgba(191, 90, 242, 0.22);
     box-shadow: 0 0 8px rgba(191, 90, 242, 0.35);
 }
+.btn-actions {
+    height: 40px;
+    min-height: 40px;
+    min-width: 76px;
+    padding: 0 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    flex: 0 0 auto;
+    color: var(--green);
+    border: 1px solid rgba(0, 255, 65, 0.38);
+    border-radius: 5px;
+    background: rgba(0, 255, 65, 0.06);
+    font-family: var(--font);
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.6px;
+    cursor: pointer;
+    white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+}
+.btn-actions:active { background: rgba(0, 255, 65, 0.15); }
+.btn-actions.active {
+    color: var(--bg);
+    border-color: var(--green);
+    background: var(--green);
+}
+.actions-menu-bars { font-size: 12px; line-height: 1; }
 /* Not a clock — js/monitor.js:updateStatusTime() writes "12s ago" for the last
    poll activity, and empties it when there is none. A liveness readout that
    costs zero width while everything is fresh. */
@@ -132,6 +161,20 @@
        word goes, leaving the diamond. */
     .status-studio { min-width: 40px; padding: 0; }
     .status-studio .studio-label { display: none; }
+}
+
+/* On desktop the Studio trigger is the context lane between connection state
+   and the fixed-width Actions trigger. Its behavior and badge are unchanged;
+   effort-aware copy belongs to the separate Studio drawer effort. */
+@media (min-width: 601px) {
+    .chrome-spacer { flex: 0 0 24px; }
+    .status-studio {
+        min-width: 0;
+        flex: 1 1 auto;
+        justify-content: flex-start;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
 }
 
 @media (min-width: 900px) {

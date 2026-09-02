@@ -478,6 +478,40 @@
 }
 .settings-stepper-btn:active { background: rgba(0, 255, 65, 0.2); transform: scale(0.9); }
 
+.settings-vault-warning,
+.settings-vault-empty {
+    padding: 5px 4px 8px;
+    color: var(--amber);
+    font-size: 10px;
+    line-height: 1.4;
+}
+.settings-vault-empty { color: var(--text-dim); }
+.settings-vault-row { gap: 8px; }
+.settings-vault-handle { color: var(--purple); }
+.settings-vault-stored {
+    color: var(--green);
+    font-size: 9px;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+}
+.settings-vault-forget,
+.settings-vault-forget-all {
+    padding: 5px 8px;
+    background: transparent;
+    border: 1px solid rgba(255, 0, 64, 0.45);
+    color: var(--red);
+    font-family: var(--font);
+    font-size: 10px;
+    cursor: pointer;
+}
+.settings-vault-forget-all {
+    width: 100%;
+    margin-top: 8px;
+    padding: 8px;
+}
+.settings-vault-forget:active,
+.settings-vault-forget-all:active { background: rgba(255, 0, 64, 0.12); }
+
 .settings-footer {
     text-align: center; padding-top: 8px; margin-top: 4px;
     border-top: 1px solid var(--border);

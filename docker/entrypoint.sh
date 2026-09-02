@@ -2,7 +2,7 @@
 
 echo "🔧 Initializing Claude Code environment with Host Tools..."
 
-# CLI proxy: link the host-CLI shim to its configured command name (e.g. `karen`).
+# CLI proxy: link the host-CLI shim to its configured command name (e.g. `mycli`).
 # Normally baked at image build (Dockerfile, via the CLI_PROXY_NAME build-arg), but
 # re-link here at startup too — so an image built without that arg still exposes the
 # command instead of silently dropping it. Runs as root before the su to developer.

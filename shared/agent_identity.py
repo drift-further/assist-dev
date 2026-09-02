@@ -76,13 +76,15 @@ def _stat_fields(pid):
     if close < 0:
         raise ValueError("malformed /proc stat")
     fields = raw[close + 2 :].split()
-    return int(fields[1]), fields[19]
+    if len(fields) <= 19:
+        raise ValueError("malformed /proc stat")
+    return fields[0], int(fields[1]), fields[19]
 
 
 def _proc_start_time(pid):
     try:
         if os.path.isdir("/proc"):
-            _ppid, start_time = _stat_fields(int(pid))
+            _state, _ppid, start_time = _stat_fields(int(pid))
             return start_time
         proc = subprocess.run(
             ["ps", "-o", "lstart=", "-p", str(int(pid))],
@@ -183,7 +185,7 @@ def _build_process_snapshot(now):
             continue
         try:
             pid = int(entry)
-            ppid, start_time = _stat_fields(pid)
+            _state, ppid, start_time = _stat_fields(pid)
             children.setdefault(ppid, []).append(pid)
             start_times[pid] = start_time
         except (OSError, ValueError, IndexError):

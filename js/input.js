@@ -1,4 +1,4 @@
-// input.js — Paste, copy, key, type, file upload, clipboard image, sudo password, insert mode
+// input.js — Paste, copy, key, type, file upload, clipboard image, password-prompt detection, insert mode
 
 // ================================================================
 // Clipboard Image Paste — intercept paste events with image data
@@ -18,6 +18,16 @@ function initClipboardImagePaste() {
         }
         // No image — let normal text paste through
     });
+
+    const attachBar = document.getElementById('attach-bar');
+    if (attachBar) {
+        attachBar.addEventListener('click', function(e) {
+            const button = e.target.closest('[data-attach-remove]');
+            if (button && attachBar.contains(button)) {
+                removeAttachment(button.dataset.attachRemove);
+            }
+        });
+    }
 }
 
 function handleClipboardImage(blob) {
@@ -92,7 +102,7 @@ function renderAttachments() {
         <span class="attach-chip${a.uploading ? ' uploading' : ''}">
             <span class="attach-chip-name">&#128206; ${escHtml(a.name)}</span>
             <span class="attach-chip-size">${a.uploading ? '…' : formatFileSize(a.size)}</span>
-            <button class="attach-remove" onclick="removeAttachment('${a.id}')"
+            <button class="attach-remove" data-attach-remove="${escHtml(a.id)}"
                     aria-label="Remove ${escHtml(a.name)}">&times;</button>
         </span>`).join('');
     bar.classList.add('visible');
@@ -106,7 +116,21 @@ async function doPaste() {
     // but the composer still belongs to the tab on screen.
     const draftTarget = (typeof _draftTarget === 'function') ? _draftTarget() : '';
     if (typeof draftCancelPendingSave === 'function') draftCancelPendingSave(draftTarget);
-    const raw = input.value.replace(/\r/g, '').replace(/\n+$/, '').trim();
+    // A password prompt is waiting, so what was typed is an answer to it, not a
+    // prompt for an agent: send it byte-for-byte. trim() would eat a leading or
+    // trailing space, and the server's conveniences (first-word case fix, [handle]
+    // expansion, history) each rewrite or leak a password — `secret` turns them off.
+    // Attachments mean this is an ordinary message, so it can never be a secret.
+    // This legacy detector reads the main pane even when input routing points at
+    // a split. In the F2 direction (main prompt, ordinary split) that only gives
+    // user-typed text the stricter secret posture; unlike the vault key, this
+    // path never selects and injects a stored value on the user's behalf.
+    const hasAttachments = !!_attachments.length;
+    let secret = !hasAttachments
+        && typeof _isPasswordPrompt === 'function'
+        && _isPasswordPrompt();
+    const typed = input.value.replace(/\r/g, '').replace(/\n+$/, '');
+    const raw = secret ? typed : typed.trim();
     if (_attachments.some(a => a.uploading)) {
         showFlash('uploading', 'Still uploading…');
         return;
@@ -126,13 +150,39 @@ async function doPaste() {
     // Step 1: append one @ref per attachment. They uploaded when they were
     // attached, and the guard above already refused to send while any are still
     // in flight, so every entry here has a path.
-    if (_attachments.length) {
+    if (hasAttachments) {
         const refs = _attachments.map(a => '@' + a.path).join(' ');
         finalText = raw ? raw + ' ' + refs : refs;
         clearAttachments();
     }
 
-    // Step 2: send combined text
+    // Step 2: resolve browser-only vault tokens at the last possible moment.
+    // Resolution and the secret posture are one decision: once even one handle
+    // resolves, no pane heuristic may put the value through expansion/history.
+    // Attachments keep the whole message ordinary and every vault token literal.
+    let expand = !secret;
+    let vaultSentLiterally = false;
+    let vaultLiteralNotice = 'Vault token sent literally';
+    if (hasAttachments && typeof vaultScan === 'function') {
+        const vaultResult = vaultScan(finalText);
+        vaultSentLiterally = !!(vaultResult.used.length || vaultResult.missing.length);
+    } else if (!hasAttachments && typeof vaultResolve === 'function') {
+        const vaultResult = vaultResolve(finalText);
+        if (vaultResult.used.length) {
+            finalText = vaultResult.text;
+            [secret, expand] = [true, false];
+        }
+        if (vaultResult.missing.length) {
+            vaultSentLiterally = true;
+            if (vaultResult.state === 'locked') {
+                vaultLiteralNotice = 'Vault locked · token sent literally';
+            } else if (vaultResult.state === 'unavailable') {
+                vaultLiteralNotice = 'Vault unavailable · token sent literally';
+            }
+        }
+    }
+
+    // Step 3: send combined text
     try {
         const resp = await fetch('/type', {
             method: 'POST',
@@ -140,13 +190,19 @@ async function doPaste() {
             // expand:true is what turns [handle] into its segment body. Only the
             // composer opts in — the quick-action command buttons POST here too and
             // must keep sending shell text byte-for-byte.
-            body: JSON.stringify({text: finalText, enter: true, expand: true, target: getInputTarget()}),
+            body: JSON.stringify({text: finalText, enter: true, expand: expand,
+                                  secret: secret, target: getInputTarget()}),
         });
         const data = await resp.json();
         if (data.ok) {
-            const grew = data.sent_chars && data.sent_chars > finalText.length;
-            showFlash('sent', grew ? 'Sent · ' + data.sent_chars + ' ch'
-                                   : (data.via === 'tmux' ? 'Sent (tmux)' : 'Sent!'));
+            const grew = !secret && data.sent_chars && data.sent_chars > finalText.length;
+            if (vaultSentLiterally) {
+                showFlash('uploading', vaultLiteralNotice);
+            } else {
+                showFlash('sent', secret ? 'Password sent'
+                                         : (grew ? 'Sent · ' + data.sent_chars + ' ch'
+                                                 : (data.via === 'tmux' ? 'Sent (tmux)' : 'Sent!')));
+            }
             lastAction = Date.now();
             updateStatusTime();
             loadHistory();
@@ -156,12 +212,18 @@ async function doPaste() {
         } else {
             showFlash('error', data.error || 'Failed');
             input.value = raw;
-            if (typeof saveDraftSoon === 'function') saveDraftSoon();
+            // Assigning .value does not fire the input event that owns the chip
+            // strip, so restore the derived UI from the same token text too.
+            if (typeof renderSegChips === 'function') renderSegChips();
+            // Put it back so a failed send is not lost, but never persist a
+            // password to the server-side draft store.
+            if (!secret && typeof saveDraftSoon === 'function') saveDraftSoon();
         }
     } catch (e) {
         showFlash('error', 'Offline');
         input.value = raw;
-        if (typeof saveDraftSoon === 'function') saveDraftSoon();
+        if (typeof renderSegChips === 'function') renderSegChips();
+        if (!secret && typeof saveDraftSoon === 'function') saveDraftSoon();
     } finally {
         _sending = false;
     }
@@ -287,151 +349,38 @@ async function typePrefix(ch) {
 }
 
 // ================================================================
-// Sudo Password — stored server-side only; the client never sees it
+// Password prompts — detected so manual typing and the optional browser-local
+// vault both use the byte-exact secret path. Storage itself lives in vault.js.
 // ================================================================
-let _sudoHasPassword = false;
+// Any pane waiting on a typed secret, not just sudo's. Deliberately WIDE: it
+// only ever suppresses the composer's text conveniences, so a false positive
+// costs one un-expanded, un-recorded send and nothing else. (It used to have a
+// narrow sibling, _isSudoDetected(), gating a STORED sudo password — that
+// password and everything that read it are gone; see routes/input.py.)
+//
+// OpenSSH is the case that matters and the one a sudo-shaped matcher misses: its
+// prompt is "user@host's password: " — lowercase p, no "password for". So a password
+// typed at an ssh prompt went through trim + fix_first_word_case + [handle]
+// expansion + history like an ordinary message.
+//
+// Covered, all as the last non-empty line:
+//   [sudo] password for user:
+//   user@host's password:
+//   Enter passphrase for key '/home/user/.ssh/id_ed25519':
+//   Password:  /  Enter password:
+// Not matched: "Permission denied (publickey,password)." — no trailing colon.
+//
+// Mirrors shared/tmux.py:PASSWORD_PROMPT_RE, which /type applies to the live pane
+// when a caller does not set `secret`. This copy is the fast path — it also
+// suppresses the trim and the draft write, which happen before any request — but
+// it reads _termLatestContent, frozen while streaming is paused, so the server
+// re-checks rather than trusting a missing flag.
+const _PASSWORD_PROMPT_RE = /(?:^|[\s'"])(?:password|passphrase)(?:\s+for\b[^:]*)?:\s*$/i;
 
-async function initSudoButton() {
-    const btn = document.getElementById('btn-sudo');
-    try {
-        const resp = await fetch('/sudo-password');
-        const data = await resp.json();
-        _sudoHasPassword = !!data.has_password;
-        if (!_sudoHasPassword) {
-            // Migrate a legacy localStorage password to the server, then drop it
-            const local = localStorage.getItem('assist_sudo_pw');
-            if (local) {
-                _sudoHasPassword = true;
-                fetch('/sudo-password', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ password: local }),
-                }).catch(() => {});
-            }
-        }
-    } catch (e) {
-        _sudoHasPassword = false;
-    }
-    // Never keep the password client-side
-    localStorage.removeItem('assist_sudo_pw');
-    if (_sudoHasPassword) {
-        btn.classList.add('has-pw');
-        btn.innerHTML = '&#128275;'; // open lock
-    }
-}
-
-async function toggleSudoPassword() {
-    const btn = document.getElementById('btn-sudo');
-    if (_sudoHasPassword) {
-        if (confirm('Clear stored sudo password?')) {
-            _sudoHasPassword = false;
-            localStorage.removeItem('assist_sudo_pw');
-            fetch('/sudo-password', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ clear: true }),
-            }).catch(() => {});
-            btn.classList.remove('has-pw');
-            btn.innerHTML = '&#128274;'; // closed lock
-            showFlash('sent', 'Password cleared');
-        }
-    } else {
-        const pw = prompt('Enter sudo password (stored on server):');
-        if (pw) {
-            try {
-                await fetch('/sudo-password', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ password: pw }),
-                });
-            } catch (e) {}
-            _sudoHasPassword = true;
-            btn.classList.add('has-pw');
-            btn.innerHTML = '&#128275;'; // open lock
-            showFlash('sent', 'Password stored');
-        }
-    }
-}
-
-// ================================================================
-// Sudo Send Button — bottom bar, replaces COPY
-// 1-tap when sudo prompt detected; 3-tap within 5s otherwise
-// ================================================================
-let _sudoTapCount = 0;
-let _sudoTapTimer = null;
-const _SUDO_TAP_WINDOW = 5000;
-const _SUDO_TAP_REQUIRED = 3;
-
-function _isSudoDetected() {
+function _isPasswordPrompt() {
     if (!_termLatestContent) return false;
     const tail = stripAnsi(_termLatestContent).split('\n').slice(-20).join('\n');
-    return /\[sudo\] password for/.test(tail) ||
-           /Password:\s*$/.test(tail.trimEnd()) ||
-           /password for .+:\s*$/.test(tail.trimEnd());
-}
-
-function _updateSudoSendBtn() {
-    const btn = document.getElementById('btn-sudo-send');
-    if (!btn) return;
-    const detected = _sudoTapCount === 0 && _isSudoDetected();
-    btn.classList.toggle('sudo-detected', detected);
-    btn.classList.toggle('sudo-tapping-1', _sudoTapCount === 1);
-    btn.classList.toggle('sudo-tapping-2', _sudoTapCount === 2);
-}
-
-function _resetSudoTap() {
-    _sudoTapCount = 0;
-    if (_sudoTapTimer) { clearTimeout(_sudoTapTimer); _sudoTapTimer = null; }
-    _updateSudoSendBtn();
-}
-
-async function _sendSudoPasswordToTerminal(target = getInputTarget()) {
-    // Server reads the stored password and types it into the pane \u2014
-    // the password never travels to the browser or into history.
-    try {
-        const resp = await fetch('/sudo-send', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ target }),
-        });
-        const data = await resp.json();
-        if (data.ok) {
-            showFlash('sent', 'Sudo sent');
-            return true;
-        } else {
-            showFlash('error', data.error || 'Failed');
-        }
-    } catch (e) {
-        showFlash('error', 'Offline');
-    }
-    return false;
-}
-
-async function doSudoSend() {
-    if (!_sudoHasPassword) {
-        showFlash('error', 'No password (use \uD83D\uDD12 to set)');
-        return;
-    }
-
-    // Single-tap mode when sudo prompt is visible in terminal
-    if (_isSudoDetected()) {
-        await _sendSudoPasswordToTerminal();
-        _resetSudoTap();
-        return;
-    }
-
-    // Triple-tap mode: require 3 taps within 5 seconds
-    _sudoTapCount++;
-    if (_sudoTapTimer) clearTimeout(_sudoTapTimer);
-
-    if (_sudoTapCount >= _SUDO_TAP_REQUIRED) {
-        await _sendSudoPasswordToTerminal();
-        _resetSudoTap();
-        return;
-    }
-
-    _updateSudoSendBtn();
-    _sudoTapTimer = setTimeout(() => _resetSudoTap(), _SUDO_TAP_WINDOW);
+    return _PASSWORD_PROMPT_RE.test(_lastNonEmptyLine(tail));
 }
 
 async function sendInsertMode() {

@@ -29,9 +29,6 @@ RUN apt-get purge -y docker docker-engine docker.io containerd runc 2>/dev/null 
 RUN ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python && \
     ln -sf /usr/bin/pip${PYTHON_VERSION} /usr/bin/pip 2>/dev/null || true
 
-# Base Python packages
-RUN pip install --break-system-packages psycopg2-binary fastapi uvicorn httpx beautifulsoup4 pyyaml
-
 # Additional global pip packages (from container config)
 RUN if [ -n "$PIP_PACKAGES" ]; then pip install --break-system-packages $PIP_PACKAGES; fi
 
@@ -44,10 +41,9 @@ WORKDIR /workspace
 
 # Copy scripts
 COPY entrypoint.sh /entrypoint.sh
-COPY scripts/link-agents.sh /link-agents.sh
 COPY scripts/claude-statusline.sh /usr/local/bin/claude-statusline
 COPY scripts/cli-proxy.sh /usr/local/share/assist/cli-proxy.sh
-RUN chmod +x /entrypoint.sh /link-agents.sh /usr/local/bin/claude-statusline /usr/local/share/assist/cli-proxy.sh && \
+RUN chmod +x /entrypoint.sh /usr/local/bin/claude-statusline /usr/local/share/assist/cli-proxy.sh && \
     if [ -n "$CLI_PROXY_NAME" ]; then \
         ln -sf /usr/local/share/assist/cli-proxy.sh "/usr/local/bin/${CLI_PROXY_NAME}"; \
     fi

@@ -1,9 +1,10 @@
 """Shared-secret auth for Assist.
 
 Every endpoint here can start a process in a live tmux pane — /api/commands/run
-takes an arbitrary command string by design, because the commands are ones the
-user authored themselves. That makes the trust boundary, not input validation,
-the thing that has to hold: anyone who can reach the port can run anything.
+takes an arbitrary command string by design, including saved commands that a
+user or an agent may have written into `.assist-commands.json`. That makes the
+trust boundary, not input validation, the thing that has to hold: anyone who
+can reach the port can run anything.
 
 A single shared secret gates the whole app. It is generated on first start and
 written to `auth_token` beside the code (0600, gitignored), so a fresh install
@@ -11,9 +12,10 @@ needs no configuration step — the operator reads it out of the file or the
 startup log once and logs in from the phone.
 
 The browser never stores the raw token. It gets a cookie holding an HMAC of it,
-which is what the server compares against; a token presented directly (header or
-query string, for curl and the container CLI proxy) is compared to the real
-value. Both comparisons are constant-time.
+which is what the server compares against; a token presented directly — in the
+`X-Assist-Token` header, for curl and the CLI — is compared to the real value.
+Both comparisons are constant-time. The header is the only accepted carrier for
+the raw secret: see request_authenticated() for why a query string is not.
 
 A second way in exists for onboarding: a temporary open-access window. It is
 not an auth bypass — it admits one client from a configured LAN range to `GET
@@ -26,6 +28,7 @@ import ipaddress
 import math
 import os
 import secrets
+import sys
 import threading
 import time
 from hashlib import sha256
@@ -39,7 +42,12 @@ HEADER_NAME = "X-Assist-Token"
 # restarting — every issued cookie stops matching, because the HMAC key changed.
 COOKIE_MAX_AGE = 10 * 365 * 24 * 3600
 
-_TOKEN_PATH = Path(__file__).resolve().parent.parent / "auth_token"
+_TOKEN_PATH = Path(
+    os.environ.get(
+        "ASSIST_AUTH_TOKEN_PATH",
+        str(Path(__file__).resolve().parent.parent / "auth_token"),
+    )
+).resolve()
 _token_cache = None
 
 # Open-access window. `_window_deadline` is a time.monotonic() value so a clock
@@ -82,17 +90,40 @@ def get_token():
     return _token_cache
 
 
+def print_startup_token_notice(output=None):
+    """Print the token only to an interactive terminal; otherwise print its path."""
+    destination = output if output is not None else sys.stdout
+    token = get_token()
+    if bool(getattr(destination, "isatty", lambda: False)()):
+        message = f"[assist] auth token: {token}  (file: {_TOKEN_PATH})"
+    else:
+        message = f"[assist] auth token file: {_TOKEN_PATH}"
+    print(message, file=destination, flush=True)
+
+
 def cookie_value():
     """The value a logged-in browser holds — a derivative, not the secret."""
     return hmac.new(get_token().encode(), b"assist-auth-v1", sha256).hexdigest()
 
 
 def request_authenticated(request):
-    """True if this request carries a valid cookie or the token itself."""
+    """True if this request carries a valid cookie or the token itself.
+
+    Header only for the raw token — never a `?token=` query parameter. A URL is
+    the one place a credential gets copied somewhere Assist does not control:
+    nginx writes the full request line to its access log, the browser keeps it
+    in history and in any bookmark or shared link, and it goes out in `Referer`
+    on the next outbound request. A header does none of that.
+
+    It was also actively misleading for the one job people reached for it:
+    `?token=` authenticates the HTML document and nothing it then loads, so a
+    page fetched that way renders unstyled while every stylesheet 401s. Use
+    `X-Assist-Token` on the request (or on the browser context, for Playwright).
+    """
     cookie = request.cookies.get(COOKIE_NAME)
     if cookie and hmac.compare_digest(cookie, cookie_value()):
         return True
-    presented = request.headers.get(HEADER_NAME) or request.args.get("token")
+    presented = request.headers.get(HEADER_NAME)
     if presented and hmac.compare_digest(presented, get_token()):
         return True
     return False

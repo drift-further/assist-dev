@@ -311,7 +311,6 @@ function _applySessionsData(panes, activeTarget) {
         if (p.agent_name) teamSessions.add(p.session);
     }
 
-    let prevSession = null;
     for (const p of panes) {
         const isAgent = !!p.agent_name;
         // Mirrors loadSessions() in terminal.js — keep the two in sync.
@@ -353,7 +352,6 @@ function _applySessionsData(panes, activeTarget) {
         tab.onclick = function() { selectTab(p.target); };
         if (p.target === current) tab.classList.add('active');
         container.appendChild(tab);
-        prevSession = p.session;
     }
 
     const hadTarget = !!_termTarget;
@@ -365,7 +363,7 @@ function _applySessionsData(panes, activeTarget) {
         // Mirrors loadSessions() in terminal.js — keep the two in sync.
         const sess = current.split(':')[0];
         const fallback = panes.find(p => p.session === sess) || panes[0];
-        selectTab(fallback.target);
+        selectTab(fallback.target, true);   // automatic, not a tap — see selectTab
         // selectTab covers markActiveTab/indicator/unhide; still run the
         // reorder hook on the freshly rebuilt strip before bailing out.
         if (typeof _postTabRender === 'function') _postTabRender();
@@ -509,7 +507,7 @@ function _applyScanData(scanPanes) {
         // A passive detection is an OFFER, not a question — nothing is waiting
         // on the human, so it must not badge the tab or fire a notification.
         // Without this, Claude Code's "claude --resume <uuid>" farewell keeps a
-        // dead pane's tab marked as needing input forever (gotcha 528).
+        // dead pane's tab marked as needing input forever.
         const detected = (raw && raw.passive) ? null : raw;
         const tab = document.querySelector(`.session-tab[data-target="${CSS.escape(pane.target)}"]`);
 
@@ -558,7 +556,20 @@ function _applyScanData(scanPanes) {
 // Startup
 // ================================================================
 function measureStatusBar() {
-    document.documentElement.style.setProperty('--status-bar-h', document.querySelector('.status-bar').offsetHeight + 'px');
+    // .status-bar generates no box while the wrapping rail is on
+    // (display: contents), so offsetHeight reads 0 and the left drawer plus the
+    // notification stack would ride up to y=0 over the tabs. There the whole
+    // chrome IS the status bar, so measure that instead. Keyed on the computed
+    // display rather than on a zero height, because zero is also what the
+    // collapsed default chrome reports — and that 0 is the value it has always
+    // published.
+    const bar = document.querySelector('.status-bar');
+    let h = bar ? bar.offsetHeight : 0;
+    if (bar && getComputedStyle(bar).display === 'contents') {
+        const chrome = document.querySelector('.top-chrome');
+        h = chrome ? chrome.offsetHeight : 0;
+    }
+    document.documentElement.style.setProperty('--status-bar-h', h + 'px');
 }
 measureStatusBar();
 document.fonts.ready.then(measureStatusBar);
@@ -566,7 +577,6 @@ document.fonts.ready.then(measureStatusBar);
 // Initial data load
 consolidatedPoll();
 loadHistory();
-initSudoButton();
 initClipboardImagePaste();
 requestNotifPermission();
 

@@ -24,6 +24,11 @@ let _draftInitFor = null;            // target the composer is currently showing
 // after you have already tapped the lock and quietly undo it, which is exactly
 // what a slow phone connection makes routine.
 let _draftSeq = {};
+// The text the SERVER is known to hold for the target on screen — set when this
+// module paints the composer from a draft, and again when a save is
+// acknowledged. Anything else in the box was typed by the user and has not been
+// persisted yet, which is the one thing a background write must never destroy.
+let _composerSynced = { target: null, text: '' };
 
 function _bumpDraftSeq(target) {
     if (!target) return 0;
@@ -57,9 +62,9 @@ function _draftHasContent(entry) {
 }
 
 // ================================================================
-// Marker on the tab (spec §6)
+// Marker on the tab
 // ================================================================
-// A CLASS, never a child node — gotcha 881: anything appended to .session-tab
+// A CLASS, never a child node: anything appended to .session-tab
 // is picked up by every consumer that recovers a label from textContent. The
 // marker is a ::after pseudo-element in css/input.css, which textContent cannot
 // see at all, so this cannot reproduce that bug.
@@ -80,9 +85,40 @@ function _renderDraftMarks() {
 // ================================================================
 // Composer <-> draft
 // ================================================================
-function _applyDraftToComposer(target) {
+// TYPING ALWAYS WINS. Every caller below is asynchronous — the first poll after
+// a page load, a GET landing, another device's edit, a draft the sweep dropped —
+// and each one used to write straight over whatever was in the box. Type while
+// one is in flight and the characters vanished; the first poll fires within a
+// second of load, which on a phone is exactly when you start typing.
+//
+// Switching TABS is not this case. There the text on screen belongs to the tab
+// you are leaving, selectTab has already captured and flushed it, and swapping
+// it out IS the point — so that one path passes force.
+function _composerHoldsUnsavedInput(target) {
+    const live = input.value;
+    if (!live) return false;   // nothing to lose
+    return !(_composerSynced.target === target && _composerSynced.text === live);
+}
+
+function _applyDraftToComposer(target, force) {
     const d = _draftEntry(target);
+    if (!force && _composerHoldsUnsavedInput(target)) {
+        // Keep what is on screen and ADOPT it as this tab's draft: claim the
+        // target so the poll stops calling this "first sight", then capture and
+        // persist, so the copy we just refused is overwritten rather than left
+        // to reappear on the next poll. The tray stays put too — it belongs
+        // with the text somebody is still typing.
+        const refused = (d.text || '').trim();
+        _draftInitFor = target;
+        _syncEnterLockUI();
+        saveDraftSoon(target);
+        if (refused && refused !== input.value.trim() && typeof showFlash === 'function') {
+            showFlash('ok', 'Kept what you typed');
+        }
+        return;
+    }
     input.value = d.text || '';
+    _composerSynced = { target: target, text: input.value };
     _attachments = (d.attachments || []).map(a => ({ ...a, uploading: false }));
     _draftInitFor = target;
     renderAttachments();
@@ -96,6 +132,11 @@ function _applyDraftToComposer(target) {
 // debounce happened to catch.
 function _draftCapture(target) {
     if (!target) return;
+    // A password prompt is on screen, so the composer holds a secret. Drafts are
+    // persisted server-side and restored on the next visit, so capturing here
+    // would leave the password in plaintext in the draft store and put it back in
+    // the composer later. Keep whatever was already cached and skip this capture.
+    if (typeof _isPasswordPrompt === 'function' && _isPasswordPrompt()) return;
     _draftCache[target] = {
         ..._draftEntry(target),
         text: input.value,
@@ -104,8 +145,11 @@ function _draftCapture(target) {
     _bumpDraftSeq(target);
 }
 
-function saveDraftSoon() {
-    const target = _draftTarget();
+// `target` defaults to the tab on screen. It is passed explicitly only when the
+// composer is being adopted by a tab _termTarget has not moved to yet — an
+// automatic switch, where selectTab calls in before it updates the target.
+function saveDraftSoon(target) {
+    target = target || _draftTarget();
     if (!target) return;
     _draftCapture(target);
     _draftDirtyFor = target;
@@ -138,6 +182,13 @@ async function flushDraft(target) {
         if (data.ok) {
             _draftCache[target] = data.draft;
             _draftRev[target] = data.draft.updated_at;
+            // The server now holds this text, so the composer is no longer
+            // carrying anything unsaved and a remote copy may replace it again.
+            // Still keyed on what is on screen: keystrokes made while the PUT
+            // was in flight leave the two different, and stay protected.
+            if (target === _draftTarget()) {
+                _composerSynced = { target: target, text: data.draft.text || '' };
+            }
             // Mark it here rather than waiting for the next poll to say so.
             // This is the tab you just switched AWAY from, so _renderDraftMarks()
             // no longer treats it as authoritative about itself — without this
@@ -150,10 +201,14 @@ async function flushDraft(target) {
     } catch (e) {}
 }
 
-async function loadDraft(target) {
+// `force` says this is a deliberate tab switch, so the composer may be replaced
+// even mid-word. It applies to the opening paint only — by the time the fetch
+// lands the user may be typing into the tab they just opened, and that typing is
+// protected like any other.
+async function loadDraft(target, force) {
     if (!target) return;
     // Paint the cached copy first so a tab switch is never a flash of empty.
-    _applyDraftToComposer(target);
+    _applyDraftToComposer(target, force);
     const seq = _draftSeq[target] || 0;
     try {
         const resp = await fetch('/api/draft?target=' + encodeURIComponent(target));
@@ -168,20 +223,23 @@ async function loadDraft(target) {
     } catch (e) {}
 }
 
-// Called from selectTab() BEFORE _termTarget moves.
-function onTabSwitchDraft(prevTarget, nextTarget) {
+// Called from selectTab() BEFORE _termTarget moves. `deliberate` is false when
+// the app moved the tab itself (dead-pane recovery, a session it just
+// launched) — then unsent text stays on screen and follows you, because nobody
+// chose to leave the tab it was written for.
+function onTabSwitchDraft(prevTarget, nextTarget, deliberate) {
     if (prevTarget === nextTarget) return;
     if (prevTarget) {
         _draftCapture(prevTarget);
         flushDraft(prevTarget);
     }
-    loadDraft(nextTarget);
+    loadDraft(nextTarget, deliberate !== false);
 }
 
 // A successful send clears text and tray but KEEPS the Enter lock: the lock is
 // a property of the tab, not of the message. The server drops the row entirely
 // when the lock is back to its armed default, so a plain tab still stores
-// nothing (spec §7).
+// nothing.
 // Called at the START of a send. A debounced save still armed for this target
 // would otherwise fire mid-flight and — since the two PUTs race — could land
 // AFTER the clear and resurrect as a draft the very text that was just sent.
@@ -204,7 +262,7 @@ async function clearDraftAfterSend(target) {
 }
 
 // ================================================================
-// Poll sync — markers, and the second-device case (spec §9.3)
+// Poll sync — markers, and the second-device case
 // ================================================================
 function _applyDraftsData(block) {
     if (!block) return;
@@ -233,7 +291,7 @@ function _applyDraftsData(block) {
 }
 
 // ================================================================
-// The Enter lock (spec §4) — three things move together or it lies on a phone
+// The Enter lock — three things move together or it lies on a phone
 // ================================================================
 // 1. app.js keydown stops calling doPaste() and lets Enter insert a newline
 // 2. app.js's 150ms IME poller goes FULLY INERT for this target — it currently
@@ -280,7 +338,9 @@ function toggleEnterLock() {
 // ================================================================
 // Wiring
 // ================================================================
-input.addEventListener('input', saveDraftSoon);
+// Wrapped, not passed by reference: saveDraftSoon takes an optional target and
+// a listener would hand it the Event.
+input.addEventListener('input', () => saveDraftSoon());
 input.addEventListener('blur', () => {
     const target = _draftTarget();
     if (target && _draftDirtyFor === target) {

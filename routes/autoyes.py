@@ -8,8 +8,9 @@ import time
 from flask import Blueprint, jsonify, request
 
 import shared.state as state
+from shared import execution_park as park
 from shared.agent_identity import AGENT_KINDS, refine_with_content, resolve_process
-from shared.tmux import tmux_send_keys, tmux_send_text
+from shared.tmux import expected_target_identity, generation_bound_delivery
 from routes.streaming import broadcast_autoyes_event
 
 log = logging.getLogger(__name__)
@@ -17,9 +18,38 @@ log = logging.getLogger(__name__)
 autoyes_bp = Blueprint("autoyes_bp", __name__)
 
 # Prompt patterns (server-side mirrors of JS SMART_PATTERNS)
-_PERMISSION_YNA_RE = re.compile(
-    r"\(y/n/a\)|\[Y/n/a\]|Allow once.*Always allow.*Deny"
-    r"|Yes.*\(y\).*Always.*\(a\).*No.*\(n\)",
+#
+# The y/n/a branch is split in two because its four original alternatives are
+# not equally trustworthy, and only the weak half needs the anchor.
+#
+# `(y/n/a)` and `[Y/n/a]` are seven characters. They appear in READMEs, in help
+# text, in `--help` output, and — the case that actually bit — in the source of
+# this very file, so an agent asked to read routes/autoyes.py printed a line
+# that made the scanner answer itself. A displayed marker is quoted INSIDE a
+# line; a live prompt is the last thing written before the cursor waits. So the
+# bare markers must end their line. `\s*$` is the same rule the package-manager
+# and ssh-host-key matchers below already use, and MULTILINE keeps it per-line
+# rather than per-window, so the whole `detection_depth` window still counts.
+#
+# NOT the last non-empty line, which is what confirm-yn requires: measured on
+# three live Claude Code panes on this host, the last non-empty rows are always
+# the status bar (context %, model, mode), so that rule would silently disable
+# this branch entirely — the exact failure mode that costs hours to notice.
+_PERMISSION_YNA_MARKER_RE = re.compile(
+    r"(?:\(y/n/a\)|\[Y/n/a\])\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+# The other two are whole option rows — three labelled choices in order on one
+# line. That shape does not occur by accident, so it keeps the wide window and
+# fires wherever in it a TUI chooses to draw its button row.
+#
+# The labels are joined with \s+, not .*, and that is the whole point: `.*`
+# also matched `Allow once.*Always allow.*Deny` — the regex source of this very
+# pattern, as printed by any agent asked to read this file. A rendered button
+# row separates its options with whitespace. _OPENCODE_PERMISSION_RE below has
+# always been written this way against a live capture; this is the same rule.
+_PERMISSION_YNA_DIALOG_RE = re.compile(
+    r"Allow once\s+Always allow\s+Deny" r"|Yes.*\(y\).*Always.*\(a\).*No.*\(n\)",
     re.IGNORECASE,
 )
 _CONFIRM_YN_RE = re.compile(r"\(y/n\)|\[Y/n\]|\[y/N\]|\(yes/no\)", re.IGNORECASE)
@@ -117,9 +147,9 @@ _NUMBERED_FOOTER_RE = re.compile(
 # fell outside the region, _NUMBERED_YES_RE missed, and auto-yes silently never
 # fired. The footer-distance gate below (depth*4) is what keeps stale prompts
 # out, so widening this window does not resurrect answered prompts.
-# Luna kill-switch. A codex pane running luna is NEVER auto-answered, however
-# the session's auto-yes toggle is set. Daniel's rule, 2026-08-10: whenever
-# 'luna' appears, auto-yes does not work for codex tabs.
+# Luna kill-switch. A Codex pane running Luna is never auto-answered, however
+# the session's auto-yes toggle is set. Whenever the model name appears,
+# auto-yes stays disabled for that Codex pane.
 #
 # Deliberately matched against the whole captured tail rather than the resolved
 # model, and deliberately word-boundaried rather than a bare substring: the
@@ -163,9 +193,7 @@ def _option_region_start(lines, footer_line, search_floor):
     for i in range(footer_line - 1, search_floor - 1, -1):
         if not _OPTION_SEP_RE.match(lines[i]):
             continue
-        count = sum(
-            1 for ln in lines[i + 1 : footer_line] if _OPTION_LINE_RE.match(ln)
-        )
+        count = sum(1 for ln in lines[i + 1 : footer_line] if _OPTION_LINE_RE.match(ln))
         if count >= 2:
             return i + 1
     return None
@@ -178,7 +206,10 @@ def _detect_autoyes_prompt(tail, agent_kind):
     lines = tail.split("\n")
     depth = state.get_setting("autoyes", "detection_depth")
     bottom = "\n".join(lines[-depth:])
-    if agent_kind == "claude" and _PERMISSION_YNA_RE.search(bottom):
+    if agent_kind == "claude" and (
+        _PERMISSION_YNA_MARKER_RE.search(bottom)
+        or _PERMISSION_YNA_DIALOG_RE.search(bottom)
+    ):
         return ("permission-yna", "y", False, _extract_summary(tail, "permission"))
     if (
         agent_kind == "opencode"
@@ -189,7 +220,7 @@ def _detect_autoyes_prompt(tail, agent_kind):
         return ("opencode-permission", "", True, _extract_summary(tail, "opencode"))
     # Cursor CLI dialogs use their own bottom windows — both are taller than the
     # generic detection depth (see the pattern definitions above).
-    cursor_bottom = "\n".join(lines[-max(depth, _CURSOR_PERMISSION_LINES):])
+    cursor_bottom = "\n".join(lines[-max(depth, _CURSOR_PERMISSION_LINES) :])
     if (
         agent_kind == "cursor"
         and _CURSOR_PERMISSION_HDR_RE.search(cursor_bottom)
@@ -198,7 +229,7 @@ def _detect_autoyes_prompt(tail, agent_kind):
         # "y" runs once, no Enter. (Tab would also allowlist the binary — that
         # is a smart-action choice, never an automatic one.)
         return ("cursor-permission", "y", False, _extract_summary(tail, "cursor"))
-    trust_bottom = "\n".join(lines[-max(depth, _CURSOR_TRUST_LINES):])
+    trust_bottom = "\n".join(lines[-max(depth, _CURSOR_TRUST_LINES) :])
     if (
         agent_kind == "cursor"
         and _CURSOR_TRUST_OPT_RE.search(trust_bottom)
@@ -252,7 +283,7 @@ def _detect_autoyes_prompt(tail, agent_kind):
                 # that as a question would silently stop auto-yes entirely.
                 if _has_internal_divider(lines, region_start, footer_line):
                     return None
-            region = "\n".join(lines[region_start:footer_line + 1])
+            region = "\n".join(lines[region_start : footer_line + 1])
             if _NUMBERED_YES_RE.search(region):
                 return ("numbered-yes", "", True, _extract_summary(tail, "numbered"))
             if _SELECTED_YES_RE.search(region):
@@ -416,27 +447,49 @@ def _prompt_hash(tail):
 
 
 def _clamp_delay(value):
-    """Clamp a requested auto-yes delay to [0.1, 30]s at 0.1s resolution."""
+    """Clamp a requested auto-yes delay to [0.1, 30]s at 0.1s resolution.
+
+    Raises on junk, which is what the HTTP setters want: they answer 400.
+    """
     return max(0.1, min(30.0, round(float(value), 1)))
+
+
+def _safe_delay(value):
+    """The same clamp, for a value read out of a settings file.
+
+    Every HTTP and CLI path into the delay is clamped, but the SCANNER reads
+    settings.json and project_settings.json directly, and those are edited by
+    hand and reachable through PATCH /api/settings, which validates key names
+    and never values. Two failures follow from trusting them:
+
+      * `0` (or a negative) means the countdown deadline is already in the past
+        when it is set, so the prompt is answered on the first tick with no
+        window to see it or cancel it. Arming auto-yes is a decision; removing
+        the chance to stop it is not part of that decision.
+      * a string or null raises inside the scan tick. The scanner catches and
+        logs, so auto-yes stops answering ANYTHING for the life of the process
+        while every pane still reports itself armed and idle.
+
+    Falling back to the shipped default is the safe direction for both: it
+    keeps answering, and it keeps a countdown.
+    """
+    try:
+        return _clamp_delay(value)
+    except (TypeError, ValueError):
+        return float(state.DEFAULT_SETTINGS["autoyes"]["default_delay"])
 
 
 def _scan_interval():
     """Seconds to sleep between scan ticks.
 
-    Defaults to 1s. When an enabled session carries a sub-second delay, tick at
-    that resolution (floored at 0.1s) so 100ms delays fire ~100ms after a
-    prompt appears instead of waiting for the next 1s boundary — without
-    scanning every 100ms when only second-scale delays are in use.
+    Fixed at 1s because each tick runs expected_target_identity() — a
+    full `tmux -C attach-session` open/close — per prompt-bearing pane, and
+    overlapping control clients are what crash the tmux 3.4 server
+    (docs/incidents/2026-08-31-artifacts/teardown-fix-REPORT.md §3.4). Ticking
+    at a sub-second delay multiplied that churn 10x, so a sub-second delay now
+    means "answer on the next 1s tick", not "tick at that resolution".
     """
-    with state.autoyes_lock:
-        active = [
-            d for s, d in state.autoyes_delays.items() if state.autoyes_sessions.get(s)
-        ]
-    if state.get_setting("autoyes", "all_sessions") == "on":
-        active.append(state.get_setting("autoyes", "default_delay"))
-    if not active:
-        return 1.0
-    return max(0.1, min(1.0, min(active)))
+    return 1.0
 
 
 def autoyes_scanner():
@@ -455,6 +508,19 @@ def autoyes_scanner():
             # stale/wrong state rather than as an error — log it once per cause.
             log.exception("autoyes: scan tick failed")
         time.sleep(_scan_interval())
+
+
+def _deliver_autoyes_answer(expected, send_text, with_enter):
+    """Deliver one detected AutoYes answer with fixed subsystem provenance."""
+
+    def effect():
+        return generation_bound_delivery(
+            expected,
+            text=send_text,
+            enter=with_enter,
+        )
+
+    return park.perform(park.Intent.AUTOYES_ANSWER, effect)
 
 
 def _autoyes_scan_tick():
@@ -596,10 +662,11 @@ def _autoyes_scan_tick():
         # Likewise collect the keystrokes to send: tmux subprocesses + sleep
         # must not run under the lock.
         broadcast_event = None
-        fire_action = None  # (send_text, with_enter, prompt_type)
+        fire_action = None  # (identity, send_text, with_enter, prompt_type)
+        detected_identity = expected_target_identity(target) if detected else None
 
         with state.autoyes_lock:
-            if not detected:
+            if not detected or detected_identity is None:
                 state.autoyes_countdowns.pop(target, None)
                 # Clear answered cache when content changes (no prompt visible).
                 # This ensures a NEW prompt with the same hash as a previous one
@@ -637,10 +704,13 @@ def _autoyes_scan_tick():
             if existing and existing["prompt_hash"] == phash:
                 if now >= existing["deadline"]:
                     prompt_type, send_text, with_enter, _summary = detected
-                    state.autoyes_answered[target] = (phash, now)
                     state.autoyes_countdowns.pop(target, None)
-                    fire_action = (send_text, with_enter, prompt_type)
-                    broadcast_event = (target, "fired", detected[0])
+                    fire_action = (
+                        existing.get("expected_target_identity"),
+                        send_text,
+                        with_enter,
+                        prompt_type,
+                    )
             else:
                 # Re-check enablement: a toggle-off mid-tick must not recreate a
                 # phantom countdown that's never cleaned up. Every toggle writes
@@ -650,13 +720,17 @@ def _autoyes_scan_tick():
                 if state.autoyes_sessions.get(session_name) is False:
                     state.autoyes_countdowns.pop(target, None)
                     continue
+                # _safe_delay, not the raw value: this is the one delay read
+                # that comes straight off disk (see its docstring).
                 if global_on:
-                    delay = state.get_setting("autoyes", "default_delay")
+                    delay = _safe_delay(state.get_setting("autoyes", "default_delay"))
                 else:
                     proj_delay = state.get_project_setting(
                         session_name, "autoyes", "delay"
                     )
-                    delay = state.autoyes_delays.get(session_name, proj_delay)
+                    delay = _safe_delay(
+                        state.autoyes_delays.get(session_name, proj_delay)
+                    )
                 summary = detected[3] if len(detected) > 3 else None
                 state.autoyes_countdowns[target] = {
                     "prompt_hash": phash,
@@ -665,24 +739,28 @@ def _autoyes_scan_tick():
                     "cancelled": False,
                     "prompt_type": detected[0],
                     "summary": summary,
+                    "expected_target_identity": detected_identity.as_dict(),
                 }
                 broadcast_event = (target, "countdown", detected[0])
 
         # Send keystrokes outside the lock (subprocess + sleep)
         if fire_action:
-            send_text, with_enter, prompt_type = fire_action
-            if send_text:
-                tmux_send_text(target, send_text)
-            if with_enter:
-                time.sleep(0.05)
-                tmux_send_keys(target, "Enter")
-            log.info(
-                "autoyes: FIRED %s on %s (send=%r enter=%r)",
-                prompt_type,
-                target,
-                send_text,
-                with_enter,
-            )
+            expected, send_text, with_enter, prompt_type = fire_action
+            result = _deliver_autoyes_answer(expected, send_text, with_enter)
+            if result.ok:
+                with state.autoyes_lock:
+                    state.autoyes_answered[target] = (phash, now)
+                broadcast_event = (target, "fired", prompt_type)
+                log.info(
+                    "autoyes: FIRED %s on %s (send=%r enter=%r)",
+                    prompt_type,
+                    target,
+                    send_text,
+                    with_enter,
+                )
+            else:
+                broadcast_event = (target, result.status, prompt_type)
+                log.info("autoyes: %s on %s", result.status, target)
 
         # Broadcast outside the lock
         if broadcast_event:
@@ -704,7 +782,7 @@ def _autoyes_scan_tick():
 def autoyes_status():
     """Return auto-yes state for all sessions."""
     global_on = state.get_setting("autoyes", "all_sessions") == "on"
-    global_delay = state.get_setting("autoyes", "default_delay")
+    global_delay = _safe_delay(state.get_setting("autoyes", "default_delay"))
     with state.autoyes_lock:
         countdowns = {}
         now = time.time()
@@ -808,12 +886,15 @@ def autoyes_set_delay():
     new delay takes effect immediately (e.g. 5s -> 2s while a countdown runs).
     """
     if state.get_setting("autoyes", "all_sessions") == "on":
-        return jsonify(
-            {
-                "ok": False,
-                "error": "Global Auto-Yes owns the delay — change it in Settings",
-            }
-        ), 409
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": "Global Auto-Yes owns the delay — change it in Settings",
+                }
+            ),
+            409,
+        )
     data = request.get_json(silent=True) or {}
     session = (data.get("session") or "").strip()
     if not session:
@@ -880,8 +961,43 @@ def autoyes_global():
     )
 
 
+def announce_posture():
+    """Say out loud, at every start, what auto-yes is armed with.
+
+    The all-sessions switch is the most consequential setting Assist has: it
+    hands a `y` to every agent pane on the machine, including sessions created
+    later. It is also invisible unless you go looking — it lives in
+    settings.json and in one settings-panel toggle, so an install can sit in
+    that posture for weeks without anything ever saying so. The startup log is
+    already where the operator is told the auth token; this belongs beside it.
+
+    print(), not log.info(): nothing configures logging here, so log.info is
+    swallowed, and this line existing only in theory would be worse than not
+    writing it at all.
+    """
+    delay = _safe_delay(state.get_setting("autoyes", "default_delay"))
+    if state.get_setting("autoyes", "all_sessions") != "on":
+        print(
+            "[assist] auto-yes: all-sessions switch OFF (per-session only)", flush=True
+        )
+        return
+    print(
+        f"[assist] auto-yes: ALL SESSIONS ARMED at {delay}s — every agent pane "
+        "on this host (claude, codex, opencode, cursor, gemini), including "
+        "sessions created later, has permission prompts answered automatically",
+        flush=True,
+    )
+    if delay < 1:
+        print(
+            f"[assist] auto-yes: {delay}s leaves effectively no window to see a "
+            "prompt or cancel it from the UI",
+            flush=True,
+        )
+
+
 def restore_autoyes_from_settings():
     """Restore auto-yes for running tmux sessions that had it enabled before restart."""
+    announce_posture()
     try:
         proc = subprocess.run(
             ["tmux", "list-sessions", "-F", "#{session_name}"],

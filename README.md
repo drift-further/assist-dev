@@ -4,7 +4,21 @@ A web terminal interface for [Claude Code](https://claude.com/claude-code) tmux 
 
 Primary use case: control a Claude Code session running on your dev box from a phone over the LAN.
 
+> ### ⚠ Read this before you install
+>
+> Assist is a **single-owner** tool: one shared secret, no accounts, no roles, no audit trail. Anyone holding the secret is the owner.
+>
+> It **runs arbitrary commands on your machine by design** — that is the product, and there is no sandbox.
+>
+> It is for **loopback or a LAN you own**. Never expose it to the public internet, behind a tunnel or otherwise.
+>
+> **[SECURITY.md](SECURITY.md) is the full posture**, including what arming Auto-Yes actually hands over. Read it once before your first install.
+
 ## Prerequisites
+
+Assist currently supports **Linux only**. Some clipboard helpers also support
+macOS (`pbcopy`/`pbpaste`), but the v16 process-identity and launch-provenance
+path requires Linux `/proc`.
 
 Before installing, make sure you have the required tools:
 
@@ -14,11 +28,9 @@ Before installing, make sure you have the required tools:
 # Python 3.11+
 python3 --version
 
-# tmux (Assist routes input into tmux sessions)
+# tmux 3.2 or newer, plus jq
 # Linux (Debian/Ubuntu)
-sudo apt install tmux
-# or macOS
-brew install tmux
+sudo apt install tmux jq
 
 # claude CLI (launches Claude Code in sessions; default mode)
 # Install from: https://claude.com/claude-code
@@ -31,24 +43,17 @@ brew install tmux
 sudo apt install xclip xdotool curl docker.io zenity
 ```
 
-**macOS:**
-```bash
-brew install curl docker
-```
-> macOS uses `pbcopy`/`pbpaste` (clipboard) and `osascript` (folder picker, paste fallback) — both built-in. `xclip` and `xdotool` are Linux-only and not needed on macOS.
-
 For **docker**, you may need additional setup:
 - **Linux**: `sudo usermod -aG docker $USER && newgrp docker`
-- **macOS**: Install [Docker Desktop](https://www.docker.com/products/docker-desktop)
 
 **Other Linux distributions:**
-- **Fedora/RHEL**: `sudo dnf install tmux xclip xdotool curl docker zenity`
-- **Arch**: `sudo pacman -S tmux xclip xdotool curl docker zenity`
+- **Fedora/RHEL**: `sudo dnf install tmux jq xclip xdotool curl docker zenity`
+- **Arch**: `sudo pacman -S tmux jq xclip xdotool curl docker zenity`
 
 ## Quick install
 
 ```bash
-gh repo clone drift-further/assist-dev ~/.local/share/assist-dev
+git clone https://github.com/drift-further/assist-dev ~/.local/share/assist-dev
 cd ~/.local/share/assist-dev
 ./install.sh
 ```
@@ -62,98 +67,20 @@ assist start                  # start the server
 assist doctor                 # verify prerequisites
 ```
 
-Open `http://localhost:8089` (or `http://<host-ip>:8089` from your phone).
+On an ordinary startup, Assist automatically creates a missing
+`.assist-launch-provenance-v1/` store using the same empty-epoch operation as
+the explicit initializer and writes
+`.assist-launch-provenance-v1-initialization.json` beside it. Startup never
+re-initializes an existing path: an existing but invalid store still fails
+closed. The park-handoff startup path does not run this initializer.
 
-## CLI
+Open `http://localhost:8089` on the host. Flask listens on loopback, so a phone
+cannot connect directly to `http://<host-ip>:8089`. For LAN access, add the
+phone-facing origin to `.env`, then put nginx on the LAN address:
 
-Once installed, `assist` manages everything:
-
-| Command | What it does |
-|---------|--------------|
-| `assist start` | Start the server (PID tracked in `/tmp/assist-server.pid`) |
-| `assist stop` | Stop the server |
-| `assist restart` | Restart the server |
-| `assist status` | Server status + health check |
-| `assist logs [N\|-f\|--follow]` | Tail last N lines (default 100), or follow with `-f`/`--follow` |
-| `assist config` | Print resolved paths, ports, env |
-| `assist doctor` | Check prereqs, venv, .env, server health |
-| `assist container status` | Image info + running `claude-session-*` containers |
-| `assist container build` | Build the container image, streaming the log live |
-| `assist container config` | Print current container build config |
-| `assist container extensions` | List registered extension bundles |
-| `assist container kill <name>` | Kill a running `claude-session-*` container |
-| `assist ls [--json] [--cwd]` | List sessions and panes, optionally with working directories |
-| `assist view <session> [-n N] [--pane P]` | Capture a session pane |
-| `assist send <session> [<text>\|--file F] [--enter] [--pane P] [--wait] [--timeout N] [--autoyes]` | Send text to a session pane, optionally waiting for it to settle |
-| `assist wait <session> [--timeout N] [--pane P] [--autoyes]` | Wait for a session pane to settle |
-| `assist launch --session N [--cwd P] [--cols C] [--rows R] [--wait] [--timeout N]` | Create a bare shell; takes no command (spawn an agent with `launch`, then `send`) |
-| `assist kill <session> [--pane P]` | Kill a tmux session |
-| `assist autoyes <session> (--on\|--off\|--status) [--delay N]` | Persistently set or inspect auto-yes; enabled delays are clamped to 0.1–30 seconds |
-| `assist autoyes --global (--on\|--off\|--status) [--delay N]` | Set or inspect the all-sessions switch |
-| `assist studio [args]` | Delegate to the Studio operator command |
-| `assist help` | Full command reference |
-
-The process commands delegate to `./assist-ctl`. The container commands hit the running server's HTTP API (`/api/container/*`), so the server must be running for them to work.
-
-Each session verb (`ls`, `view`, `send`, `wait`, `launch`, `kill`, and `autoyes`) supports `-h`/`--help`; its generated help describes every argument and flag. `--autoyes` on `send` or `wait` is a temporary window scoped to that one wait and restores the prior state afterward. `assist autoyes` changes the persistent per-session setting instead; `--delay` is valid only with `--on`.
-
-`assist autoyes --global` sets the all-sessions switch (also in Settings → Auto-Yes → All Sessions). While it is on, every **agent** pane — claude, codex, opencode, cursor, gemini — in every session is armed at the one global delay, including sessions created later; per-session delays do not apply and `/autoyes/set-delay` returns 409. Plain shell panes stay manual unless that session was armed by hand, so `apt`, ssh host-key and stray `(y/n)` prompts are out of scope. Turning one session off while the switch is on records an opt-out that survives a restart. `--status` on a session says which rule applied: `on (global, …)`, `on (set here, …)`, `off (opted out of global)`, or `off (no agent pane)`.
-
-After a successful `ls`, `view`, `send`, `wait`, or `launch`, the CLI prints a measured `next:` suggestion to stderr, leaving stdout safe for captures and pipelines. `ls` uses the first printed row's session name and omits the hint when there are no rows. Set `ASSIST_NO_HINTS=1` to suppress hints for any command; `assist ls --json` suppresses them automatically so its stdout remains parseable JSON.
-
-`assist send` prints a second stderr line, `callback:`, carrying the sentence that asks the receiving agent to message you back when it finishes or hits a question — so the sender can be told rather than poll `assist wait`. It is a suggestion; the sender decides whether to include it. The reply address is the caller's own tmux session (`ASSIST_REPLY_TO` overrides it), and the line is omitted when there is no such address — outside tmux nothing can be replied to — or when a session is sending to itself.
-
-Session wait commands use these exit codes:
-
-| Code | State | Meaning |
-|------|-------|---------|
-| `0` | idle | The pane went quiet with no prompt |
-| `10` | prompt | The pane is quiet because it is asking something; a summary is printed |
-| `75` | working | The pane is still changing at the deadline; this is not an error, so re-run `assist wait` |
-
-## Configuration
-
-All configuration is environment-variable based, via `.env` in the repo. See `env.example` for the full list. The most common ones:
-
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `ASSIST_PORT` | Port to listen on | `8089` |
-| `ASSIST_PROJECTS_DIR` | Root directory for project discovery | `~/projects` |
-| `ASSIST_SKILLS_DIR` | Claude skills directory | `~/.claude/skills` |
-| `ASSIST_SESSION_INIT_CMD` | Command run in new tmux sessions | (none) |
-| `ASSIST_REPLY_TO` | Reply address used by the `assist send` callback hint | (the caller's own tmux session) |
-| `ASSIST_MOUNT_SCRIPT` | Path to `claude-direct-mount.sh` for Automate | (none — required for Automate) |
-| `ASSIST_CLI_BIN` | Host CLI exposed to containers via `/api/cli-proxy` | (none — proxy disabled) |
-| `ASSIST_CLI_DIR` | Working directory used when invoking `ASSIST_CLI_BIN` | `~` |
-| `ASSIST_CLI_ALLOWED` | Comma-separated allowlist of subcommands (**empty = proxy disabled**) | (empty) |
-| `ASSIST_DB_NAME` | PostgreSQL DB for session history | `claude_archives` |
-| `ASSIST_ALLOWED_ORIGINS` | Browser origins accepted by the CSRF check, comma-separated. **Required on any install reached from more than localhost** — `shared/security.py` ships loopback only, so list your hostname and the LAN address your phone uses or every POST from them 403s while GETs still work | (loopback only) |
-| `DISPLAY` | X11 display for clipboard/key-send | `:1` |
-
-Changes to `.env` require `assist restart` to take effect.
-
-## Access and authentication
-
-Assist can start a process in any tmux pane it manages, and `/api/commands/run` executes an arbitrary command string **by design** — the commands are ones you wrote yourself in the commands panel. So the only thing that can protect it is the trust boundary, not input validation.
-
-Two things enforce that:
-
-**A shared secret gates every endpoint.** On first start the server generates one and writes it to `auth_token` in the install directory (mode `0600`, gitignored); it is also printed to the startup log. Open Assist, paste the token into the login page once, and the browser holds a cookie from then on — the raw token is never stored client-side, only an HMAC of it. For scripts, pass it as an `X-Assist-Token` header or a `?token=` query parameter.
-
+```bash
+ASSIST_ALLOWED_ORIGINS=http://<lan-ip>:8089
 ```
-$ cat auth_token
-BduKDRwh…
-```
-
-To rotate: delete `auth_token` and restart. A new secret is generated and every issued cookie stops matching, because the HMAC key changed.
-
-**Adding a device without typing the token.** A browser that arrives with no token can ask to be let in: it raises an approval request that any already-logged-in session sees and approves or denies. The request path is the one thing not behind the auth gate — a device with no token is exactly who calls it — so it is fenced instead by a LAN allowlist, a cap on pending requests, a per-IP cooldown, and a secret claim that binds an approval to the browser that asked. If you would rather onboard the first device the blunt way, **More → Access → Open** starts a time-boxed open-access window, and the strip across the top of the UI stays lit until it closes.
-
-Only three things are exempt: `/login`, `/health` (a liveness probe carrying no data), and `/api/cli-proxy` — containers have no way to hold the token, so that endpoint is instead restricted to the container subnet at the proxy layer and remains fail-closed on its own `ASSIST_CLI_ALLOWED` allowlist.
-
-**Flask binds `127.0.0.1` only.** nginx is the sole ingress. Historically LAN clients reached Flask directly on `<lan-ip>:8089` because the vhost answered only to the hostname, which left every endpoint exposed to the whole network. nginx now listens on that same address and port and forwards to loopback, so **no client URL changes** — binding a specific IP in nginx does not collide with Flask's loopback bind.
-
-If you self-host this, the equivalent server block is:
 
 ```nginx
 server {
@@ -177,6 +104,141 @@ server {
     }
 }
 ```
+
+Use the exact scheme, hostname or address, and port your phone opens in
+`ASSIST_ALLOWED_ORIGINS`. Restart after changing `.env`. The WebSocket upgrade
+headers are required for live terminal streaming.
+
+## CLI
+
+Once installed, `assist` manages everything:
+
+| Command | What it does |
+|---------|--------------|
+| `assist start` | Start the server (PID tracked in `/tmp/assist-server.pid`) |
+| `assist stop` | Stop the server |
+| `assist restart` | Restart the server |
+| `assist activate-park-v16 [--resume]` | Run or resume the receipted new-first park activation controller |
+| `assist status` | Server status + health check |
+| `assist logs [N\|-f\|--follow]` | Tail last N lines (default 100), or follow with `-f`/`--follow` |
+| `assist config` | Print resolved paths, ports, env |
+| `assist doctor` | Check prereqs, venv, .env, server health |
+| `assist container status` | Image info + running `claude-session-*` containers |
+| `assist container build` | Request a container image build (temporarily parked; returns 409) |
+| `assist container config` | Print current container build config |
+| `assist container extensions` | List registered extension bundles |
+| `assist container kill <name>` | Kill a running `claude-session-*` container |
+| `assist ls [--json] [--cwd]` | List sessions and panes, optionally with working directories |
+| `assist view <session> [-n N] [--pane P]` | Capture a session pane |
+| `assist send <session> [<text>\|--file F] [--enter] [--pane P] [--wait] [--timeout N] [--autoyes]` | Send text to a session pane, optionally waiting for it to settle |
+| `assist wait <session> [--timeout N] [--pane P] [--autoyes]` | Wait for a session pane to settle |
+| `assist launch --session N [--cwd P] [--cols C] [--rows R] [--wait] [--timeout N]` | Create a bare shell; takes no command (spawn an agent with `launch`, then `send`) |
+| `assist kill <session> [--pane P]` | Kill a tmux session |
+| `assist autoyes <session> (--on\|--off\|--status) [--delay N]` | Persistently set or inspect auto-yes; enabled delays are clamped to 0.1–30 seconds |
+| `assist autoyes --global (--on\|--off\|--status) [--delay N]` | Set or inspect the all-sessions switch |
+| `assist studio [args]` | Execute a separate `studio` CLI found on `PATH`, or fail if none is installed |
+| `assist help` | Full command reference |
+
+The process commands delegate to `./assist-ctl`. The container commands hit the running server's HTTP API (`/api/container/*`), so the server must be running for them to work.
+
+Each session verb (`ls`, `view`, `send`, `wait`, `launch`, `kill`, and `autoyes`) supports `-h`/`--help`; its generated help describes every argument and flag. `--autoyes` on `send` or `wait` is a temporary window scoped to that one wait and restores the prior state afterward. `assist autoyes` changes the persistent per-session setting instead; `--delay` is valid only with `--on`.
+
+Auto-Yes answers permission prompts for you after a countdown, which means an agent stops asking before doing things you would otherwise have been asked about. It ships **off**, with a 5-second countdown, and [SECURITY.md](SECURITY.md#auto-yes-what-arming-it-means) sets out what arming it hands over — including that it decides by pattern-matching pane text an agent may not have authored. Every start prints the current posture to the log, so an armed install is never a silent one.
+
+`assist autoyes --global` sets the all-sessions switch (also in Settings → Auto-Yes → All Sessions). While it is on, every **agent** pane — claude, codex, opencode, cursor, gemini — in every session is armed at the one global delay, including sessions created later; per-session delays do not apply and `/autoyes/set-delay` returns 409. Plain shell panes stay manual unless that session was armed by hand, so `apt`, ssh host-key and stray `(y/n)` prompts are out of scope. Turning one session off while the switch is on records an opt-out that survives a restart. `--status` on a session says which rule applied: `on (global, …)`, `on (set here, …)`, `off (opted out of global)`, or `off (no agent pane)`.
+
+After a successful `ls`, `view`, `send`, `wait`, or `launch`, the CLI prints a measured `next:` suggestion to stderr, leaving stdout safe for captures and pipelines. `ls` uses the first printed row's session name and omits the hint when there are no rows. Set `ASSIST_NO_HINTS=1` to suppress hints for any command; `assist ls --json` suppresses them automatically so its stdout remains parseable JSON.
+
+`assist send` prints a second stderr line, `callback:`, carrying the sentence that asks the receiving agent to message you back when it finishes or hits a question — so the sender can be told rather than poll `assist wait`. It is a suggestion; the sender decides whether to include it. The reply address is the caller's own tmux session (`ASSIST_REPLY_TO` overrides it), and the line is omitted when there is no such address — outside tmux nothing can be replied to — or when a session is sending to itself.
+
+Session wait commands use these exit codes:
+
+| Code | State | Meaning |
+|------|-------|---------|
+| `0` | idle | The pane went quiet with no prompt |
+| `10` | prompt | The pane is quiet because it is asking something; a summary is printed |
+| `75` | working | The pane is still changing at the deadline; this is not an error, so re-run `assist wait` |
+
+## Temporary execution park
+
+While container host wiring migrates, Assist refuses exactly these execution
+intents:
+
+- Automate start, hard relaunch, soft clear, soft resend, trust answer, and
+  auto-answer (`automate_start`, `automate_hard_relaunch`,
+  `automate_soft_clear`, `automate_soft_resend`, `automate_trust_answer`, and
+  `automate_auto_answer`).
+- The configured host CLI proxy (`configured_cli_proxy`, `/api/cli-proxy`).
+- Configured container image builds (`configured_image_build`,
+  `/api/container/build`).
+
+Saved commands, `/api/git/run`, project-venv creation, `/api/restart`, run-init,
+launch or duplicate with an init command, and the native folder picker remain
+available. There is no un-park API or CLI verb; changing the park phase does not
+enable a denied intent. For example, a refused Automate start returns HTTP 409
+with this exact body (the `intent` value identifies the refused operation):
+
+```json
+{
+  "ok": false,
+  "error": "container_launch_parked",
+  "reason": "Container launch automation is temporarily parked while host wiring migrates.",
+  "intent": "automate_start"
+}
+```
+
+## Configuration
+
+All configuration is environment-variable based, via `.env` in the repo. See `env.example` for the full list. The most common ones:
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `ASSIST_PORT` | Port to listen on | `8089` |
+| `ASSIST_PROJECTS_DIR` | Root directory for project discovery | `~/projects` |
+| `ASSIST_SKILLS_DIR` | Claude skills directory | `~/.claude/skills` |
+| `ASSIST_SESSION_INIT_CMD` | Command run in new tmux sessions | (none) |
+| `ASSIST_REPLY_TO` | Reply address used by the `assist send` callback hint | (the caller's own tmux session) |
+| `ASSIST_MOUNT_SCRIPT` | Container launch script used by Automate | `docker/claude-mount.sh` when that file exists; otherwise none |
+| `ASSIST_CLI_BIN` | Host CLI exposed to containers via `/api/cli-proxy` | (none — proxy disabled) |
+| `ASSIST_CLI_DIR` | Working directory used when invoking `ASSIST_CLI_BIN` | `~` |
+| `ASSIST_CLI_ALLOWED` | Comma-separated allowlist of subcommands (**empty = proxy disabled**) | (empty) |
+| `ASSIST_DB_NAME` | PostgreSQL DB for session history | `claude_archives` |
+| `ASSIST_DB_HOST` | PostgreSQL host for session history | `localhost` |
+| `ASSIST_PID_FILE` | Server PID file | `/tmp/assist-server.pid` |
+| `ASSIST_LOG_FILE` | Server log read by `assist logs` | `/tmp/assist-server.log` |
+| `ASSIST_CONTROL_DIR` | Park-activation control and receipt directory | `/tmp/assist-park-v16` |
+| `ASSIST_AUTH_TOKEN_PATH` | Shared-secret file | `<assist-home>/auth_token` |
+| `ASSIST_ALLOWED_ORIGINS` | Browser origins accepted by the CSRF check, comma-separated. **Required on any install reached from more than localhost** — `shared/security.py` ships loopback only, so list your hostname and the LAN address your phone uses or every POST from them 403s while GETs still work | (loopback only) |
+| `DISPLAY` | X11 display for clipboard helpers | `:0` |
+
+Changes to `.env` require `assist restart` to take effect.
+
+## Access and authentication
+
+Assist can start a process in any tmux pane it manages, and `/api/commands/run`
+executes arbitrary command strings **by design**, including saved commands an
+agent may have written into `.assist-commands.json`. So the only thing that can
+protect it is the trust boundary, not input validation.
+**[SECURITY.md](SECURITY.md) states that boundary in full**; this section is the
+mechanism.
+
+Two things enforce it:
+
+**A shared secret gates every endpoint.** On first start the server generates one and writes it to `auth_token` in the install directory (mode `0600`, gitignored). A direct interactive start prints the token value and its file path; redirected startup output prints only the path, so the value is not copied into the server log. Open Assist, paste the token into the login page once, and the browser holds a cookie from then on — the raw token is never stored client-side, only an HMAC of it. Scripts send it in the **`X-Assist-Token` header** — the only accepted carrier for the raw secret. A `?token=` query parameter is *not* accepted: a credential in a URL ends up in proxy access logs, browser history and outbound `Referer` headers, and it would only ever have authenticated the HTML document and none of its stylesheets or scripts.
+
+```
+$ cat auth_token
+BduKDRwh…
+```
+
+To rotate: delete `auth_token` and restart. A new secret is generated and every issued cookie stops matching, because the HMAC key changed.
+
+**Adding a device without typing the token.** A browser that arrives with no token can ask to be let in: it raises an approval request that any already-logged-in session sees and approves or denies. The request path is the one thing not behind the auth gate — a device with no token is exactly who calls it — so it is fenced instead by a LAN allowlist, a cap on pending requests, a per-IP cooldown, and a secret claim that binds an approval to the browser that asked. If you would rather onboard the first device the blunt way, **More → Access → Open** starts a time-boxed open-access window, and the strip across the top of the UI stays lit until it closes.
+
+Only three things are exempt: `/login`, `/health` (a liveness probe whose exact body is `{"status":"ok"}`), and `/api/cli-proxy` — containers have no way to hold the token, so that endpoint is restricted to the container subnet at the proxy layer and remains fail-closed on its own `ASSIST_CLI_ALLOWED` allowlist. The CLI proxy is also currently stopped by the temporary execution park before any subprocess can run.
+
+**Flask binds `127.0.0.1` only.** nginx is the LAN ingress. The Quick install
+section includes the supported reverse-proxy block and required origin setting.
 
 Run `serve.py --host 0.0.0.0` to go back to binding all interfaces — but that re-exposes every endpoint to the network, and is only sane if you have no proxy in front.
 
@@ -263,6 +325,12 @@ Notes:
 
 Containers launched by Assist run on an isolated network with no LAN access, but they can reach the host on port 8089. This is used to expose a single host-side CLI tool inside the container without copying its dependencies in.
 
+The proxy is currently in the temporary execution park: every request returns
+the 409 body documented above, with `"intent":"configured_cli_proxy"`, before a
+host subprocess starts. The configuration and inner subnet/allowlist gates
+below remain in place for a future release that enables the intent; there is no
+runtime un-park verb.
+
 Two pieces:
 
 1. **Host-side** (`.env`) — `ASSIST_CLI_BIN`, `ASSIST_CLI_DIR`, `ASSIST_CLI_ALLOWED`. The Flask server's `/api/cli-proxy` endpoint runs `ASSIST_CLI_BIN <args>` on the host and returns stdout/stderr/exit code. `ASSIST_CLI_ALLOWED` (comma-separated) restricts which first-arg subcommands are accepted; **leaving it empty disables the proxy (403)**.
@@ -272,8 +340,8 @@ Example — exposing a host CLI called `mycli`:
 
 ```bash
 # .env
-ASSIST_CLI_BIN=/home/me/bin/mycli
-ASSIST_CLI_DIR=/home/me/source/mycli
+ASSIST_CLI_BIN=/opt/mycli/bin/mycli
+ASSIST_CLI_DIR=/srv/mycli
 ASSIST_CLI_ALLOWED=status,build,deploy
 ```
 
@@ -284,45 +352,23 @@ ASSIST_CLI_ALLOWED=status,build,deploy
 }
 ```
 
-Then `assist restart` and rebuild the image (`assist container build` or the Container panel). Inside any newly-launched container, `mycli status` runs against the host binary.
+Once a future release enables both parked intents, restart and rebuild the image. Inside a newly launched container, `mycli status` then runs against the host binary.
 
 The wrapper accepts `-f <path>` to base64-upload a file from the container — the host writes it to a temp dir and replaces the arg with the resolved path before invoking the CLI. The temp dir is removed whether or not the call succeeds.
 
 A `--timeout N` in the forwarded args sets how long the host waits, plus 30s of slack. It must be a non-negative integer — anything else is a 400 rather than a silent fallback — and it is capped at 600s, so a proxied call cannot hold a host subprocess open indefinitely.
 
-## Optional: nginx reverse proxy
-
-Expose Assist at a friendly hostname on your LAN:
-
-```nginx
-server {
-    listen 80;
-    server_name assist.example.lan;   # whatever name your LAN resolves to this host
-
-    location / {
-        proxy_pass http://127.0.0.1:8089;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_read_timeout 86400;
-    }
-}
-```
-
-The WebSocket upgrade headers are essential — without them, the terminal falls back to HTTP polling.
-
 ## Architecture
 
 - **`serve.py`** — Flask + flask-sock app factory, registers blueprints, starts background threads
-- **`routes/`** — 15 Flask blueprints, one per feature domain: `access`, `automate`, `autoyes`, `commands`, `completion`, `container`, `git`, `input`, `poll`, `settings`, `static`, `streaming`, `studio`, `tabstate`, `terminal`
-- **`shared/`** — `state` (all mutable state), `tmux` (tmux/X11 helpers), `utils`, `auth` (shared secret, device approval), `security` (origin allowlist), `agent_identity` (what is actually running in a pane), `segments` ([handle] expansion), `studio_client`, `tab_state`
-- **`js/`** — 18 ES6 frontend modules (no framework, no bundler)
+- **`routes/`** — 15 Flask blueprints: `access`, `automate`, `autoyes`, `commands`, `completion`, `container`, `drafts`, `git`, `input`, `poll`, `settings`, `static`, `studio`, `tabstate`, `terminal`; WebSocket `streaming` is registered separately
+- **`shared/`** — `state` (mutable state), `tmux` (tmux helpers), `utils`, `auth`, `security`, `agent_identity`, `agent_model`, `drafts`, `execution_park`, `launch_provenance`, `park_activation`, `segments`, `studio_client`, `tab_state`
+- **`js/`** — 21 ES6 frontend modules (no framework, no bundler)
 - **`css/`** — 15 CSS modules, mobile-first with custom properties
 - **`docker/`** — parameterized `Dockerfile`, `entrypoint.sh`, extension definitions (`extensions/*.json`), helper scripts
 - **`assist-ctl`** — low-level start/stop/restart/status shell script (called by `assist`)
 - **`bin/assist`** — high-level CLI installed to `~/.local/bin/assist`
-- **`tests/`** — the one automated test module, covering `/api/cli-proxy` argument handling (the only unauthenticated endpoint that runs a host binary): `.venv/bin/python3 -m unittest tests.test_cli_proxy`. Everything else is verified by hand against the running server.
+- **`tests/`** — the unittest regression suite. Run the same command documented in `CLAUDE.md`: `.venv/bin/python3 -m unittest discover -s tests -p 'test_*.py'`
 
 ## Uninstall
 
@@ -334,3 +380,8 @@ rm -rf ~/.local/share/assist-dev        # or wherever you cloned
 ```
 
 Runtime files in `/tmp/assist-server.{pid,log}` can also be removed.
+
+If you approved status-line setup during installation, the installer may also
+have changed `statusLine` in `~/.claude/settings.json`. Restore the timestamped
+`~/.claude/settings.json.bak.<timestamp>` it created, or remove that
+`statusLine` entry manually, before deleting the checkout whose script it names.

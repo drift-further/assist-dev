@@ -14,11 +14,57 @@ from pathlib import Path
 from flask import Blueprint, jsonify, request
 
 import shared.state as state
+from shared import execution_park as park
 from shared.agent_identity import declare_agent_command
-from shared.tmux import tmux_send_keys, tmux_send_text
+from shared.tmux import (
+    create_tmux_session,
+    record_tmux_adoption,
+    tmux_send_keys,
+    tmux_send_text,
+)
 from shared.utils import load_json, save_json
 
 automate_bp = Blueprint("automate_bp", __name__)
+
+
+def _http_refusal(refusal):
+    return jsonify(refusal.body()), refusal.http_status
+
+
+def _record_automate_refusal(refusal):
+    """Publish only the canonical terminal background refusal."""
+    with state.automate_lock:
+        state.automate["active"] = False
+        state.automate["status"] = refusal.error
+        state.automate["done_signal_at"] = None
+        state.automate["trust_answered"] = None
+        _automate_save()
+    return refusal
+
+
+def _perform_automate_background(intent, effect):
+    result = park.perform(intent, effect)
+    if park.is_refusal(result):
+        return _record_automate_refusal(result)
+    return result
+
+
+def _automate_scheduled_answer(intent, target, text=None, *, enter=True):
+    """Deliver one answer whose provenance is fixed by the Automate caller."""
+    if intent not in (
+        park.Intent.AUTOMATE_TRUST_ANSWER,
+        park.Intent.AUTOMATE_AUTO_ANSWER,
+    ):
+        raise ValueError("not an Automate answer intent")
+
+    def effect():
+        if text:
+            tmux_send_text(target, text)
+        if enter:
+            tmux_send_keys(target, "Enter")
+        return True
+
+    return _perform_automate_background(intent, effect)
 
 
 def _build_automate_prompt(prompt, project_path):
@@ -87,6 +133,13 @@ def automate_recover():
     session_name = auto_sessions[0]
     base_session = session_name.removesuffix("-auto")
     project_path = state.PROJECTS_DIR / base_session
+    adoption = record_tmux_adoption(
+        f"{session_name}:0.0",
+        surface="automate_startup_recovery",
+        diagnostic_alias=f"{session_name}:0.0",
+    )
+    if not adoption.ok:
+        return
 
     session_id = hashlib.md5((str(project_path) + "\n").encode()).hexdigest()[:8]
     container_name = f"claude-session-{session_id}"
@@ -131,6 +184,14 @@ def automate_recover():
 @automate_bp.route("/api/automate/start", methods=["POST"])
 def automate_start():
     """Launch claude-mount in a tmux session for the current project."""
+    result = park.perform(park.Intent.AUTOMATE_START, _automate_start_request)
+    if park.is_refusal(result):
+        return _http_refusal(result)
+    return result
+
+
+def _automate_start_request():
+    """Complete start unit; called only while the park decision lock is held."""
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
 
@@ -140,11 +201,9 @@ def automate_start():
     with state.automate_lock:
         if state.automate["active"]:
             return jsonify({"ok": False, "error": "Automation already running"}), 409
-        state.automate["active"] = True
 
-    # Anything that fails between claiming active=True and the final state
-    # update must release the claim — otherwise an early exception (e.g. a
-    # docker hang) leaves active=True stuck and every start returns 409.
+    # The park decision lock serializes this effect.  Do not publish Automate
+    # state until a newly created pane has a durable origin receipt.
     try:
         return _automate_start_inner(data, prompt)
     except Exception as e:
@@ -212,28 +271,18 @@ def _automate_start_inner(data, prompt):
         ["docker", "rm", "-f", container_name], capture_output=True, timeout=10
     )
 
-    proc = subprocess.run(
-        [
-            "tmux",
-            "new-session",
-            "-d",
-            "-s",
-            session_name,
-            "-c",
-            str(project_path),
-            "-x",
-            "200",
-            "-y",
-            "50",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=10,
+    created = create_tmux_session(
+        session_name=session_name,
+        cwd=project_path,
+        cols=200,
+        rows=50,
+        surface="automate_start",
+        diagnostic_alias=f"{session_name}:0.0",
     )
-    if proc.returncode != 0:
+    if not created.ok:
         with state.automate_lock:
             state.automate["active"] = False
-        return jsonify({"ok": False, "error": f"tmux failed: {proc.stderr}"}), 500
+        return jsonify({"ok": False, "error": created.status}), 500
 
     subprocess.run(
         ["tmux", "set-option", "-t", session_name, "history-limit", "20000"],
@@ -311,7 +360,7 @@ def automate_status():
     """Return current automate state."""
     with state.automate_lock:
         if not state.automate["active"] and not state.automate["status"]:
-            return jsonify({"active": False})
+            return jsonify({"active": False, **park.activation_status()})
 
         now = time.time()
         elapsed = (
@@ -325,6 +374,7 @@ def automate_status():
 
         return jsonify(
             {
+                **park.activation_status(),
                 "active": state.automate["active"],
                 "status": state.automate["status"],
                 "project": state.automate["project"],
@@ -368,6 +418,13 @@ def automate_reconnect():
     session_name = auto_sessions[0]
     base_session = session_name.removesuffix("-auto")
     project_path = state.PROJECTS_DIR / base_session
+    adoption = record_tmux_adoption(
+        f"{session_name}:0.0",
+        surface="automate_reconnect",
+        diagnostic_alias=f"{session_name}:0.0",
+    )
+    if not adoption.ok:
+        return jsonify({"ok": False, "error": adoption.status}), 409
 
     session_id = hashlib.md5((str(project_path) + "\n").encode()).hexdigest()[:8]
     container_name = f"claude-session-{session_id}"
@@ -463,6 +520,11 @@ def automate_patch():
 @automate_bp.route("/api/automate/stop", methods=["POST"])
 def automate_stop():
     """Stop the running automation."""
+    return park.perform(park.Intent.STOP, _automate_stop_effect)
+
+
+def _automate_stop_effect():
+    """Stop the exact selected Automate unit under the decision lock."""
     with state.automate_lock:
         if not state.automate["active"]:
             return jsonify({"ok": False, "error": "No automation running"}), 404
@@ -504,8 +566,8 @@ def _automate_cleanup(container, session):
             print(f"[automate] tmux kill-session {session} failed: {e}")
 
 
-def _automate_soft_relaunch(run_id):
-    """Send /clear to existing Claude session, wait, then re-send the prompt."""
+def _automate_soft_clear():
+    """Attempt Automate's `/clear` delivery under its fixed provenance."""
     with state.automate_lock:
         session = state.automate["session"]
         prompt = state.automate["prompt"]
@@ -513,42 +575,70 @@ def _automate_soft_relaunch(run_id):
         project_name = state.automate["project"]
 
     target = f"{session}:0.0"
-    print(f"[automate] Soft relaunch: sending /clear to {target}")
 
-    tmux_send_text(target, "/clear")
-    tmux_send_keys(target, "Enter")
+    def effect():
+        print(f"[automate] Soft relaunch: sending /clear to {target}")
+        tmux_send_text(target, "/clear")
+        tmux_send_keys(target, "Enter")
+        return target, prompt, project_path, project_name
+
+    return _perform_automate_background(park.Intent.AUTOMATE_SOFT_CLEAR, effect)
+
+
+def _automate_soft_resend(run_id, target, prompt, project_path):
+    """Attempt the saved-prompt resend under Automate provenance."""
+
+    def effect():
+        if not _run_id_current(run_id):
+            print(f"[automate] Soft relaunch aborted — monitor superseded ({target})")
+            return False
+
+        full_prompt = _build_automate_prompt(prompt, project_path)
+        full_prompt = full_prompt.replace("\n", " ").replace("\r", " ")
+        tmux_send_text(target, full_prompt)
+        tmux_send_keys(target, "Enter")
+
+        now = time.time()
+        with state.automate_lock:
+            state.automate["last_output_at"] = now
+            state.automate["last_output_hash"] = None
+            state.automate["done_signal_at"] = None
+            state.automate["trust_answered"] = None
+            state.automate["status"] = "running"
+            _automate_save()
+
+        print(f"[automate] Soft relaunch complete — prompt re-sent to {target}")
+        return True
+
+    return _perform_automate_background(park.Intent.AUTOMATE_SOFT_RESEND, effect)
+
+
+def _automate_soft_relaunch(run_id):
+    """Attempt `/clear`, then the separately classified saved-prompt resend."""
+    clear_result = _automate_soft_clear()
+    if park.is_refusal(clear_result):
+        return clear_result
+
+    target, prompt, project_path, project_name = clear_result
     wait = (
         state.get_project_setting(project_name, "triggers", "relaunch_wait_sec")
         if project_name
         else 30
     )
     time.sleep(wait)
-
-    # Long sleep — re-check the generation token before touching the pane;
-    # a stop/restart during the wait means this monitor is superseded.
-    if not _run_id_current(run_id):
-        print(f"[automate] Soft relaunch aborted — monitor superseded ({target})")
-        return
-
-    full_prompt = _build_automate_prompt(prompt, project_path)
-    full_prompt = full_prompt.replace("\n", " ").replace("\r", " ")
-    tmux_send_text(target, full_prompt)
-    tmux_send_keys(target, "Enter")
-
-    now = time.time()
-    with state.automate_lock:
-        state.automate["last_output_at"] = now
-        state.automate["last_output_hash"] = None
-        state.automate["done_signal_at"] = None
-        state.automate["trust_answered"] = None
-        state.automate["status"] = "running"
-        _automate_save()
-
-    print(f"[automate] Soft relaunch complete — prompt re-sent to {target}")
+    return _automate_soft_resend(run_id, target, prompt, project_path)
 
 
 def _automate_relaunch(run_id):
     """Clean up old container/session and launch a fresh one with the same prompt."""
+    return _perform_automate_background(
+        park.Intent.AUTOMATE_HARD_RELAUNCH,
+        lambda: _automate_relaunch_effect(run_id),
+    )
+
+
+def _automate_relaunch_effect(run_id):
+    """Complete hard-relaunch unit, called only inside ``park.perform``."""
     with state.automate_lock:
         container = state.automate["container"]
         session = state.automate["session"]
@@ -579,25 +669,15 @@ def _automate_relaunch(run_id):
         ["docker", "rm", "-f", container_name], capture_output=True, timeout=10
     )
 
-    proc = subprocess.run(
-        [
-            "tmux",
-            "new-session",
-            "-d",
-            "-s",
-            session_name,
-            "-c",
-            str(project_path),
-            "-x",
-            "200",
-            "-y",
-            "50",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=10,
+    created = create_tmux_session(
+        session_name=session_name,
+        cwd=project_path,
+        cols=200,
+        rows=50,
+        surface="automate_hard_relaunch",
+        diagnostic_alias=f"{session_name}:0.0",
     )
-    if proc.returncode != 0:
+    if not created.ok:
         with state.automate_lock:
             state.automate["active"] = False
             state.automate["status"] = "relaunch_failed"
@@ -796,9 +876,13 @@ def _automate_monitor_iteration(run_id):
                 with state.automate_lock:
                     already_fired = state.automate.get("trust_answered") == trust_hash
                 if not already_fired:
-                    if trust_send[0]:
-                        tmux_send_text(f"{session}:0.0", trust_send[0])
-                    tmux_send_keys(f"{session}:0.0", "Enter")
+                    answer_result = _automate_scheduled_answer(
+                        park.Intent.AUTOMATE_TRUST_ANSWER,
+                        f"{session}:0.0",
+                        trust_send[0],
+                    )
+                    if park.is_refusal(answer_result):
+                        return "stop"
                     with state.automate_lock:
                         state.automate["trust_answered"] = trust_hash
     except Exception:
@@ -882,54 +966,18 @@ def _automate_monitor_iteration(run_id):
     if relaunch_type is None:
         return None
 
-    with state.automate_lock:
-        continuous = state.automate["continuous"]
-        max_iter = state.automate["max_iterations"]
-        completed = state.automate["iterations_completed"]
-        stop_after = state.automate.get("stop_after", "")
-        state.automate["iterations_completed"] = completed + 1
-
-        if not continuous:
-            if max_iter <= 0 or (completed + 1) >= max_iter:
-                should_stop = True
-
-        # Check time-of-day cutoff before relaunching
-        if not should_stop and _past_stop_time(
-            stop_after, state.automate["started_at"]
-        ):
-            should_stop = True
-            print(f"[automate] Past stop_after time ({stop_after}) — stopping")
-
-        if should_stop:
-            print(
-                f"[automate] Iteration {completed + 1}/{max_iter or 1} complete — stopping"
-            )
-            _automate_save()
-
-    if should_stop:
-        with state.automate_lock:
-            container = state.automate["container"]
-            session = state.automate["session"]
-        _automate_cleanup(container, session)
-        with state.automate_lock:
-            state.automate["active"] = False
-            state.automate["status"] = "completed"
-            _automate_save()
-        return "stop"
-
-    with state.automate_lock:
-        _automate_save()
-
     if relaunch_type == "soft":
         try:
-            _automate_soft_relaunch(run_id)
+            result = _automate_soft_relaunch(run_id)
         except Exception as e:
             print(f"[automate] soft relaunch failed: {e}")
             traceback.print_exc()
+            return None
     else:
         try:
-            _automate_relaunch(run_id)
+            result = _automate_relaunch(run_id)
         except Exception as e:
             print(f"[automate] hard relaunch failed: {e}")
             traceback.print_exc()
-    return None
+            return None
+    return "stop" if park.is_refusal(result) else None

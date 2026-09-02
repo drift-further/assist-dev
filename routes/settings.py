@@ -6,6 +6,7 @@ import subprocess
 
 from flask import Blueprint, jsonify, request
 
+from shared import execution_park as park
 from shared import state
 
 settings_bp = Blueprint("settings_bp", __name__)
@@ -178,6 +179,16 @@ def restart_server():
     cmd = state.get_setting("server", "restart_cmd")
     if not cmd:
         return jsonify({"ok": False, "error": "No restart command configured"}), 400
+    result = park.perform(
+        park.Intent.CONFIGURED_RESTART, lambda: _restart_server_effect(cmd)
+    )
+    if park.is_refusal(result):
+        return jsonify(result.body()), result.http_status
+    return result
+
+
+def _restart_server_effect(cmd):
+    """Parse and spawn the configured restart under the park decision lock."""
     if any(ch in cmd for ch in _SHELL_OPERATORS):
         return (
             jsonify(

@@ -4,7 +4,7 @@
 // same position, same handler. Only the small sub-label under each one is
 // rewritten, because four of the seven keys both surfaces expose mean different
 // things across the three CLIs, and two of them differ in how destructive they
-// are (effort 359, audit doc 1734 §5). Adding a Codex button to a shared panel
+// are. Adding a Codex button to a shared panel
 // would make the Claude case worse, so the panel becomes agent-aware instead.
 //
 // Every override below was confirmed against the CLI running on this host —
@@ -81,7 +81,7 @@ const KEY_LABELS_BY_AGENT = {
         // both were measured and did nothing. Ctrl+O and Ctrl+T likewise keep
         // their base labels.
         //
-        // Two more of doc 1734's Cursor claims were measured and refuted, which
+        // Two more Cursor claims were measured and refuted, which
         // is why index.html's prefix row gives Cursor only ! and /:
         //   '@' file paths   — echoes as plain text, no picker. Re-tested with
         //                      README.md and RELEASE.txt in the workspace and

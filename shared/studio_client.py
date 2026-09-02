@@ -1,7 +1,7 @@
 """shared/studio_client.py — HTTP client for the Studio design hub.
 
-All Studio traffic is server->server so the API token never reaches the browser
-(effort 268: server-proxied client). Nothing here raises: every call returns an
+All Studio traffic is server->server so the API token never reaches the browser.
+Nothing here raises: every call returns an
 HTTP status code, with 0 meaning "could not reach Studio at all". Callers decide
 what a failure means; the UI always degrades to the last good snapshot.
 """
@@ -71,8 +71,8 @@ class StudioClient:
             req = urllib.request.Request(base + path, method=method)
             tok = self.token()
             if tok:
-                # Forward-compatible with studio 232-W1; harmless against today's
-                # unauthenticated loopback Studio, which ignores the header.
+                # Forward-compatible with bearer enforcement; harmless against a
+                # loopback Studio that ignores the header.
                 req.add_header("Authorization", "Bearer " + tok)
             body = None
             if payload is not None:
@@ -101,7 +101,7 @@ class StudioClient:
         return code, data if isinstance(data, list) else []
 
     def answer(self, question_id, answer_json, status="answered", actor="user"):
-        """POST an answer. answer_json shape matches the sto CLI:
+        """POST an answer. answer_json matches Studio's answer contract:
         {"text": str, "selections": [str], "rationale": str} — the SPA and the
         finding-adjudication loop both read `selections`, so the key is a
         contract, not a preference."""

@@ -7,6 +7,7 @@ Import with: from shared.state import <name>
 import copy
 import json
 import os
+import tempfile
 import threading
 from pathlib import Path
 
@@ -178,19 +179,31 @@ def atomic_write_json(path, data, indent=2):
     (which loaders silently swallow, falling back to defaults).
     """
     path = Path(path)
-    tmp = path.with_suffix(path.suffix + ".tmp")
     # settings.json now holds the Studio API token; every file written through
     # this helper is single-user state, so 0600 across the board. The mode is set
-    # at CREATE time, not after the write: open(..., "w") makes the file 0644
-    # under a normal umask, so the token would be world-readable for the length
-    # of the write.
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=indent)
-        f.write("\n")
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    # before content is written, not after it.
+    fd, tmp_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    tmp = Path(tmp_name)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            fd = -1
+            json.dump(data, f, indent=indent)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def load_settings():
@@ -650,4 +663,3 @@ else:
 
 # Claude env vars to strip from tmux sessions
 CLAUDE_ENV_VARS = ("CLAUDECODE",)
-

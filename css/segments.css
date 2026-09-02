@@ -39,6 +39,16 @@
     border-color: var(--amber);
     color: var(--amber);
 }
+.seg-chip.vault {
+    background: rgba(191, 90, 242, 0.12);
+    border-color: var(--purple);
+    color: var(--purple);
+}
+.seg-chip.vault.unknown {
+    background: rgba(255, 149, 0, 0.12);
+    border-color: var(--amber);
+    color: var(--amber);
+}
 .seg-chip:active { background: rgba(0, 255, 65, 0.25); }
 
 .seg-count {
@@ -151,6 +161,15 @@ textarea.seg-field { min-height: 140px; resize: vertical; line-height: 1.5; }
 }
 .seg-btn.primary { border-color: var(--green); color: var(--green); }
 .seg-btn.danger { border-color: var(--red); color: var(--red); flex: 0 0 auto; }
+.seg-btn:disabled { opacity: 0.35; cursor: default; }
+.vault-plain-warning {
+    margin-bottom: 10px;
+    padding: 8px;
+    border: 1px solid rgba(255, 149, 0, 0.4);
+    color: var(--amber);
+    font-size: 11px;
+}
+.vault-set-state { margin-bottom: 12px; color: var(--text-dim); font-size: 11px; }
 
 /* Favs-tab handle badge + edit affordance */
 .list-item-handle {

@@ -1,4 +1,4 @@
-/* widgets.css — Smart actions, git panel, insert/sudo buttons */
+/* widgets.css — Smart actions, git panel, insert button */
 
 /* Smart Actions — prompt detection action bar */
 .smart-actions {
@@ -113,16 +113,6 @@
     border-radius: 3px; transition: all 0.15s; letter-spacing: 0.5px;
 }
 .btn-insert:active { transform: scale(0.9); background: rgba(255, 149, 0, 0.15); }
-
-/* Sudo password lock button */
-.btn-sudo {
-    background: transparent; border: 1px solid rgba(255, 0, 64, 0.3);
-    color: var(--red); font-size: 13px; padding: 2px 6px;
-    cursor: pointer; -webkit-tap-highlight-color: transparent;
-    border-radius: 3px; transition: all 0.15s;
-}
-.btn-sudo.has-pw { color: var(--green); border-color: rgba(0, 255, 65, 0.3); }
-.btn-sudo:active { transform: scale(0.9); }
 
 /* Claude Info Bar */
 .btn-info {

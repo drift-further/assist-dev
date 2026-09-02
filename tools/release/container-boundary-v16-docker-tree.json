@@ -1,0 +1,94 @@
+{
+  "boundary": "CONTAINER-BOUNDARY-V16",
+  "entries": [
+    {
+      "mode": "0111",
+      "path": ".",
+      "type": "directory"
+    },
+    {
+      "mode": "0000",
+      "path": "Dockerfile",
+      "sha256": "9b8e8ac45edc20c858ac5b8cfab4f60c49d5b1213953547e7c302d0f03a9c3d4",
+      "type": "file"
+    },
+    {
+      "mode": "0111",
+      "path": "claude-mount.sh",
+      "sha256": "ddca0a4cb91526bade5e78393c20342320563cad8dcce557fb3ec2ed90af1747",
+      "type": "file"
+    },
+    {
+      "mode": "0111",
+      "path": "entrypoint.sh",
+      "sha256": "683894452a50d5290afee6b3206d67125182f477dbcf34d26cabb083e857b1a8",
+      "type": "file"
+    },
+    {
+      "mode": "0111",
+      "path": "extensions",
+      "type": "directory"
+    },
+    {
+      "mode": "0000",
+      "path": "extensions/flutter.json",
+      "sha256": "9c669a02ec493d74c17fe5e74bc76ea5b1f235632871b30a49752d5aecf9d2a1",
+      "type": "file"
+    },
+    {
+      "mode": "0000",
+      "path": "extensions/go.json",
+      "sha256": "996301c0cdac1b8246a3fd15c90946f9b3851c0a7231b9a4360421878cdde81d",
+      "type": "file"
+    },
+    {
+      "mode": "0000",
+      "path": "extensions/java.json",
+      "sha256": "ac2a3c23e1e0477f422ba7cfeb754e217396073c7cb2d1fb73278b1ad354c81c",
+      "type": "file"
+    },
+    {
+      "mode": "0000",
+      "path": "extensions/playwright.json",
+      "sha256": "24fdc6e5aaee5e55c2b0d25da41423af59402d96cd1ede2e61a9e5e45b1636e0",
+      "type": "file"
+    },
+    {
+      "mode": "0000",
+      "path": "extensions/python-web-stack.json",
+      "sha256": "3b04e99d206304e61c1f421c38ebb877123175a6c99c61843ec4ed18cfba8d17",
+      "type": "file"
+    },
+    {
+      "mode": "0000",
+      "path": "extensions/rust.json",
+      "sha256": "17071a5509d7f7bfcff52475fc86dc027189eab69436cdbb377a21deb84c81b1",
+      "type": "file"
+    },
+    {
+      "mode": "0000",
+      "path": "extensions-install.sh",
+      "sha256": "91e8d87c35f8ab2098e14b55ec897f331c6c50312a07b9a109405cebccd6fb15",
+      "type": "file"
+    },
+    {
+      "mode": "0111",
+      "path": "scripts",
+      "type": "directory"
+    },
+    {
+      "mode": "0111",
+      "path": "scripts/claude-statusline.sh",
+      "sha256": "6976635536a3dbf643cd83fb93ad9ddf8b23698eaf6fbc36f54d0c2feef62f58",
+      "type": "file"
+    },
+    {
+      "mode": "0111",
+      "path": "scripts/cli-proxy.sh",
+      "sha256": "4381238ec88548f49dead099a3bca8ef3ae16d1b9ce5ac07b866f6e59a1e9051",
+      "type": "file"
+    }
+  ],
+  "schema": "container-boundary-v16-docker-tree-v1",
+  "tree": "docker"
+}

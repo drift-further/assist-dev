@@ -1,4 +1,4 @@
-"""Claude Assist — Phone voice input bridge for Claude Code terminal sessions.
+"""Claude Assist — phone-first web terminal for Claude Code sessions.
 
 App factory: imports all blueprints, registers them, starts background threads.
 """
@@ -153,28 +153,44 @@ def create_app():
     return app
 
 
-# Create app at module level (needed for `flask run` and direct execution)
-app = create_app()
+def start_application_backgrounds():
+    """Start application work only after the process owns its listener.
 
-# Start background threads at module level so they run under any deployment
-# mode (direct execution, WSGI, flask run) — not just __main__.
-from routes.autoyes import autoyes_scanner, restore_autoyes_from_settings  # noqa: E402
-from routes.automate import automate_recover  # noqa: E402
-from routes.drafts import start_sweeper as start_drafts_sweeper  # noqa: E402
-from routes.studio import studio_refresher  # noqa: E402
+    The activation-only candidate must establish its observation watermark and
+    finish the old-generation snapshot without importing these modules or
+    starting any Flask, AutoYes, Automate, drafts, or Studio work.
+    """
+    from routes.autoyes import autoyes_scanner, restore_autoyes_from_settings
+    from routes.automate import automate_recover
+    from routes.drafts import start_sweeper as start_drafts_sweeper
+    from routes.studio import studio_refresher
 
-threading.Thread(target=autoyes_scanner, daemon=True).start()
-threading.Thread(target=studio_refresher, daemon=True).start()
-start_drafts_sweeper()
-restore_autoyes_from_settings()
-automate_recover()
+    threading.Thread(target=autoyes_scanner, daemon=True).start()
+    threading.Thread(target=studio_refresher, daemon=True).start()
+    start_drafts_sweeper()
+    restore_autoyes_from_settings()
+    automate_recover()
+
+
+# WSGI/flask-run compatibility retains the established import-time app.  The
+# direct executable path below is separate so activation can remain observer-
+# only until the controller authorises the bind.
+if __name__ != "__main__":
+    app = create_app()
+    start_application_backgrounds()
 
 
 if __name__ == "__main__":
     import argparse
+    from werkzeug.serving import make_server
 
     parser = argparse.ArgumentParser(description="Claude Assist server")
-    parser.add_argument("--port", type=int, default=8089, help="Port to listen on")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("ASSIST_PORT", "8089")),
+        help="Port to listen on",
+    )
     # Loopback only. nginx listens on the LAN address:port clients already use
     # and forwards here, so no client URL changes while Flask itself is
     # unreachable from the network — the blast radius of an unauthenticated
@@ -182,10 +198,44 @@ if __name__ == "__main__":
     # 0.0.0.0 re-exposes every endpoint directly. The vhost lives in a separate
     # infrastructure repo; README has the equivalent server block.
     parser.add_argument("--host", default="127.0.0.1", help="Interface to bind")
+    parser.add_argument("--park-handoff-fd", type=int, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
 
-    # Print it every start: on a fresh install this is the only place the
-    # operator learns the token without going looking for the file.
-    print(f"[assist] auth token: {auth.get_token()}  (file: {auth._TOKEN_PATH})", flush=True)
+    handoff = None
+    if args.park_handoff_fd is not None:
+        # This import is deliberately the sole pre-bind subsystem.  candidate_prebind
+        # does read-only observation and blocks until old-generation termination and
+        # explicit bind authorisation.
+        from shared.park_activation import candidate_prebind
 
-    app.run(host=args.host, port=args.port)
+        handoff = candidate_prebind(args.park_handoff_fd)
+
+    if handoff is not None:
+        from shared.park_activation import ExecutionObserver
+
+        if not ExecutionObserver.final_quiescent(handoff.snapshot):
+            raise RuntimeError("park_drain_pending")
+
+    if args.park_handoff_fd is None:
+        from shared.launch_provenance import initialize_for_startup
+
+        initialize_for_startup()
+
+    app = create_app()
+    server = make_server(args.host, args.port, app, threaded=True)
+    # Binding is the activation milestone.  Publish it before recovery/scanner
+    # startup, whose initial read-only sweeps may legitimately take longer than
+    # the controller handshake timeout.
+    if handoff is not None:
+        from shared import execution_park
+        from shared.park_activation import ACTIVATION_PATH
+
+        execution_park.configure_activation(
+            ACTIVATION_PATH, handoff.snapshot.get("units") or ()
+        )
+        execution_park.publish_parked()
+        handoff.notify_bound()
+    start_application_backgrounds()
+
+    auth.print_startup_token_notice()
+    server.serve_forever()

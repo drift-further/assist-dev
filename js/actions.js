@@ -161,8 +161,9 @@ function updateAutoYesUI(session) {
         btn.classList.toggle('active', active);
         // Say WHY it is on: under the global switch a session nobody touched is
         // armed, and "(all)" is the difference between that and a hand-armed one.
+        btn.dataset.glyph = active ? '\u26A1' : '\u2713';
         btn.textContent = active
-            ? (_autoyesGlobal.enabled ? '\u26A1 Auto-Yes (all)' : '\u26A1 Auto-Yes')
+            ? (_autoyesGlobal.enabled ? 'Auto-Yes (all)' : 'Auto-Yes')
             : 'Auto-Yes';
     }
     // Arming/disarming is the only moment the bar's slot may change size, and
@@ -298,7 +299,8 @@ const _OPT_LOOKBACK = 60;
 const _OPT_RE = /^\s*(?:[^\d\s]\s*)?(\d+)[\.\)]\s+\S/;
 const _OPT_TEXT_RE = /^\s*(?:[^\d\s]\s*)?(\d+)[\.\)]\s+(.+)/;
 const _OPT_SEP_RE = /^[\s]*─{10,}/;
-const _OPT_FOOTER_RE = /(?:Enter to select|Esc to cancel|Navigate)\s*[·•]|Press enter to confirm/;
+const _OPT_FOOTER_RE = /(?:Enter to select|Esc to cancel|Navigate)\s*[·•]|Press enter to (?:confirm|continue)/;
+const _SELECTED_YES_RE = /(?:^|\n)\s*❯\s*Yes\b/i;
 
 function _optionCount(lines, startIdx, endIdx) {
     let count = 0;
@@ -327,7 +329,7 @@ function _hasInternalDivider(lines, startIdx, endIdx) {
     return false;
 }
 
-function _optionRegionStart(lines, footerIdx) {
+function _anchoredOptionRegionStart(lines, footerIdx) {
     const floor = Math.max(0, footerIdx - _OPT_LOOKBACK);
     for (let i = footerIdx - 1; i >= floor; i--) {
         if (!_OPT_SEP_RE.test(lines[i])) continue;
@@ -335,25 +337,24 @@ function _optionRegionStart(lines, footerIdx) {
         // internal divider, not the top of the block — keep walking up.
         if (_optionCount(lines, i + 1, footerIdx) >= 2) return i + 1;
     }
-    return floor;
+    return -1;
 }
 
-// Mirrors routes/autoyes.py:_SELECTED_YES_RE. The arrow row alone is not a
-// liveness signal: require the enclosing divider, a sibling No row, and the
-// live menu footer in one compact block.
+function _optionRegionStart(lines, footerIdx) {
+    const anchored = _anchoredOptionRegionStart(lines, footerIdx);
+    return anchored >= 0 ? anchored : Math.max(0, footerIdx - _OPT_LOOKBACK);
+}
+
+// Match routes/autoyes.py:_SELECTED_YES_RE inside the same live footer and
+// option-region bounds used by the server's numbered-menu branch.
 function _isSelectedYesMenu(lines, footerIdx) {
     if (footerIdx < 0 || (lines.length - 1 - footerIdx) > 30) return false;
-    const floor = Math.max(0, footerIdx - 8);
-    let dividerIdx = -1;
-    let selectedIdx = -1;
-    let noIdx = -1;
-    for (let i = floor; i < footerIdx; i++) {
-        if (_OPT_SEP_RE.test(lines[i])) dividerIdx = i;
-        if (/^\s*❯\s+Yes\s*$/.test(lines[i])) selectedIdx = i;
-        if (/^\s+No\s*$/.test(lines[i])) noIdx = i;
-    }
-    return dividerIdx >= floor && dividerIdx < selectedIdx &&
-        noIdx > selectedIdx && noIdx - selectedIdx <= 3 && footerIdx - noIdx <= 3;
+    const anchored = _anchoredOptionRegionStart(lines, footerIdx);
+    const startIdx = anchored >= 0
+        ? anchored
+        : Math.max(0, footerIdx - _OPT_LOOKBACK);
+    if (anchored >= 0 && _hasInternalDivider(lines, startIdx, footerIdx)) return false;
+    return _SELECTED_YES_RE.test(lines.slice(startIdx, footerIdx + 1).join('\n'));
 }
 
 function _lastNonEmptyLine(tail) {
@@ -375,8 +376,8 @@ const SMART_PATTERNS = [
         // pane's last 6 lines forever, so this pattern used to badge the tab as
         // needing input permanently — measured 2026-08-10 at 8 of 18 live panes
         // continuously flagged, every one of them an exited session with nothing
-        // waiting on anybody. It is the dominant source of gotcha 528's "reaction
-        // patterns fire on panes that are not waiting on anything".
+        // waiting on anybody. It is the dominant source of reaction patterns
+        // firing on panes that are not waiting on anything.
         //
         // The offer itself is still useful when you are looking at the pane, so
         // this is not a deletion: `passive` keeps the action bar and drops only
@@ -404,11 +405,19 @@ const SMART_PATTERNS = [
         desc: 'Permission prompt',
         agents: ['claude'],
         match: (tail) => {
-            // Only check last 8 lines — avoids false positives from answered prompts in scrollback
+            // Mirrors _PERMISSION_YNA_MARKER_RE / _PERMISSION_YNA_DIALOG_RE in
+            // routes/autoyes.py — keep the two in step.
+            //
+            // Only the last 8 lines, which keeps answered prompts in scrollback
+            // out. Within that window the bare markers must END their line: a
+            // live prompt is the last thing written before the cursor waits,
+            // whereas `(y/n/a)` quoted mid-line is an agent displaying a README,
+            // a --help screen, or this repo's own source. The two full option
+            // rows are joined with \s+ rather than .* for the same reason — `.*`
+            // matched the regex source of the pattern itself.
             const bottom = tail.split('\n').slice(-8).join('\n');
-            return /\(y\/n\/a\)/i.test(bottom) ||
-                   /\[Y\/n\/a\]/i.test(bottom) ||
-                   /Allow once.*Always allow.*Deny/i.test(bottom) ||
+            return /(?:\(y\/n\/a\)|\[Y\/n\/a\])[ \t]*$/im.test(bottom) ||
+                   /Allow once\s+Always allow\s+Deny/i.test(bottom) ||
                    /Yes.*\(y\).*Always.*\(a\).*No.*\(n\)/i.test(bottom);
         },
         actions: [
@@ -488,14 +497,6 @@ const SMART_PATTERNS = [
         ]
     },
     {
-        id: 'sudo-password',
-        desc: 'Sudo password',
-        match: (tail) => /\[sudo\] password for [^:]+:\s*$/i.test(_lastNonEmptyLine(tail)),
-        actions: [
-            { label: 'Send stored password', sudo: true, secret: true, color: 'amber' },
-        ]
-    },
-    {
         id: 'package-confirm',
         desc: 'Package manager confirmation',
         // Package and ssh prompts are shell-layer reactions: keep them
@@ -535,10 +536,9 @@ const SMART_PATTERNS = [
             ];
         }
     },
-    // There is deliberately NO codex-specific approval pattern here, and doc 1734
-    // step 7 asking for one is refuted. It proposed a first-class pattern for a
-    // fixed y/a/p/d/n/c key set; that key set does not exist on codex-cli
-    // 0.147.0. Two independent escalations were triggered on a live pane — a
+    // There is deliberately NO codex-specific approval pattern here. A proposed
+    // first-class pattern used a fixed y/a/p/d/n/c key set; that key set does not
+    // exist on codex-cli 0.147.0. Two independent escalations were triggered on a live pane — a
     // write outside the workspace, and outbound network — and both rendered the
     // SAME three-option numbered menu:
     //     1. Yes, proceed (y)
@@ -683,6 +683,9 @@ function detectSmartActions(content, target, agentKind) {
 }
 
 function renderSmartActions(result, targetOverride) {
+    // The vault's one-tap key shares the terminal-update cadence, but keeps its
+    // own compact composer slot rather than adding another full-width action bar.
+    if (typeof renderVaultQuickSend === 'function') renderVaultQuickSend();
     // notify-only detections still mark the tab and fire a push, but render no
     // action bar. Cleared here rather than at the call sites so every caller
     // (poll scan, WS stream, tab switch) is covered by one rule.
@@ -734,15 +737,6 @@ function renderSmartActions(result, targetOverride) {
         } else if (action.restart) {
             const cmd = action.claudeCmd;
             btn.addEventListener('click', () => restartClaudeSession(cmd));
-        } else if (action.sudo) {
-            // The matcher is the liveness proof for this exact pane. Do not run
-            // the bottom-bar triple-tap flow, which derives its target from the
-            // main input router and can send a secret to a different pane.
-            const sudoTarget = target;
-            btn.addEventListener('click', async () => {
-                const sent = await _sendSudoPasswordToTerminal(sudoTarget);
-                if (sent) hideSmartActions();
-            });
         } else if (action.isOption) {
             const num = action.optNum;
             btn.addEventListener('click', () => sendSmartAction(num, true));
@@ -881,6 +875,7 @@ async function restartClaudeSession(claudeCmd) {
 
         // Update global target
         _termTarget = launchData.target;
+        _termExpectedIdentity = launchData.expected_target_identity || null;
         _smartActionTarget = launchData.target;
         updateTmuxIndicator();
         try { localStorage.setItem('term_target', _termTarget); } catch(e) {}
@@ -908,10 +903,15 @@ async function restartClaudeSession(claudeCmd) {
         await new Promise(r => setTimeout(r, initWait));
 
         // 4. Send the claude command
-        const typeResp = await fetch('/type', {
+        const typeResp = await fetch('/type/client-restart', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ text: claudeCmd, enter: true, target: _termTarget }),
+            body: JSON.stringify({
+                text: claudeCmd,
+                enter: true,
+                target: _termTarget,
+                expected_target_identity: _termExpectedIdentity,
+            }),
         });
         const typeData = await typeResp.json();
         if (typeData.ok) {

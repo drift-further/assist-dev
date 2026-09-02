@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
-# assist-ctl — Start/stop/restart/status for Claude Assist server.
-# Start/stop/restart/status for the Claude Assist server.
+# assist-ctl — Process control for the Claude Assist server.
 #
 set -euo pipefail
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT="${ASSIST_PORT:-8089}"
-PID_FILE="/tmp/assist-server.pid"
-LOG_FILE="/tmp/assist-server.log"
+PID_FILE="${ASSIST_PID_FILE:-/tmp/assist-server.pid}"
+LOG_FILE="${ASSIST_LOG_FILE:-/tmp/assist-server.log}"
 SERVE_SCRIPT="$SCRIPT_DIR/serve.py"
 
 # Use project-local venv if it exists, otherwise system python3
@@ -16,6 +16,19 @@ if [[ -x "$SCRIPT_DIR/.venv/bin/python" ]]; then
     PYTHON="$SCRIPT_DIR/.venv/bin/python"
 else
     PYTHON="python3"
+fi
+
+# Park activation is sealed by bin/assist and must not source a checkout .env
+# or otherwise allow ambient configuration to replace one attempt path midway.
+if [[ "${1:-}" == "activate-park-v16" ]]; then
+    if [[ "${2:-}" == "--resume" ]]; then
+        exec "$PYTHON" -m shared.park_activation resume
+    fi
+    if [[ $# -ne 1 ]]; then
+        echo "Usage: assist-ctl activate-park-v16 [--resume]" >&2
+        exit 1
+    fi
+    exec "$PYTHON" -m shared.park_activation controller
 fi
 
 # Load .env if present
@@ -124,7 +137,7 @@ case "${1:-help}" in
     restart) do_restart ;;
     status)  do_status ;;
     *)
-        echo "Usage: assist-ctl {start|stop|restart|status}"
+        echo "Usage: assist-ctl {start|stop|restart|status|activate-park-v16}"
         echo ""
         echo "Environment variables (or set in .env):"
         echo "  ASSIST_PORT           Port (default: 8089)"

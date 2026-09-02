@@ -176,11 +176,6 @@ CONTAINER_NAME="claude-session-$SESSION_ID"
 DOCKER_CMD="docker run $TTY_FLAGS --rm --name $CONTAINER_NAME"
 DOCKER_CMD="$DOCKER_CMD -v \"$(pwd)\":/workspace"
 
-# Mount message bridge directory (Claude writes, host reads)
-MESSAGES_DIR="$HOME/.claude-messages"
-mkdir -p "$MESSAGES_DIR/to-discord" "$MESSAGES_DIR/to-claude"
-DOCKER_CMD="$DOCKER_CMD -v \"$MESSAGES_DIR:/home/developer/.claude-messages\""
-
 # Mount Claude JSON if it exists (mount to where entrypoint expects it)
 if [ -f "$HOME/.claude.json" ]; then
     DOCKER_CMD="$DOCKER_CMD -v \"$HOME/.claude.json:/host-claude-config/.claude.json:ro\""
@@ -250,20 +245,6 @@ if [ -d "$HOME/.pub-cache" ]; then
     DOCKER_CMD="$DOCKER_CMD -v \"$HOME/.pub-cache:/home/developer/.pub-cache\""
 fi
 
-# Mount source repos (read-only) so global skill/hook symlinks resolve correctly
-DAIC_DIR="$HOME/source/drift/drift-further_daic"
-if [ -d "$DAIC_DIR" ]; then
-    DOCKER_CMD="$DOCKER_CMD -v \"$DAIC_DIR:$DAIC_DIR:ro\""
-    DOCKER_CMD="$DOCKER_CMD -e DAIC_SOURCE_DIR=\"$DAIC_DIR\""
-    echo "Mounting DAIC source (read-only, for hooks/skills symlinks)"
-fi
-
-MATHPOL_DIR="$HOME/source/drift/drift-further_mathpolitics"
-if [ -d "$MATHPOL_DIR" ]; then
-    DOCKER_CMD="$DOCKER_CMD -v \"$MATHPOL_DIR:$MATHPOL_DIR:ro\""
-    echo "Mounting MathPolitics source (read-only, for skills symlinks)"
-fi
-
 # Mount per-project packages file if provided
 if [ -n "${PROJECT_PACKAGES_FILE:-}" ] && [ -f "$PROJECT_PACKAGES_FILE" ]; then
     DOCKER_CMD="$DOCKER_CMD -v $PROJECT_PACKAGES_FILE:/tmp/assist-project-packages.txt:ro"
@@ -289,9 +270,6 @@ DOCKER_CMD="$DOCKER_CMD -e CLAUDE_AUTO_UPDATE=$CLAUDE_AUTO_UPDATE"
 if [ -n "${CLAUDE_CMD:-}" ]; then
     DOCKER_CMD="$DOCKER_CMD -e CLAUDE_CMD=\"$CLAUDE_CMD\""
 fi
-# Database host override: inside the container, "localhost" is the container itself.
-# Point to the host machine so project .env files with MP_DB_HOST=localhost still work.
-DOCKER_CMD="$DOCKER_CMD -e MP_DB_HOST=$GATEWAY_HOST"
 # CLI proxy points at the host Assist server. Pass the command name at runtime too
 # (not just as a build-arg) so entrypoint.sh can re-link the shim even on a stale image.
 DOCKER_CMD="$DOCKER_CMD -e ASSIST_PROXY_HOST=$GATEWAY_HOST"

@@ -10,7 +10,6 @@ from cli import http
 from cli.config import Config
 
 
-LOG_FILE = Path("/tmp/assist-server.log")
 GREEN = "\033[32m"
 RED = "\033[31m"
 YELLOW = "\033[33m"
@@ -24,9 +23,13 @@ def print_error(message: str) -> None:
     print(f"{RED}ERROR:{RESET} {message}", file=sys.stderr)
 
 
-def _control(resolved: Config, verb: str) -> int:
+def _control(resolved: Config, verb: str, arguments: list[str] | None = None, env=None) -> int:
     try:
-        completed = subprocess.run([str(resolved.home / "assist-ctl"), verb])
+        completed = subprocess.run(
+            [str(resolved.home / "assist-ctl"), verb, *(arguments or [])],
+            cwd=resolved.home,
+            env=env,
+        )
     except OSError as exc:
         print_error(f"Unable to run {resolved.home / 'assist-ctl'}: {exc}")
         return 1
@@ -45,19 +48,67 @@ def restart(resolved: Config) -> int:
     return _control(resolved, "restart")
 
 
+def activate_park(resolved: Config, invoked_home: Path, resume: bool = False) -> int:
+    """Enter the sealed new-first activation controller.
+
+    The home equality check precedes controller execution, hence precedes its
+    lock, candidate child, signals, and listener.  A default-XDG marker may
+    select a different checkout, but can never redirect this isolated CLI.
+    """
+    try:
+        selected_home = resolved.home.resolve(strict=True)
+        physical_invoked_home = invoked_home.resolve(strict=True)
+    except OSError as exc:
+        print_error(f"activation_home_unresolvable: {exc}")
+        return 1
+    if selected_home != physical_invoked_home:
+        print_error(
+            "activation_home_mismatch: "
+            f"invoked={physical_invoked_home} resolved={selected_home}"
+        )
+        return 1
+
+    assist_ctl = physical_invoked_home / "assist-ctl"
+    serve_script = physical_invoked_home / "serve.py"
+    if not assist_ctl.is_file() or not serve_script.is_file():
+        print_error("activation_entrypoint_missing")
+        return 1
+    activation_env = os.environ.copy()
+    activation_env.update(
+        {
+            "ASSIST_HOME": str(physical_invoked_home),
+            "ASSIST_ACTIVATION_HOME": str(physical_invoked_home),
+            "ASSIST_ACTIVATION_CTL": str(assist_ctl.resolve(strict=True)),
+            "ASSIST_ACTIVATION_SERVE": str(serve_script.resolve(strict=True)),
+            "ASSIST_PID_FILE": str(resolved.pid_file.resolve()),
+            "ASSIST_LOG_FILE": str(resolved.log_file.resolve()),
+            "ASSIST_CONTROL_DIR": str(resolved.control_dir.resolve()),
+            "ASSIST_AUTH_TOKEN_PATH": str(resolved.auth_token_path.resolve()),
+            "ASSIST_PORT": str(resolved.port),
+        }
+    )
+    return _control(
+        resolved,
+        "activate-park-v16",
+        ["--resume"] if resume else [],
+        activation_env,
+    )
+
+
 def status(resolved: Config) -> int:
     return _control(resolved, "status")
 
 
-def logs(lines: str = "100", follow: bool = False) -> int:
-    if not LOG_FILE.is_file():
-        print_error(f"Log file not found: {LOG_FILE}")
+def logs(resolved: Config, lines: str = "100", follow: bool = False) -> int:
+    log_file = resolved.log_file
+    if not log_file.is_file():
+        print_error(f"Log file not found: {log_file}")
         return 1
 
     command = ["tail", "-f" if follow else "-n"]
     if not follow:
         command.append(str(lines))
-    command.append(str(LOG_FILE))
+    command.append(str(log_file))
 
     try:
         completed = subprocess.run(command)
@@ -115,7 +166,7 @@ def doctor(resolved: Config) -> int:
     if npx:
         print(f"  {MARK_OK} npx ({npx})")
     elif claude:
-        print(f"  {MARK_OK} claude ({claude}) — set claude_mode to 'claude'")
+        print(f"  {MARK_OK} claude ({claude})")
     else:
         print(
             f"  {MARK_WARN} npx/claude "
@@ -179,11 +230,8 @@ def studio(arguments: list[str]) -> int:
     if shutil.which("studio"):
         executable = "studio"
         argv = ["studio", *arguments]
-    elif shutil.which("karen"):
-        executable = "karen"
-        argv = ["karen", "studio", *arguments]
     else:
-        print_error("No 'studio' or 'karen' command on PATH to delegate to")
+        print_error("no studio CLI on PATH")
         return 1
 
     try:
@@ -191,8 +239,3 @@ def studio(arguments: list[str]) -> int:
     except OSError as exc:
         print_error(f"Unable to run {executable}: {exc}")
         return 1
-
-
-def not_implemented(verb: str) -> int:
-    print(f"assist: {verb} not implemented yet (task 4)", file=sys.stderr)
-    return 3

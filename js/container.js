@@ -8,6 +8,72 @@ var _ctrSections = { packages: false, extensions: false, build: false };
 var _ctrBuildPollTimer = null;
 var _ctrExtFormOpen = false;
 
+function _initContainerDelegates() {
+    var panel = document.getElementById('container-panel');
+    if (!panel || panel.dataset.delegated) return;
+    panel.dataset.delegated = '1';
+
+    panel.addEventListener('click', function(event) {
+        var control = event.target.closest('[data-ctr-action]');
+        if (!control || !panel.contains(control)) return;
+        var action = control.dataset.ctrAction;
+        if (action === 'kill-container') {
+            killContainer(control.dataset.containerName);
+        } else if (action === 'remove-package') {
+            ctrRemovePkg(control.dataset.packageType, parseInt(control.dataset.packageIndex, 10));
+        } else if (action === 'add-package') {
+            ctrAddPkg(control.dataset.packageType);
+        } else if (action === 'remove-project-package') {
+            ctrRemoveProjPkg(parseInt(control.dataset.packageIndex, 10));
+        } else if (action === 'add-project-package') {
+            ctrAddProjPkg();
+        } else if (action === 'toggle-extension') {
+            ctrToggleExt(control.dataset.extensionId, control.dataset.extensionEnabled === 'true');
+        } else if (action === 'delete-extension') {
+            ctrDeleteExt(control.dataset.extensionId);
+        } else if (action === 'save-extension') {
+            ctrSaveNewExt();
+        } else if (action === 'cancel-extension') {
+            _ctrExtFormOpen = false;
+            renderContainerExtensions();
+        } else if (action === 'add-extension') {
+            _ctrExtFormOpen = true;
+            renderContainerExtensions();
+        } else if (action === 'toggle-lan') {
+            ctrToggleLan();
+        } else if (action === 'trigger-build') {
+            triggerBuild();
+        }
+    });
+
+    panel.addEventListener('keydown', function(event) {
+        if (event.key !== 'Enter') return;
+        var control = event.target.closest('[data-ctr-enter-action]');
+        if (!control || !panel.contains(control)) return;
+        if (control.dataset.ctrEnterAction === 'add-package') {
+            ctrAddPkg(control.dataset.packageType);
+        } else if (control.dataset.ctrEnterAction === 'add-project-package') {
+            ctrAddProjPkg();
+        }
+    });
+
+    panel.addEventListener('change', function(event) {
+        var control = event.target.closest('[data-ctr-save="change"]');
+        if (control && panel.contains(control)) {
+            ctrSaveBuild(control.dataset.configSection, control.dataset.configKey, control.value);
+        }
+    });
+
+    panel.addEventListener('focusout', function(event) {
+        var control = event.target.closest('[data-ctr-save="blur"]');
+        if (control && panel.contains(control)) {
+            ctrSaveBuild(control.dataset.configSection, control.dataset.configKey, control.value);
+        }
+    });
+}
+
+_initContainerDelegates();
+
 // ================================================================
 // Panel toggle
 // ================================================================
@@ -88,7 +154,7 @@ function renderContainerStatus() {
             html += '<div class="ctr-container-row">';
             html += '<span class="ctr-cname">' + escHtml(c.name) + '</span>';
             html += '<span class="ctr-cuptime">' + escHtml(c.running_for || c.status) + '</span>';
-            html += '<button class="ctr-kill-btn" onclick="killContainer(\'' + escHtml(c.name) + '\')">Kill</button>';
+            html += '<button class="ctr-kill-btn" data-ctr-action="kill-container" data-container-name="' + escHtml(c.name) + '">Kill</button>';
             html += '</div>';
         }
     }
@@ -113,12 +179,12 @@ function renderContainerPackages() {
     var pip = pkgs.pip || [];
     for (var i = 0; i < pip.length; i++) {
         html += '<span class="ctr-tag">' + escHtml(pip[i]);
-        html += '<button class="ctr-tag-x" onclick="ctrRemovePkg(\'pip\',' + i + ')">&times;</button></span>';
+        html += '<button class="ctr-tag-x" data-ctr-action="remove-package" data-package-type="pip" data-package-index="' + i + '">&times;</button></span>';
     }
     html += '</div>';
     html += '<div class="ctr-pkg-add">';
-    html += '<input class="ctr-pkg-input" id="ctr-add-pip" placeholder="package name" onkeydown="if(event.key===\'Enter\')ctrAddPkg(\'pip\')">';
-    html += '<button class="ctr-pkg-add-btn" onclick="ctrAddPkg(\'pip\')">Add</button>';
+    html += '<input class="ctr-pkg-input" id="ctr-add-pip" placeholder="package name" data-ctr-enter-action="add-package" data-package-type="pip">';
+    html += '<button class="ctr-pkg-add-btn" data-ctr-action="add-package" data-package-type="pip">Add</button>';
     html += '</div></div>';
 
     // Project pip (from project settings)
@@ -128,12 +194,12 @@ function renderContainerPackages() {
     var projPip = (_projectSettings && _projectSettings.packages) ? (_projectSettings.packages.pip || []) : [];
     for (var j = 0; j < projPip.length; j++) {
         html += '<span class="ctr-tag">' + escHtml(projPip[j]);
-        html += '<button class="ctr-tag-x" onclick="ctrRemoveProjPkg(' + j + ')">&times;</button></span>';
+        html += '<button class="ctr-tag-x" data-ctr-action="remove-project-package" data-package-index="' + j + '">&times;</button></span>';
     }
     html += '</div>';
     html += '<div class="ctr-pkg-add">';
-    html += '<input class="ctr-pkg-input" id="ctr-add-projpip" placeholder="package name" onkeydown="if(event.key===\'Enter\')ctrAddProjPkg()">';
-    html += '<button class="ctr-pkg-add-btn" onclick="ctrAddProjPkg()">Add</button>';
+    html += '<input class="ctr-pkg-input" id="ctr-add-projpip" placeholder="package name" data-ctr-enter-action="add-project-package">';
+    html += '<button class="ctr-pkg-add-btn" data-ctr-action="add-project-package">Add</button>';
     html += '</div></div>';
 
     // System apt
@@ -143,12 +209,12 @@ function renderContainerPackages() {
     var sys = pkgs.system || [];
     for (var k = 0; k < sys.length; k++) {
         html += '<span class="ctr-tag">' + escHtml(sys[k]);
-        html += '<button class="ctr-tag-x" onclick="ctrRemovePkg(\'system\',' + k + ')">&times;</button></span>';
+        html += '<button class="ctr-tag-x" data-ctr-action="remove-package" data-package-type="system" data-package-index="' + k + '">&times;</button></span>';
     }
     html += '</div>';
     html += '<div class="ctr-pkg-add">';
-    html += '<input class="ctr-pkg-input" id="ctr-add-system" placeholder="package name" onkeydown="if(event.key===\'Enter\')ctrAddPkg(\'system\')">';
-    html += '<button class="ctr-pkg-add-btn" onclick="ctrAddPkg(\'system\')">Add</button>';
+    html += '<input class="ctr-pkg-input" id="ctr-add-system" placeholder="package name" data-ctr-enter-action="add-package" data-package-type="system">';
+    html += '<button class="ctr-pkg-add-btn" data-ctr-action="add-package" data-package-type="system">Add</button>';
     html += '</div></div>';
 
     body.innerHTML = html;
@@ -166,12 +232,12 @@ function renderContainerExtensions() {
         var ext = _containerExtensions[i];
         var togCls = ext.enabled ? 'ctr-ext-toggle active' : 'ctr-ext-toggle';
         html += '<div class="ctr-ext">';
-        html += '<button class="' + togCls + '" onclick="ctrToggleExt(\'' + escHtml(ext.id) + '\',' + !ext.enabled + ')">' + (ext.enabled ? 'ON' : 'OFF') + '</button>';
+        html += '<button class="' + togCls + '" data-ctr-action="toggle-extension" data-extension-id="' + escHtml(ext.id) + '" data-extension-enabled="' + !ext.enabled + '">' + (ext.enabled ? 'ON' : 'OFF') + '</button>';
         html += '<span class="ctr-ext-name">' + escHtml(ext.name) + '</span>';
         if (ext.builtin) {
             html += '<span class="ctr-ext-badge">built-in</span>';
         } else {
-            html += '<button class="ctr-ext-del" onclick="ctrDeleteExt(\'' + escHtml(ext.id) + '\')">&times;</button>';
+            html += '<button class="ctr-ext-del" data-ctr-action="delete-extension" data-extension-id="' + escHtml(ext.id) + '">&times;</button>';
         }
         html += '</div>';
     }
@@ -183,11 +249,11 @@ function renderContainerExtensions() {
         html += '<input class="ctr-pkg-input" id="ctr-ext-archive" placeholder="Archive path (optional)">';
         html += '<textarea class="ctr-ext-cmds" id="ctr-ext-install" placeholder="Install commands (one per line)"></textarea>';
         html += '<div class="ctr-pkg-add">';
-        html += '<button class="ctr-pkg-add-btn" onclick="ctrSaveNewExt()">Save</button>';
-        html += '<button class="ctr-pkg-add-btn" onclick="_ctrExtFormOpen=false;renderContainerExtensions()">Cancel</button>';
+        html += '<button class="ctr-pkg-add-btn" data-ctr-action="save-extension">Save</button>';
+        html += '<button class="ctr-pkg-add-btn" data-ctr-action="cancel-extension">Cancel</button>';
         html += '</div></div>';
     } else {
-        html += '<button class="ctr-ext-add-btn" onclick="_ctrExtFormOpen=true;renderContainerExtensions()">+ Add Custom Extension</button>';
+        html += '<button class="ctr-ext-add-btn" data-ctr-action="add-extension">+ Add Custom Extension</button>';
     }
 
     body.innerHTML = html;
@@ -207,7 +273,7 @@ function renderContainerBuild() {
 
     // Node version
     html += '<div class="ctr-build-row"><span>Node version</span>';
-    html += '<select class="ctr-select" id="ctr-node" onchange="ctrSaveBuild(\'base\',\'node_version\',this.value)">';
+    html += '<select class="ctr-select" id="ctr-node" data-ctr-save="change" data-config-section="base" data-config-key="node_version">';
     ['18', '20', '22'].forEach(function(v) {
         var sel = (base.node_version === v) ? ' selected' : '';
         html += '<option value="' + v + '"' + sel + '>' + v + '</option>';
@@ -216,7 +282,7 @@ function renderContainerBuild() {
 
     // Python version
     html += '<div class="ctr-build-row"><span>Python version</span>';
-    html += '<select class="ctr-select" id="ctr-python" onchange="ctrSaveBuild(\'base\',\'python_version\',this.value)">';
+    html += '<select class="ctr-select" id="ctr-python" data-ctr-save="change" data-config-section="base" data-config-key="python_version">';
     ['3.10', '3.11', '3.12', '3.13', '3'].forEach(function(v) {
         var sel = (base.python_version === v) ? ' selected' : '';
         html += '<option value="' + v + '"' + sel + '>' + v + '</option>';
@@ -225,13 +291,13 @@ function renderContainerBuild() {
 
     // Claude version
     html += '<div class="ctr-build-row"><span>Claude version</span>';
-    html += '<input class="ctr-input" id="ctr-claude-ver" value="' + escHtml(base.claude_version || 'latest') + '" onblur="ctrSaveBuild(\'base\',\'claude_version\',this.value)"></div>';
+    html += '<input class="ctr-input" id="ctr-claude-ver" value="' + escHtml(base.claude_version || 'latest') + '" data-ctr-save="blur" data-config-section="base" data-config-key="claude_version"></div>';
 
     html += '<hr class="ctr-build-divider">';
 
     // Bind address
     html += '<div class="ctr-build-row"><span>Bind address</span>';
-    html += '<select class="ctr-select" id="ctr-bind" onchange="ctrSaveBuild(\'network\',\'bind_address\',this.value)">';
+    html += '<select class="ctr-select" id="ctr-bind" data-ctr-save="change" data-config-section="network" data-config-key="bind_address">';
     var bindOpts = [['127.0.0.1', 'Local only'], ['0.0.0.0', 'Open']];
     for (var b = 0; b < bindOpts.length; b++) {
         var bsel = (net.bind_address === bindOpts[b][0]) ? ' selected' : '';
@@ -242,22 +308,22 @@ function renderContainerBuild() {
     // LAN toggle
     var lanCls = net.allow_lan ? 'ctr-ext-toggle active' : 'ctr-ext-toggle';
     html += '<div class="ctr-build-row"><span>Allow LAN</span>';
-    html += '<button class="' + lanCls + '" id="ctr-lan-toggle" onclick="ctrToggleLan()">' + (net.allow_lan ? 'ON' : 'OFF') + '</button></div>';
+    html += '<button class="' + lanCls + '" id="ctr-lan-toggle" data-ctr-action="toggle-lan">' + (net.allow_lan ? 'ON' : 'OFF') + '</button></div>';
 
     html += '<hr class="ctr-build-divider">';
 
     // Memory
     html += '<div class="ctr-build-row"><span>Memory</span>';
-    html += '<input class="ctr-input" id="ctr-memory" value="' + escHtml(res.memory || '16g') + '" onblur="ctrSaveBuild(\'resources\',\'memory\',this.value)"></div>';
+    html += '<input class="ctr-input" id="ctr-memory" value="' + escHtml(res.memory || '16g') + '" data-ctr-save="blur" data-config-section="resources" data-config-key="memory"></div>';
 
     // CPUs
     html += '<div class="ctr-build-row"><span>CPUs</span>';
-    html += '<input class="ctr-input" id="ctr-cpus" value="' + escHtml(res.cpus || '4') + '" onblur="ctrSaveBuild(\'resources\',\'cpus\',this.value)"></div>';
+    html += '<input class="ctr-input" id="ctr-cpus" value="' + escHtml(res.cpus || '4') + '" data-ctr-save="blur" data-config-section="resources" data-config-key="cpus"></div>';
 
     html += '<hr class="ctr-build-divider">';
 
     // Rebuild button
-    html += '<button class="ctr-rebuild-btn" id="ctr-rebuild-btn" onclick="triggerBuild()">Rebuild Image</button>';
+    html += '<button class="ctr-rebuild-btn" id="ctr-rebuild-btn" data-ctr-action="trigger-build">Rebuild Image</button>';
 
     // Build log area
     html += '<pre class="ctr-build-log hidden" id="ctr-build-log"></pre>';

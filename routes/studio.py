@@ -27,7 +27,7 @@ _INBOX_INTERVAL = 10.0
 _HEALTH_INTERVAL = 30.0
 _BACKOFF_INTERVAL = 60.0
 
-# Sessions launched by `sto session start` are named studio_e<effort>_s<session>.
+# Studio-launched sessions are named studio_e<effort>_s<session>.
 _SESSION_EFFORT_RE = re.compile(r"^studio_e(\d+)_s\d+$")
 
 _snapshot = {
@@ -365,7 +365,7 @@ def studio_answer():
         if select:
             labels = item.get("options_json")
             labels = labels if isinstance(labels, list) else []
-            # Mirrors the sto CLI: a label the question never offered is a loud
+            # Match Studio's contract: a label the question never offered is a loud
             # error, not a silently stored selection the SPA can't submit.
             if select not in labels:
                 return jsonify({"ok": False, "error": "option not offered"}), 400

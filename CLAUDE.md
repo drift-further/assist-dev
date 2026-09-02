@@ -1,5 +1,10 @@
 # Claude Assist
 
+> **This repo is PUBLIC on GitHub.** Stage your work and ask before committing — commits
+> here are visible to anyone and use the configured Git author. Never `git push`. Never mention Claude,
+> AI, or co-authorship in a commit message.
+
+
 Phone-friendly web terminal interface for managing Claude Code tmux sessions. Single-user tool running on the host (not Docker) behind an nginx reverse proxy. The LAN hostname is per-install and deliberately not in the repo — read it from `ASSIST_ALLOWED_ORIGINS` in `.env`.
 
 ## Architecture
@@ -24,7 +29,12 @@ files. Locate by domain rather than reading everything: `ls js/ routes/`.
 
 **Every endpoint requires a shared secret.** `auth_token` lives in the repo root (0600, gitignored,
 auto-generated on first start). The browser logs in once at `/login` and holds an HMAC cookie;
-scripts pass `X-Assist-Token` or `?token=`. **Exempt: `/login`, `/health`, `/api/cli-proxy`.**
+scripts pass **`X-Assist-Token`** — the header is the only accepted carrier for the raw secret;
+`?token=` was removed (URL credentials leak into proxy logs, history and `Referer`).
+**Exempt: `/login`, `/health`, `/api/cli-proxy`.** `/health` returns exactly
+`{"status":"ok"}`. The CLI proxy is currently stopped by the execution park
+before its inner subnet and allowlist gates can run. The posture doc is
+`SECURITY.md`.
 
 **Any test script hitting the API must send the token or it gets 401** — that is the most likely
 cause of a sudden "everything returns 401". Rotate by deleting `auth_token` and restarting.
@@ -35,7 +45,38 @@ fresh clone of this repo will not reproduce LAN access on its own.
 
 **No build step.** Frontend is plain ES6 + CSS custom properties. No npm, no bundler, no framework. This is deliberate — zero frontend dependencies.
 
-**Testing is manual**: edit, restart, verify on phone via Playwright or browser. The one exception is `tests/test_cli_proxy.py` — `/api/cli-proxy` is the only unauthenticated endpoint that runs a host binary, so its argument handling is pinned by unit tests: `.venv/bin/python3 -m unittest tests.test_cli_proxy` from the repo root. Nothing else has automated coverage, and it is not worth adding unless the project grows significantly.
+Run the full unittest regression suite from the repo root:
+
+```bash
+.venv/bin/python3 -m unittest discover -s tests -p 'test_*.py'
+```
+
+| Module | Why it has tests |
+|---|---|
+| `test_cli_proxy` | the outer parked 409 and the retained inner gates that can run a host binary only when the intent is enabled in a future release |
+| `test_auth_token_transport` | which carriers may present the shared secret (header/cookie yes, query string no) |
+| `test_autoyes_detection` | prompt fixtures in BOTH directions — must-fire and must-not-fire. A detector made too strict fails silently |
+| `test_autoyes_posture` | the shipped Auto-Yes defaults, and the delay clamp that keeps a hand-edited settings file from removing the countdown |
+| `test_sudo_removed` | the stored sudo password is gone and must stay gone |
+| `test_vault_grammar` | `$` vault tokens stay outside the server segment grammar; secret `/type` sends stay exact and unrecorded |
+| `test_vault_client_contract` | client-only guards couple vault resolution to secret sending and keep vault chip preview local |
+| `test_favorites` | the star on a history row: add, remove, keep-a-segment. The add path broke one-directionally when a refactor dropped an import, and the phone showed nothing |
+
+One test is **not** in that command, because it needs a browser and a running server:
+`tests/playwright_vault_wire.js` proves the secret vault on the wire rather than in the source —
+it asserts over recorded network traffic that a resolved `[$handle]` reaches exactly one request,
+that the request is `POST /type` with `secret: true`, and that no draft, history or
+`/segments/expand` call ever carries the value. Point it at a throwaway instance, never the live
+one, and note it blocks service workers, so it cannot see a `sw.js` regression — that is what the
+index/cache parity guard in `test_vault_client_contract` is for.
+
+```bash
+NODE_PATH=/path/to/node_modules \
+ASSIST_URL=http://127.0.0.1:8099 ASSIST_TOKEN="$(cat auth_token)" \
+  node tests/playwright_vault_wire.js
+```
+
+Use focused module invocations while iterating, then run the discover command before handoff.
 
 ## Code Style
 
@@ -73,7 +114,9 @@ All three are gitignored (runtime data). Defaults live in `shared/state.py` as `
 
 ## CLI
 
-`bin/assist` re-execs itself under `.venv/bin/python3` (guarded by `ASSIST_VENV_REEXEC` so it cannot loop), because the shebang resolves against the caller's PATH and the CLI imports flask via `routes.autoyes`. It therefore runs from any shell, with any venv active or none. With no `.venv` present it prints an `./install.sh` hint instead of an import traceback.
+`bin/assist` re-execs itself under `.venv/bin/python3`, because the shebang resolves against the caller's PATH and the CLI imports flask via `routes.autoyes`. It therefore runs from any shell, with any venv active or none. With no `.venv` present it prints an `./install.sh` hint instead of an import traceback.
+
+**The re-exec decision is `sys.prefix == .venv`, and nothing else.** `ASSIST_VENV_REEXEC` is only an anti-loop backstop and it is **stamped with the pid** — `os.execv` preserves the pid, so a stamp written in this exec chain matches `os.getpid()` while a value inherited from another process does not. Checking the bare *presence* of that variable is what broke: the server carries it in its own environ, every tmux pane it spawns inherited it, and the wrapper then skipped the re-exec while not in the venv — so every verb died with `missing dependency 'flask'` against a perfectly healthy venv.
 
 | Command | Purpose |
 |---------|---------|
@@ -85,7 +128,7 @@ All three are gitignored (runtime data). Defaults live in `shared/state.py` as `
 | `assist config` | Print resolved paths, ports, and environment settings |
 | `assist doctor` | Check prerequisites and server health |
 | `assist container status` | Show image details and running `claude-session-*` containers |
-| `assist container build` | Build the container image and stream the log |
+| `assist container build` | Request an image build; currently parked with HTTP 409 |
 | `assist container config` | Print the container build configuration |
 | `assist container extensions` | List registered extension bundles |
 | `assist container kill <name>` | Kill a running `claude-session-*` container |
@@ -97,7 +140,7 @@ All three are gitignored (runtime data). Defaults live in `shared/state.py` as `
 | `assist kill <session> [--pane P]` | Kill a tmux session |
 | `assist autoyes <session> (--on\|--off\|--status) [--delay N]` | Persistently set or inspect auto-yes; enabled delays are clamped to 0.1–30 seconds |
 | `assist autoyes --global (--on\|--off\|--status) [--delay N]` | Set or inspect the all-sessions switch |
-| `assist studio [args]` | Delegate to the Studio operator command |
+| `assist studio [args]` | Execute a separate `studio` CLI on `PATH`; fail clearly when none is installed |
 | `assist help` | Show the full command reference |
 
 Every session verb supports `-h`/`--help`, with descriptions for each positional argument and flag. `--autoyes` on `send` or `wait` applies only during that one wait and restores the prior setting afterward; `assist autoyes` changes the persistent per-session setting, and its `--delay` is valid only with `--on`.
@@ -137,10 +180,40 @@ separately via `register_streaming(sock)`.
 ## Key Behaviors
 
 - **WebSocket terminal streaming**: flask-sock, captures tmux panes, streams to connected clients
-- **Smart actions**: JS pattern detection for permission prompts, numbered options, sudo — surfaces one-tap mobile actions
+- **Smart actions**: JS pattern detection for permission prompts and numbered options — surfaces one-tap mobile actions. Mirrors the server matchers in `routes/autoyes.py`; keep the two in step
 - **Prompt segments**: a favorite given a handle becomes `[handle]`; `shared/segments.py` expands it server-side in `/type` (opt-in via an `expand` flag) while history keeps the token form
 - **Auto-yes**: Background scanner with per-session countdown timers for auto-approving prompts. An `autoyes.all_sessions` switch arms every agent pane at once — resolved at scan time (runtime map → project settings → switch), so new sessions are covered with no backfill — with a per-session opt-out
-- **Automate**: Continuous mode — sends prompts, watches for done signals, relaunches
+- **Automate**: Continuous mode exists, but its start/relaunch/clear/resend/trust/answer execution intents are temporarily parked while container host wiring migrates
+
+### Temporary execution park
+
+The exact denied intents are `automate_start`, `automate_hard_relaunch`,
+`automate_soft_clear`, `automate_soft_resend`, `automate_trust_answer`,
+`automate_auto_answer`, `configured_cli_proxy`, and `configured_image_build`.
+Everything else remains allowed, including saved commands, `/api/git/run`,
+project-venv creation, `/api/restart`, terminal run-init, launch/duplicate with
+an init command, and the native folder picker. There is no un-park verb, and
+`ExecutionPark.perform()` intentionally ignores `Phase`.
+
+Denied HTTP calls return 409. For `automate_start`, the exact body is:
+
+```json
+{
+  "ok": false,
+  "error": "container_launch_parked",
+  "reason": "Container launch automation is temporarily parked while host wiring migrates.",
+  "intent": "automate_start"
+}
+```
+
+### Launch provenance initialization
+
+On ordinary non-handoff startup, `serve.py` calls the same empty-epoch
+initializer as `python -m shared.launch_provenance initialize --expect-empty`
+when `.assist-launch-provenance-v1/` is absent, and writes
+`.assist-launch-provenance-v1-initialization.json`. It never runs when the store
+path already exists, so corrupt state is not repaired and runtime reads still
+fail closed. Keep the `--park-handoff-fd` path free of this initialization.
 
 ## Branch Strategy
 

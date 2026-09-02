@@ -10,7 +10,8 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
-from shared.tmux import detect_venv, tmux_send_keys, tmux_send_text
+from shared import execution_park as park
+from shared.tmux import create_tmux_session, detect_venv, tmux_send_keys, tmux_send_text
 from shared.utils import resolve_target
 
 git_bp = Blueprint("git_bp", __name__)
@@ -51,6 +52,14 @@ def _build_git_command(op, message):
 @git_bp.route("/api/git/run", methods=["POST"])
 def git_run():
     """Run a fixed git op in a temporary tmux session, isolated from Claude Code."""
+    result = park.perform(park.Intent.FIXED_GIT, _git_run_effect)
+    if park.is_refusal(result):
+        return jsonify(result.body()), result.http_status
+    return result
+
+
+def _git_run_effect():
+    """Complete the fixed Git unit while the park lock remains held."""
     # A valid JSON body need not be an object — `["x"]` and `1` both parse, and
     # .get() on either is a 500 rather than the 400 it should be.
     data = request.get_json(silent=True)
@@ -110,28 +119,24 @@ def git_run():
     session_id = f"_git_{uuid.uuid4().hex[:8]}"
 
     def _run_git():
+        created_session_id = None
         try:
-            subprocess.run(
-                [
-                    "tmux",
-                    "new-session",
-                    "-d",
-                    "-s",
-                    session_id,
-                    "-c",
-                    project_dir,
-                    "-x",
-                    "200",
-                    "-y",
-                    "50",
-                ],
-                capture_output=True,
-                timeout=10,
+            created = create_tmux_session(
+                session_name=session_id,
+                cwd=project_dir,
+                cols=200,
+                rows=50,
+                surface="temporary_git",
+                diagnostic_alias=f"{session_id}:0.0",
             )
+            if not created.ok:
+                return {"ok": False, "error": created.status}
+            pane_id = created.identity.pane_id
+            created_session_id = created.identity.session_id
 
             full_cmd = f"{command} ; tmux wait-for -S {session_id}"
-            tmux_send_text(f"{session_id}:0.0", full_cmd)
-            tmux_send_keys(f"{session_id}:0.0", "Enter")
+            tmux_send_text(pane_id, full_cmd)
+            tmux_send_keys(pane_id, "Enter")
 
             subprocess.run(
                 ["tmux", "wait-for", session_id],
@@ -146,7 +151,7 @@ def git_run():
                     "capture-pane",
                     "-p",
                     "-t",
-                    f"{session_id}:0.0",
+                    pane_id,
                     "-S",
                     "-100",
                 ],
@@ -157,25 +162,27 @@ def git_run():
             output = cap.stdout.rstrip("\n") if cap.returncode == 0 else ""
 
             subprocess.run(
-                ["tmux", "kill-session", "-t", session_id],
+                ["tmux", "kill-session", "-t", created_session_id],
                 capture_output=True,
                 timeout=5,
             )
 
             return {"ok": True, "output": output}
         except subprocess.TimeoutExpired:
-            subprocess.run(
-                ["tmux", "kill-session", "-t", session_id],
-                capture_output=True,
-                timeout=5,
-            )
+            if created_session_id is not None:
+                subprocess.run(
+                    ["tmux", "kill-session", "-t", created_session_id],
+                    capture_output=True,
+                    timeout=5,
+                )
             return {"ok": False, "error": "Command timed out (60s)"}
         except Exception as e:
-            subprocess.run(
-                ["tmux", "kill-session", "-t", session_id],
-                capture_output=True,
-                timeout=5,
-            )
+            if created_session_id is not None:
+                subprocess.run(
+                    ["tmux", "kill-session", "-t", created_session_id],
+                    capture_output=True,
+                    timeout=5,
+                )
             return {"ok": False, "error": str(e)}
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
@@ -192,6 +199,14 @@ def git_run():
 @git_bp.route("/api/venv/create", methods=["POST"])
 def venv_create():
     """Create a .venv in the active tmux pane's project directory."""
+    result = park.perform(park.Intent.PROJECT_VENV, _venv_create_effect)
+    if park.is_refusal(result):
+        return jsonify(result.body()), result.http_status
+    return result
+
+
+def _venv_create_effect():
+    """Complete venv creation/activation while the park lock remains held."""
     data = request.get_json(silent=True) or {}
     target = resolve_target(data)
     if not target:

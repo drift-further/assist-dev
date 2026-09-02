@@ -73,3 +73,199 @@ body.chrome-collapsed .session-rail {
     padding: 2px 7px; font: inherit; font-size: 11px; line-height: 1.2;
 }
 .term-chrome-btn:active { background: rgba(255, 255, 255, 0.07); }
+.term-chrome-btn.is-on {
+    color: var(--cyan);
+    border-color: rgba(0, 212, 255, 0.5);
+    background: rgba(0, 212, 255, 0.08);
+}
+
+/* ==========================================================================
+   Wrapping session rail — opt-in, body.tabs-wrap (the toggle lives in Actions;
+   the preference is localStorage assist.tabsWrap, read before first paint).
+
+   OFF (default): the two fixed rows above are exactly as they were.
+
+   ON: the two rows collapse into ONE inline flow. The identity cluster comes
+   first, the session tabs follow it into the empty middle of row 1, and what
+   does not fit wraps onto the next row at full width.
+
+   Why floats and not flex. A flex item never reflows around a sibling, so in a
+   wrapping flex row the right-hand triggers could only be placed after the last
+   tab — i.e. dragged onto the bottom row, moving every time a session appears.
+   A float is the one layout mode where later inline content flows around a
+   corner-anchored box, which is exactly the shape being asked for. So the
+   triggers are ONE floated cluster (.chrome-actions, added purely to give the
+   float a single box) and the tabs are inline-level boxes flowing past it.
+
+   Why display: contents. .status-bar, .session-rail and .session-tabs stop
+   generating boxes, so their children join one flow WITHOUT any DOM move —
+   every id, inline handler, event listener and querySelector keeps working,
+   and removing the body class restores the two-row chrome exactly.
+
+   THE BADGE HEADROOM IS STILL LOAD-BEARING — for a different reason.
+   Dropping overflow-x: auto does dissolve the scrollport that vertical
+   overflow could never escape, but .tab-idle-time sits at top: -7px and a
+   running .tab-dot at top: -4px, so on the FIRST row they would land at
+   NEGATIVE viewport coordinates and be clipped by the window instead. Row 1's
+   8px now lives in .top-chrome's padding-top (overflow clips at the padding
+   box, so a badge inside the padding survives), and every row below gets its
+   headroom from the 5px vertical margin on each tab. Measured with a badge
+   forced onto every row: row 1 idle pill top y=6, row 2 y=56 against a row-1
+   tab bottom of 53. Do not remove either.
+   ========================================================================== */
+
+/* Each float needs one box to be. In the default chrome both wrappers must
+   stay invisible to layout, so their children remain direct flex children of
+   .status-bar and row 1 is byte-for-byte what it was. */
+.chrome-identity,
+.chrome-actions { display: contents; }
+
+body.tabs-wrap .top-chrome {
+    /* One row = 40px tab + 2 x 5px margin. The cap is TWO ROWS OF TABS; the
+       identity band is allowed a row of its own only where it is too full to
+       hold a tab (see the phone override at the end of this file). Change
+       --wrap-rows to move the cap; the max-height follows. */
+    --wrap-row: 50px;
+    --wrap-rows: 2;
+    display: block;
+    white-space: normal;
+    /* Kills the whitespace between the source-formatted children now that they
+       are inline-level (a 16px space would open ~8px holes), and zeroes the
+       line strut. Every descendant that renders text sets its own font-size. */
+    font-size: 0;
+    padding: 8px 8px 0;
+    padding-top: calc(env(safe-area-inset-top, 0px) + 8px);
+    background: linear-gradient(180deg, #0a1210 0%, #060e0a 100%);
+    box-shadow: inset 0 -1px 0 var(--border);
+    /* The cap. Rows past the second are clipped, not scrolled — the ≡ pill is
+       floated onto row 1 below, and it lists every tab including the clipped
+       ones, so nothing becomes unreachable. Clipping at the padding box is
+       what keeps the row-1 badges (which sit in the padding) visible. */
+    max-height: calc(env(safe-area-inset-top, 0px) + 8px
+                     + var(--wrap-row) * var(--wrap-rows));
+    overflow: hidden;
+}
+
+/* Tap-to-place reorder inserts ~14px of drop zone between every tab — around
+   490px with a dozen sessions, which pushes a row or two past the cap and
+   hides the very slots being aimed at. The cap lifts for the duration and the
+   rows snap back on exit. :has() is a progressive enhancement: where it is not
+   supported the rule is dropped and reorder behaves as it did before. */
+body.tabs-wrap .top-chrome:has(.reorder-banner) { max-height: none; }
+
+body.tabs-wrap .status-bar,
+body.tabs-wrap .session-rail,
+body.tabs-wrap .session-tabs { display: contents; }
+
+/* Identity cluster, anchored to the top left of row 1. A float rather than
+   inline content, because inline content that no tab can fit beside still
+   OWNS its line: on a 390px phone the brand + target indicator left ~50px of
+   row 1, so the first tab broke to a line of its own and the header spent a
+   whole row on a 17px-tall wordmark, with the row after it half clipped. As a
+   float it shares row 1 with the chips, and the tabs that cannot fit beside it
+   start on the next row at full width. */
+body.tabs-wrap .chrome-identity {
+    display: flex;
+    float: left;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    max-width: 60%;
+    height: 40px;
+    margin: 5px 4px 5px 0;
+}
+/* The flex spacer has no job between two floats. */
+body.tabs-wrap .chrome-spacer { display: none; }
+
+/* Studio + Actions, anchored to the top right of row 1. The 5px margins put
+   the cluster on the same centre line as the tabs, and its 50px margin box
+   ends exactly where row 1 does, so row 2 is never shortened by it. */
+body.tabs-wrap .chrome-actions {
+    display: flex;
+    float: right;
+    align-items: center;
+    gap: 4px;
+    width: max-content;
+    max-width: 100%;
+    height: 40px;
+    margin: 5px 0;
+}
+/* Default desktop lets Studio grow into the context lane. A floated flex box
+   must instead shrink-wrap both triggers or it would consume the tab flow. */
+body.tabs-wrap .chrome-actions #btn-studio {
+    flex: 0 0 auto;
+    width: auto;
+    max-width: none;
+    overflow: visible;
+}
+
+/* Tabs, the pin divider and the reorder affordances all become inline-level.
+   The 5px vertical margin is both the badge headroom for rows 2+ and the
+   thing that makes a row exactly --wrap-row tall. */
+body.tabs-wrap .session-tab {
+    vertical-align: middle;
+    margin: 5px 4px 5px 0;
+}
+body.tabs-wrap .session-tabs-empty,
+body.tabs-wrap .pin-divider,
+body.tabs-wrap .reorder-drop-zone {
+    display: inline-block;
+    vertical-align: middle;
+}
+/* A block-level banner would break the inline flow into anonymous blocks and
+   drop every tab onto its own row for the duration of a reorder. */
+body.tabs-wrap .reorder-banner {
+    display: inline-flex;
+    vertical-align: middle;
+    margin: 5px 4px 5px 0;
+}
+
+/* The tab pull-out handle. js/tabs.js puts it FIRST in the strip while wrap is
+   on (it is appended last in the default rail, where sticky right-aligns it),
+   so this float lands on row 1 beside the chips instead of on whichever row
+   the flow happens to have reached — including a clipped one. */
+body.tabs-wrap .stale-pill-wrap {
+    position: static;
+    float: right;
+    height: 40px;
+    margin: 5px 0 5px 4px;
+}
+
+body.tabs-wrap #chrome-grabber {
+    height: 40px;
+    margin: 5px 4px 5px 0;
+}
+body.tabs-wrap.chrome-collapsed #chrome-grabber {
+    display: inline-flex;
+    vertical-align: middle;
+}
+/* Collapsed + wrapping: the identity row and the chips go, the tabs stay and
+   reflow into the width they leave behind. max-height/opacity on .status-bar
+   cannot do this — with display: contents it has no box to collapse. */
+body.tabs-wrap.chrome-collapsed .status-bar > * { display: none; }
+
+/* Phone widths — the same 600px breakpoint the rest of the chrome uses.
+   Measured at 390px with 13 sessions: the identity cluster (~148px) plus the
+   two triggers (~120px) plus the ≡ pill (~48px) leave ~50px of row 1, and the
+   narrowest real tab is ~93px, so row 1 holds NO tabs here. A flat 2-row cap
+   would therefore spend one of the two rows on a band with no tabs in it and
+   show a single row of them (measured: 2 tabs at 390px, vs 2 in the scrolling
+   rail — the whole feature would buy nothing on a phone). The band gets a row
+   of its own instead, so the cap stays at two rows OF TABS: 5 tabs at 390px.
+   Collapsing removes the band, so the allowance goes with it.
+   Where exactly row 1 starts holding a tab depends on the session names in
+   play, so this boundary is approximate by nature — err on the side of the
+   extra row, since narrow is where the strip is most starved. */
+@media (max-width: 600px) {
+    body.tabs-wrap .top-chrome { --wrap-rows: 3; }
+    body.tabs-wrap.chrome-collapsed .top-chrome { --wrap-rows: 2; }
+}
+
+/* The same side-padding distribution the two rows use in status-bar.css — it
+   lives on .top-chrome here, because that is the only box left. */
+@media (max-width: 600px) {
+    body.tabs-wrap .top-chrome { padding-left: 4px; padding-right: 4px; }
+}
+@media (min-width: 900px) {
+    body.tabs-wrap .top-chrome { padding-left: 16px; padding-right: 16px; }
+}

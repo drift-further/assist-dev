@@ -1,6 +1,6 @@
 // studio.js — Studio attention inbox panel, connect sheet, ◇ badge, effort chip.
 // Every Studio call is server-proxied through /studio/* so the API token
-// never reaches the browser (effort 268 decision).
+// never reaches the browser.
 
 var _studioPanelOpen = false;
 var _studioSheetOpen = false;

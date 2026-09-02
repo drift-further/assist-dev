@@ -1,18 +1,14 @@
 """routes/streaming.py — WebSocket terminal streaming."""
 
-import hashlib
 import json
-import subprocess
 import threading
 import time
 
 import shared.state as state
-from shared.agent_identity import _has_wrapper_descendant, resolve_process
 from shared.security import origin_allowed
 from shared.tmux import (
     capture_pane,
     set_ws_send_timeout,
-    tmux_exact_target,
 )
 
 # The sock route is registered via register_streaming() called from serve.py.
@@ -23,196 +19,6 @@ _sock = None  # Set by register_streaming()
 # Default scrollback lines for a stream when the client doesn't specify.
 # Used both before the first message arrives and as the parse fallback.
 _DEFAULT_LINES = 2000
-
-# How long to wait after the resize toggle for the TUI to flush its redraw
-# before we snapshot the new content hash. 0.3s is plenty for Ink/ncurses.
-_REDRAW_FLUSH_SEC = 0.3
-
-# Floor sizes for the redraw toggle. If a previous toggle left the pane stuck
-# tiny (e.g. second resize-window call failed), heal it back up to a usable
-# size instead of preserving the broken state. Matches the floors used in
-# /terminal/resize and js/terminal.js:_calcTermSize.
-_MIN_REDRAW_COLS = 40
-_MIN_REDRAW_ROWS = 60
-
-# Periodic self-heal: when a TUI session has been streaming-stable (no content
-# change) for this long AND we haven't redrawn in the throttle window, fire a
-# background _force_redraw to clear any accumulated tmux-grid artifacts.
-_REDRAW_STABLE_SEC = 3.0
-_REDRAW_THROTTLE_SEC = 10.0
-
-# Per-target timestamps for the self-heal heuristic. Written by the streamer
-# thread and (via _maybe_redraw_async) WS handler threads; plain dict ops are
-# fine here — a lost-update race only skews the throttle by one window.
-_stable_since: dict[str, float] = {}
-_last_redraw_time: dict[str, float] = {}
-
-
-def _force_redraw(target):
-    """Force a TUI in `target` to fully repaint, clearing tmux-grid artifacts.
-
-    Why: tmux pane cells outside a TUI's current redraw region can hold stale
-    content from earlier output. capture-pane returns the grid verbatim, so the
-    browser sees the staleness as overlapping/garbled characters. A real tmux
-    client attach fixes this because attaching triggers ioctl(TIOCSWINSZ) on
-    the pty, which delivers SIGWINCH from the kernel to the foreground process
-    group of the controlling tty (the actual TUI — e.g. node/claude — not its
-    bash parent), and the TUI does a full clear-and-redraw.
-
-    Bare SIGWINCH is not enough: TUIs typically no-op the signal handler when
-    the size hasn't changed. We replicate the attach behavior by briefly
-    resizing the window by one row, then back. That's a real size change → real
-    SIGWINCH delivery via the tty layer → full clear-and-redraw.
-
-    Side-effect we have to undo: tmux's `resize-window` pins the window's
-    `window-size` option to `manual`. We save the prior value and restore it.
-
-    Side-effect we have to suppress: the TUI's repaint changes the captured
-    content. The poll loop hashes captures and bumps `pane_last_activity` on
-    any change, which would reclassify an idle session as active. After the
-    redraw we snapshot the new content hash and restore the prior activity
-    timestamp so the next poll sees no change.
-
-    Skipped if a real tmux client is attached — don't tug on someone's terminal
-    out from under them. Best-effort otherwise: failure is silent.
-    """
-    try:
-        # `=name:` (colon required!) forces exact session-name matching — a
-        # dead target must fail, not prefix-match into resizing some other
-        # live session's pane. Bare `=name` is broken on tmux 3.4: pane-target
-        # commands reject it and display-message expands formats empty.
-        exact = tmux_exact_target(target)
-        info = subprocess.run(
-            ["tmux", "display-message", "-t", exact, "-p",
-             "#{pane_width}\t#{pane_height}\t#{session_attached}\t#{pane_pid}\t#{pane_current_command}\t#{alternate_on}"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=2,
-        )
-        if info.returncode != 0:
-            return
-        parts = info.stdout.strip().split("\t")
-        if len(parts) < 3:
-            return
-        try:
-            w = int(parts[0])
-            h = int(parts[1])
-            attached = int(parts[2] or "0")
-        except ValueError:
-            return
-        if attached > 0:
-            return
-        pane_pid = None
-        if len(parts) >= 4:
-            try:
-                pane_pid = int(parts[3])
-            except ValueError:
-                pass
-        cmd = parts[4] if len(parts) >= 5 else ""
-        alt_on = len(parts) >= 6 and parts[5] == "1"
-
-        if alt_on:
-            # A fitted alt-screen TUI's size is deliberate (frontend auto-fit).
-            # Healing it up to the 40x60 floors would undo the fit — toggle at
-            # the pane's current size instead. The floors exist for Claude's
-            # 60-row main-screen convention.
-            target_w, target_h = w, h
-        else:
-            target_w = max(w, _MIN_REDRAW_COLS)
-            target_h = max(h, _MIN_REDRAW_ROWS)
-
-        with state._activity_lock:
-            saved_activity = state.pane_last_activity.get(target)
-
-        is_wrapper = _has_wrapper_descendant(target, pane_pid)
-        agent_kind = resolve_process(target, pane_pid, cmd)
-
-        if is_wrapper or agent_kind == "claude":
-            # Wrapper TUI (e.g. claude inside docker via claude-mount.sh):
-            # the in-container TUI's foreground pty is several hops from the
-            # host pane, so SIGWINCH-via-resize can't reach it. Ctrl+L does,
-            # because tmux send-keys goes through the host pty -> docker
-            # stdin -> container pty -> claude, and claude implements C-l as
-            # full clear-and-redraw. This wipes the dirty cells without
-            # losing any in-flight typed input (claude re-renders it).
-            #
-            # Native host claude gets the same treatment for the opposite
-            # reason: SIGWINCH *does* reach it, but its diff renderer skips
-            # cells it believes unchanged, so a resize-driven redraw is what
-            # LEAVES stale cells. Only C-l invalidates its screen model.
-            subprocess.run(
-                ["tmux", "send-keys", "-t", exact, "C-l"],
-                capture_output=True, timeout=2,
-            )
-        else:
-            opt = subprocess.run(
-                ["tmux", "show-options", "-t", exact, "-w", "-v", "window-size"],
-                capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=2,
-            )
-            old_window_size = (
-                opt.stdout.strip()
-                if opt.returncode == 0 and opt.stdout.strip()
-                else None
-            )
-
-            subprocess.run(
-                ["tmux", "resize-window", "-t", exact, "-x", str(target_w), "-y", str(target_h - 1)],
-                capture_output=True, timeout=2,
-            )
-            subprocess.run(
-                ["tmux", "resize-window", "-t", exact, "-x", str(target_w), "-y", str(target_h)],
-                capture_output=True, timeout=2,
-            )
-
-            if old_window_size:
-                subprocess.run(
-                    ["tmux", "set-option", "-t", exact, "-w",
-                     "window-size", old_window_size],
-                    capture_output=True, timeout=2,
-                )
-            else:
-                subprocess.run(
-                    ["tmux", "set-option", "-t", exact, "-w", "-u", "window-size"],
-                    capture_output=True, timeout=2,
-                )
-
-        time.sleep(_REDRAW_FLUSH_SEC)
-
-        cap = subprocess.run(
-            ["tmux", "capture-pane", "-e", "-p", "-t", exact, "-S", "-60"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=2,
-        )
-        if cap.returncode == 0:
-            tail = cap.stdout.rstrip("\n")
-            if tail:
-                new_hash = hashlib.md5(tail.encode()).hexdigest()
-                with state._activity_lock:
-                    state.pane_content_hash[target] = new_hash
-                    if saved_activity is not None:
-                        state.pane_last_activity[target] = saved_activity
-    except Exception:
-        pass
-
-
-def _maybe_redraw_async(target, info):
-    """Kick a background repaint on connect/subscribe for TUI/wrapper panes.
-
-    Plain shell panes don't accumulate stale alt-screen cells — skip them so
-    a connect doesn't pay the redraw cost (or tug at the pane) for nothing.
-    Throttled via _last_redraw_time so reconnect churn can't fire redraws
-    back-to-back; the streamer's periodic self-heal shares the same clock.
-    """
-    if not info or not (
-        info.get("alternate_on") or info.get("is_wrapper") or info.get("is_native_tui")
-    ):
-        return
-    now = time.time()
-    if now - _last_redraw_time.get(target, 0.0) < _REDRAW_THROTTLE_SEC:
-        return
-    _last_redraw_time[target] = now
-    threading.Thread(target=_force_redraw, args=(target,), daemon=True).start()
-
 
 def _tui_flag(msg):
     """Normalize a subscribe message's per-pane TUI override.
@@ -302,13 +108,10 @@ def register_streaming(sock_instance):
                 pass
             return
 
-        # First frame goes out immediately — even if the pane has stale
-        # grid artifacts. Any repaint runs in the background afterwards and
-        # the streamer pushes the cleaned frame when the content changes.
+        # First frame goes out immediately.
         try:
-            frame, info = _full_frame(target, lines, tui)
+            frame, _info = _full_frame(target, lines, tui)
             _send_to(client, frame)
-            _maybe_redraw_async(target, info)
         except Exception:
             return
 
@@ -344,9 +147,8 @@ def register_streaming(sock_instance):
                         lines = new_lines
                         tui = new_tui
                         _ensure_streamer()
-                        frame, info = _full_frame(target, lines, tui)
+                        frame, _info = _full_frame(target, lines, tui)
                         _send_to(client, frame)
-                        _maybe_redraw_async(target, info)
                 except Exception:
                     pass
         except Exception:
@@ -414,30 +216,7 @@ def _terminal_streamer():
                         prev_content = state.ws_last_content.get(cache_key)
 
                     if prev_content == content:
-                        # Self-heal: a TUI (alt-screen on host, native
-                        # claude on the main screen, or wrapped in
-                        # docker/podman) that's been quiet for a few
-                        # seconds may have left stale grid cells from
-                        # cursor-position writes that never triggered a
-                        # full repaint. _force_redraw picks the right
-                        # strategy per kind (resize toggle vs Ctrl+L) and
-                        # runs in a daemon thread so the 0.3s flush doesn't
-                        # block the poll. Throttled so it can't churn.
-                        if info and (
-                            info.get("alternate_on")
-                            or info.get("is_wrapper")
-                            or info.get("is_native_tui")
-                        ):
-                            stable_for = now - _stable_since.get(target, now)
-                            since_redraw = now - _last_redraw_time.get(target, 0.0)
-                            if stable_for >= _REDRAW_STABLE_SEC and since_redraw >= _REDRAW_THROTTLE_SEC:
-                                _last_redraw_time[target] = now
-                                threading.Thread(
-                                    target=_force_redraw, args=(target,), daemon=True
-                                ).start()
                         continue
-
-                    _stable_since[target] = now
 
                     msg_data = {
                         "type": "full",
@@ -481,11 +260,6 @@ def _terminal_streamer():
                     stale = [k for k in state.ws_last_content if k not in active_keys]
                     for k in stale:
                         del state.ws_last_content[k]
-
-                active_targets = {t for t, _, _ in targets}
-                for d in (_stable_since, _last_redraw_time):
-                    for t in [t for t in list(d) if t not in active_targets]:
-                        del d[t]
 
             except Exception:
                 time.sleep(0.5)

@@ -281,7 +281,7 @@ async function loadProjectSessions(projectName) {
         const data = await resp.json();
         if (!data.ok || !data.sessions.length) return;
 
-        const container = document.querySelector(`.proj-btn[data-project="${projectName}"]`);
+        const container = document.querySelector(`.proj-btn[data-project="${CSS.escape(projectName)}"]`);
         if (!container) return;
 
         // Only show resumable sessions
@@ -305,14 +305,28 @@ async function loadProjectSessions(projectName) {
 }
 
 async function resumeSession(sessionId, projectName) {
-    await launchProject(projectName);
+    if (typeof sessionId !== 'string' ||
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(sessionId)) {
+        showFlash('error', 'Invalid session ID');
+        return;
+    }
+    const launchData = await launchProject(projectName);
+    if (!launchData || !launchData.expected_target_identity) {
+        showFlash('error', 'Resume target absent');
+        return;
+    }
     // Wait for session to be ready
     await new Promise(r => setTimeout(r, 1500));
     // Send claude --resume command
-    await fetch('/type', {
+    await fetch('/type/client-resume', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ text: CLAUDE_CMD + ' --resume ' + sessionId, enter: true, target: _termTarget }),
+        body: JSON.stringify({
+            text: CLAUDE_CMD + ' --resume ' + sessionId,
+            enter: true,
+            target: _termTarget,
+            expected_target_identity: launchData.expected_target_identity,
+        }),
     });
     showFlash('sent', 'Resuming session...');
 }
@@ -409,6 +423,7 @@ function toggleProjects() {
 async function launchProject(name, btnEl) {
     if (btnEl) btnEl.classList.add('launching');
     _trackRecentProject(name);
+    let launchData = null;
     try {
         const { cols, rows } = _calcTermSize();
         const resp = await fetch('/terminal/launch', {
@@ -417,8 +432,10 @@ async function launchProject(name, btnEl) {
             body: JSON.stringify({project: name, cols, rows}),
         });
         const data = await resp.json();
+        launchData = data;
         if (data.ok) {
             _termTarget = data.target;
+            _termExpectedIdentity = data.expected_target_identity || null;
             updateTmuxIndicator();
             try { localStorage.setItem('term_target', _termTarget); } catch(e) {}
             // Switch to terminal view
@@ -437,11 +454,14 @@ async function launchProject(name, btnEl) {
             });
         } else {
             showFlash('error', data.error || 'Launch failed');
+            return null;
         }
     } catch (e) {
         showFlash('error', 'Offline');
+        return null;
     }
     if (btnEl) btnEl.classList.remove('launching');
+    return launchData;
 }
 
 // -- Sessions --
@@ -471,7 +491,6 @@ async function loadSessions() {
             if (p.agent_name) teamSessions.add(p.session);
         }
 
-        let prevSession = null;
         for (const p of panes) {
             const isAgent = !!p.agent_name;
             // Mirrors _applySessionsData() in app.js — keep the two in sync.
@@ -479,11 +498,6 @@ async function loadSessions() {
             const isTeamLead = !isAgent && teamSessions.has(p.session);
             const aName = agentDisplayName(p);
             const aColor = _agentColors[p.agent_color] || '';
-
-            // Insert team separator before first agent of a team group
-            if (isTeamLead && prevSession !== p.session) {
-                // No extra separator needed — lead tab starts the group
-            }
 
             const tab = document.createElement('button');
             tab.className = 'session-tab';
@@ -521,7 +535,6 @@ async function loadSessions() {
             tab.onclick = function() { selectTab(p.target); };
             if (p.target === current) tab.classList.add('active');
             container.appendChild(tab);
-            prevSession = p.session;
         }
 
         // Auto-select if we have a saved target
@@ -533,7 +546,7 @@ async function loadSessions() {
             // Mirrors _applySessionsData() in app.js — keep the two in sync.
             const sess = current.split(':')[0];
             const fallback = panes.find(p => p.session === sess) || panes[0];
-            selectTab(fallback.target);
+            selectTab(fallback.target, true);   // automatic, not a tap — see selectTab
             return;
         } else if (panes.length > 0 && !_termTarget) {
             _termTarget = panes[0].target;
@@ -575,7 +588,11 @@ let _tabSwitchScrollLock = false;  // briefly suppress scroll-freeze after tab s
 let _lastTabTapTime = 0;
 const _DOUBLE_TAP_MS = 500;
 
-function selectTab(target) {
+// `auto` marks a switch nobody asked for — dead-pane recovery, or following a
+// session Assist just launched. It reaches the composer as "do not replace what
+// is being typed": a tap is permission to swap the text out, a switch that
+// happens TO you is not.
+function selectTab(target, auto) {
     if (target === _termTarget && (Date.now() - _lastTabTapTime) < _DOUBLE_TAP_MS) {
         _lastTabTapTime = 0;  // consume; require fresh sequence for next clear
         _clearActivePane(target);
@@ -585,7 +602,7 @@ function selectTab(target) {
     // The composer belongs to the tab: flush what is on screen to the tab we
     // are leaving, then swap in the new one's text, tray and Enter lock. Must
     // run BEFORE _termTarget moves — the draft module reads it for "here".
-    if (typeof onTabSwitchDraft === 'function') onTabSwitchDraft(_termTarget, target);
+    if (typeof onTabSwitchDraft === 'function') onTabSwitchDraft(_termTarget, target, !auto);
     _termTarget = target;
     // Opening a tab is the act of looking — clear its model caret.
     if (typeof _markModelSeen === 'function') _markModelSeen(target);
@@ -890,7 +907,6 @@ function _doRender(content, info, target) {
         actionInfo && actionInfo.agent_kind
     );
     renderSmartActions(detected);
-    _updateSudoSendBtn();
 }
 
 // -- WebSocket terminal streaming --

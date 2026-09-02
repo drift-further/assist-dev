@@ -8,26 +8,30 @@
     <link rel="apple-touch-icon" href="/icons/assist-dev-a.png?v=1">
     <link rel="stylesheet" href="/css/fonts.css">
     <link rel="stylesheet" href="/css/base.css?v=1">
-    <link rel="stylesheet" href="/css/status-bar.css?v=3">
-    <link rel="stylesheet" href="/css/input.css?v=4">
-    <link rel="stylesheet" href="/css/terminal.css?v=11">
+    <link rel="stylesheet" href="/css/status-bar.css?v=4">
+    <link rel="stylesheet" href="/css/input.css?v=8">
+    <link rel="stylesheet" href="/css/terminal.css?v=12">
     <link rel="stylesheet" href="/css/drawers.css?v=2">
-    <link rel="stylesheet" href="/css/widgets.css">
-    <link rel="stylesheet" href="/css/commands.css">
-    <link rel="stylesheet" href="/css/autocomplete.css">
-    <link rel="stylesheet" href="/css/segments.css">
-    <link rel="stylesheet" href="/css/container.css">
+    <link rel="stylesheet" href="/css/widgets.css?v=1">
+    <link rel="stylesheet" href="/css/commands.css?v=1">
+    <link rel="stylesheet" href="/css/autocomplete.css?v=1">
+    <link rel="stylesheet" href="/css/segments.css?v=2">
+    <link rel="stylesheet" href="/css/container.css?v=1">
     <link rel="stylesheet" href="/css/studio.css?v=4">
     <link rel="stylesheet" href="/css/access.css?v=2">
-    <link rel="stylesheet" href="/css/chrome.css?v=3">
-    <link rel="stylesheet" href="/css/notifications.css">
+    <link rel="stylesheet" href="/css/chrome.css?v=5">
+    <link rel="stylesheet" href="/css/notifications.css?v=1">
 </head>
 <body>
     <script>
-      // Before first paint: applying this from js/chrome.js instead would flash
-      // the full chrome for ~100ms on every load, which reads as a fault.
+      // Before first paint: applying these from js/chrome.js instead would
+      // flash the full chrome for ~100ms on every load, which reads as a
+      // fault. Both preferences change the header's height and row count, so
+      // both have to be on <body> before the first layout.
       try { if (localStorage.getItem('assist.chromeCollapsed'))
-              document.body.classList.add('chrome-collapsed'); } catch (e) {}
+              document.body.classList.add('chrome-collapsed');
+            if (localStorage.getItem('assist.tabsWrap'))
+              document.body.classList.add('tabs-wrap'); } catch (e) {}
     </script>
 
     <!-- Top chrome: a utility bar over a full-width session rail. The badge
@@ -36,19 +40,38 @@
          overflow-x:auto and a non-visible overflow-x forces overflow-y to
          compute as auto — vertical overflow can never escape it, whichever row
          it sits in. .top-chrome owns the safe-area inset for both rows so
-         collapsing row 1 never pulls the rail under the sensor housing. -->
+         collapsing row 1 never pulls the rail under the sensor housing.
+
+         The Actions deck's "Wrap tabs" toggle (body.tabs-wrap, off by default) folds
+         these two rows into one wrapping flow instead — see the block comment
+         in css/chrome.css, including why the badge headroom survives the loss
+         of the scrollport. -->
     <header class="top-chrome">
         <div class="status-bar">
-            <div id="status-dot" class="status-dot"></div>
-            <div class="status-title">Assist <span>// Claude Code</span></div>
-            <span class="conn-indicator" id="conn-indicator"></span>
-            <div id="tmux-ind" class="tmux-indicator"></div>
+            <!-- Identity cluster. Like .chrome-actions below it is
+                 display: contents in the default chrome and a float in the
+                 wrapping one — as one box it keeps its items on a single
+                 centre line, and it stops a tab that cannot fit beside it from
+                 opening a third row of its own. -->
+            <div class="chrome-identity">
+                <div id="status-dot" class="status-dot"></div>
+                <div class="status-title">Assist <span>// Claude Code</span></div>
+                <span class="conn-indicator" id="conn-indicator"></span>
+                <div id="status-time" class="status-time"></div>
+                <div id="tmux-ind" class="tmux-indicator"></div>
+            </div>
             <span class="chrome-spacer"></span>
-            <button class="term-tui-chip hidden" id="term-tui-chip" onclick="cycleTuiMode()" title="Terminal mode — tap to override auto-detect">TUI</button>
-            <button id="btn-studio" class="status-studio" onclick="openStudio()" title="Open the current project in Studio">&#9671;<span class="studio-label"> Studio</span><span id="studio-lock" class="studio-lock hidden" title="Studio rejected the API token">&#128274;</span><span id="studio-badge" class="studio-badge hidden"></span></button>
-            <button class="term-view-btn" id="btn-view" onclick="toggleViewMenu()" title="View controls">&#8943;</button>
-            <button class="btn-plus" id="btn-plus" onclick="togglePlusMenu()" title="More actions">+</button>
-            <div id="status-time" class="status-time"></div>
+            <!-- One box around the right-hand controls. It is display: contents
+                 in the default chrome, so these stay direct flex children of
+                 .status-bar and nothing about row 1 changes. It exists for the
+                 wrapping mode (body.tabs-wrap), where the cluster is floated to
+                 the top right and the tabs flow around it — a float needs a
+                 single box, and floating Studio and Actions separately would
+                 silently reverse their source order. -->
+            <div class="chrome-actions">
+                <button id="btn-studio" class="status-studio" onclick="openStudio()" title="Open the current project in Studio">&#9671;<span class="studio-label"> Studio</span><span id="studio-lock" class="studio-lock hidden" title="Studio rejected the API token">&#128274;</span><span id="studio-badge" class="studio-badge hidden"></span></button>
+                <button class="btn-actions" id="btn-actions" onclick="toggleActionsDeck()" aria-expanded="false" aria-controls="actions-deck" title="Open all actions"><span class="actions-menu-bars" aria-hidden="true">&#8801;</span>Actions</button>
+            </div>
         </div>
 
         <div class="session-rail">
@@ -73,8 +96,6 @@
 
     <!-- Drawer overlay -->
     <div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawers()"></div>
-
-    <!-- Right drawer: Controls + Navigation (quick access) -->
 
     <!-- Left drawer: Claude Code + Terminal + Modes -->
     <div class="drawer-left" id="drawer-left">
@@ -235,21 +256,53 @@
     </div>
 
     <div class="content">
-        <!-- The display bezel that used to live here is gone: its controls moved
-             into .status-bar, and the session rail carries the active-session
-             identity that .term-toggle-status used to spell out. The menus below
-             stay inside .term-panel so their terminal-relative overlay and
-             stacking behaviour is unchanged — only their triggers moved. -->
+        <!-- The display bezel that used to live here is gone: pane capture mode
+             now lives in .term-info, while the session rail carries the active-
+             session identity that .term-toggle-status used to spell out. The
+             deck and panels below stay inside .term-panel so their terminal-
+             relative stacking behaviour is unchanged. -->
         <div class="term-panel" id="term-panel">
-            <div class="view-menu" id="view-menu">
-                <button class="term-font-btn" onclick="termFontSmaller(); toggleViewMenu();">A-</button>
-                <button class="term-font-btn" onclick="termFontLarger(); toggleViewMenu();">A+</button>
-                <button class="term-font-btn" id="btn-fit" onclick="toggleFitMenu(); toggleViewMenu();" title="Fit terminal to screen">Fit</button>
-                <button class="term-search-toggle" onclick="toggleTermSearch(); toggleViewMenu();" title="Search">&#128269;</button>
-                <button class="btn-info" id="btn-info" onclick="toggleClaudeInfo(); toggleViewMenu();" title="Claude session info">i</button>
-                <button class="btn-sudo" id="btn-sudo" onclick="toggleSudoPassword(); toggleViewMenu();" title="Sudo password">&#128274;</button>
-                <button class="btn-insert" id="btn-insert" onclick="sendInsertMode(); toggleViewMenu();" title="Send 'i' to enter insert mode">I</button>
-                <button class="term-chrome-btn" id="term-chrome-btn" onclick="toggleChrome(); toggleViewMenu();" title="Hide status bar">&#9652;</button>
+            <div class="actions-deck" id="actions-deck">
+                <div class="actions-deck-header">
+                    <span class="actions-deck-title">Actions</span>
+                    <span class="actions-deck-hint">One menu &middot; verbs first &middot; scope underneath</span>
+                    <button class="actions-deck-close" onclick="closeActionsDeck()" aria-label="Close actions">&#x2715;</button>
+                </div>
+                <div class="actions-groups">
+                    <section class="actions-group" aria-labelledby="actions-see-move">
+                        <h4 id="actions-see-move">See &amp; move</h4>
+                        <div class="actions-grid">
+                            <button class="actions-item term-font-btn" data-glyph="A&#8722;" onclick="termFontSmaller(); closeActionsDeck();">Smaller</button>
+                            <button class="actions-item term-font-btn" data-glyph="A+" onclick="termFontLarger(); closeActionsDeck();">Larger</button>
+                            <button class="actions-item term-font-btn" data-glyph="&#8596;" id="btn-fit" onclick="toggleFitMenu(); closeActionsDeck();" title="Fit terminal to screen">Fit</button>
+                            <button class="actions-item term-search-toggle" data-glyph="&#8981;" onclick="toggleTermSearch(); closeActionsDeck();" title="Search this terminal">Search</button>
+                            <button class="actions-item btn-insert" data-glyph="I" id="btn-insert" onclick="sendInsertMode(); closeActionsDeck();" title="Send 'i' to enter insert mode">Insert</button>
+                            <button class="actions-item term-chrome-btn" data-glyph="&#9652;" id="term-chrome-btn" onclick="toggleChrome(); closeActionsDeck();" title="Hide status bar">Hide bar</button>
+                        </div>
+                    </section>
+                    <section class="actions-group" aria-labelledby="actions-act-here">
+                        <h4 id="actions-act-here">Act here</h4>
+                        <div class="actions-grid">
+                            <button class="actions-item btn-info" data-glyph="i" id="btn-info" onclick="toggleClaudeInfo(); closeActionsDeck();" title="Claude session info">Session info</button>
+                            <button class="actions-item plus-autoyes attention" data-glyph="&#10003;" id="btn-autoyes" onclick="toggleAutoYes(); closeActionsDeck();">Auto-Yes</button>
+                            <button class="actions-item term-chrome-btn" data-glyph="&#8630;" id="btn-tabwrap" onclick="toggleTabWrap(); closeActionsDeck();" title="Let session tabs share the status bar and wrap onto a second row">Wrap tabs</button>
+                        </div>
+                    </section>
+                    <section class="actions-group" aria-labelledby="actions-open-workspace">
+                        <h4 id="actions-open-workspace">Open workspace</h4>
+                        <div class="actions-grid">
+                            <button class="actions-item workspace plus-proj" data-glyph="&#9638;" onclick="toggleProjects(); closeActionsDeck();">Projects</button>
+                            <button class="actions-item workspace plus-git" data-glyph="&#9314;" id="btn-git" onclick="toggleGitPanel(); closeActionsDeck();">Git</button>
+                            <button class="actions-item workspace plus-container" data-glyph="&#11041;" onclick="toggleContainerPanel(); closeActionsDeck();">Container</button>
+                            <!-- Temporary reachability until the Attention panel
+                                 is replaced with the context drawer. -->
+                            <button class="actions-item workspace plus-studio" data-glyph="&#9671;" onclick="toggleStudioPanel(); closeActionsDeck();">Studio</button>
+                            <button class="actions-item workspace plus-skills" data-glyph="/" onclick="toggleSkillsPanel(); closeActionsDeck();">/Skills</button>
+                            <button class="actions-item workspace plus-auto" data-glyph="&#9654;" id="btn-auto" onclick="toggleAutoPanel(); closeActionsDeck();">Automate</button>
+                            <button class="actions-item workspace plus-settings" data-glyph="&#9881;" onclick="toggleSettingsPanel(); closeActionsDeck();">Settings</button>
+                        </div>
+                    </section>
+                </div>
             </div>
 
             <div class="term-search hidden" id="term-search">
@@ -273,17 +326,6 @@
                     <input type="number" class="fit-custom-input" id="fit-custom-rows" min="10" max="600" placeholder="rows" inputmode="numeric">
                     <button class="fit-item fit-apply" onclick="fitMenuApplyCustom()">Apply</button>
                 </div>
-            </div>
-
-            <div class="plus-menu" id="plus-menu">
-                <button class="plus-item plus-proj" onclick="toggleProjects(); togglePlusMenu();">Projects</button>
-                <button class="plus-item plus-git" id="btn-git" onclick="toggleGitPanel(); togglePlusMenu();">Git</button>
-                <button class="plus-item plus-container" onclick="toggleContainerPanel(); togglePlusMenu();">Container</button>
-                <button class="plus-item plus-studio" onclick="toggleStudioPanel(); togglePlusMenu();">Studio</button>
-                <button class="plus-item plus-skills" onclick="toggleSkillsPanel(); togglePlusMenu();">/Skills</button>
-                <button class="plus-item plus-autoyes" id="btn-autoyes" onclick="toggleAutoYes(); togglePlusMenu();">Auto-Yes</button>
-                <button class="plus-item plus-auto" id="btn-auto" onclick="toggleAutoPanel(); togglePlusMenu();">Automate</button>
-                <button class="plus-item plus-settings" onclick="toggleSettingsPanel(); togglePlusMenu();">Settings</button>
             </div>
 
             <div class="claude-info-bar" id="claude-info-bar">
@@ -446,6 +488,7 @@
 
             <div class="term-display hidden" id="term-display">
                 <div class="term-info" id="term-info">
+                    <button class="term-tui-chip hidden" id="term-tui-chip" onclick="cycleTuiMode()" title="Terminal mode — tap to override auto-detect">TUI</button>
                     <span class="term-info-cmd" id="term-info-cmd"></span>
                     <span class="term-info-dim" id="term-info-dim"></span>
                     <!-- TUI panes have no browser-side scrollback (alt screen),
@@ -540,16 +583,19 @@
             <button class="action-btn btn-enter-lock" id="enter-lock" onclick="toggleEnterLock()"
                     aria-pressed="false" aria-label="Enter key behaviour"
                     title="Enter sends &mdash; tap for multi-line">&#8629;</button>
+            <button class="action-btn btn-vault hidden" id="vault-quick-send"
+                    onclick="vaultSendDefault()" aria-label="Send stored secret"
+                    title="Send stored secret">&#128273;</button>
             <button class="action-btn btn-hist" onclick="toggleBottomDrawer()">Hist</button>
             <button class="action-btn btn-upload" onclick="triggerUpload()">File</button>
             <button class="action-btn btn-paste" onclick="doPaste()">Send</button>
             <button class="action-btn btn-keys" id="btn-keys" onclick="toggleKeysPanel()">Keys</button>
-            <button class="action-btn btn-sudo-send" id="btn-sudo-send" onclick="doSudoSend()">Sudo<span class="sudo-prog" id="sudo-prog"></span></button>
         </div>
         <div class="route-indicator" id="route-ind">
             <span class="route-dot" id="route-dot"></span>
             <span class="route-label" id="route-label">Desktop (xdotool)</span>
-            <span class="route-attach" id="route-attach"></span>
+            <button type="button" class="route-attach" id="route-attach"
+                    onclick="copyAttachCommand()"></button>
         </div>
     </div>
 
@@ -565,24 +611,25 @@
     </div>
 
     <script src="/js/state.js?v=4"></script>
-    <script src="/js/ui.js?v=4"></script>
-    <script src="/js/input.js?v=8"></script>
+    <script src="/js/ui.js?v=6"></script>
+    <script src="/js/vault.js?v=3"></script>
+    <script src="/js/input.js?v=13"></script>
     <script src="/js/autocomplete.js?v=2"></script>
-    <script src="/js/segments.js?v=1"></script>
-    <script src="/js/drafts.js?v=2"></script>
+    <script src="/js/segments.js?v=3"></script>
+    <script src="/js/drafts.js?v=4"></script>
     <script src="/js/keylabels.js?v=4"></script>
-    <script src="/js/terminal.js?v=23"></script>
-    <script src="/js/actions.js?v=12"></script>
+    <script src="/js/terminal.js?v=25"></script>
+    <script src="/js/actions.js?v=15"></script>
     <script src="/js/commands.js?v=4"></script>
-    <script src="/js/container.js"></script>
+    <script src="/js/container.js?v=1"></script>
     <script src="/js/studio.js?v=2"></script>
     <script src="/js/access.js?v=3"></script>
-    <script src="/js/chrome.js?v=1"></script>
-    <script src="/js/monitor.js?v=4"></script>
-    <script src="/js/notifications.js"></script>
-    <script src="/js/tabs.js?v=6"></script>
-    <script src="/js/settings.js?v=6"></script>
-    <script src="/js/app.js?v=13"></script>
+    <script src="/js/chrome.js?v=3"></script>
+    <script src="/js/monitor.js?v=6"></script>
+    <script src="/js/notifications.js?v=1"></script>
+    <script src="/js/tabs.js?v=7"></script>
+    <script src="/js/settings.js?v=8"></script>
+    <script src="/js/app.js?v=16"></script>
     <script src="/js/selection.js?v=2"></script>
     <script>
     if ('serviceWorker' in navigator) {

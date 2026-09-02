@@ -3,8 +3,8 @@
 # to the host Assist server, which runs them against ASSIST_CLI_BIN.
 #
 # This script is name-agnostic. Symlink/install it under whatever name the
-# host CLI is conventionally invoked as (e.g. /usr/local/bin/karen,
-# /usr/local/bin/mycli). $0 is used in usage/error messages so each
+# host CLI is conventionally invoked as (e.g. /usr/local/bin/mycli).
+# $0 is used in usage/error messages so each
 # install presents itself as the configured command.
 #
 # Wire-format: POST {"args": [...], "files": [{"name", "data"}]} to
