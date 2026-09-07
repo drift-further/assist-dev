@@ -160,6 +160,46 @@ _NUMBERED_FOOTER_RE = re.compile(
 # the word boundary keeps it off substrings like "lunar".
 _LUNA_RE = re.compile(r"\bluna\b", re.IGNORECASE)
 
+# Codex's two model-DOWNGRADE menus, which _LUNA_RE above cannot see because
+# neither of them prints the model it is about to switch you to.
+#
+# Slow-request menu, verbatim from the codex 0.153.4 binary:
+#     Our systems are thinking a bit more about this request before responding.
+#     Hang tight or retry with a faster model for a quicker response, though it
+#     may be less capable of handling complex requests.
+#     › 1. Retry with a faster model
+#       2. Dismiss and keep waiting
+# Quota menu, recorded live on 2026-08-10:
+#     Approaching rate limits — Switch to gpt-5.6-luna for lower credit usage?
+#
+# Neither is a permission gate, so the numbered branch above correctly refuses
+# to *answer* them: option 1 is "Retry with a faster model", not "Yes". The
+# danger is the other direction — both are Enter-activated with the downgrade
+# preselected, so ANY Enter that arrives while one is on screen takes it,
+# including the bare Enter auto-yes sends for numbered-yes/selected-yes on a
+# prompt that was live one tick ago. Measured 2026-09-05: an `assist send
+# --enter` into a codex pane landed on the slow-request menu instead of the
+# composer and swapped gpt-6-astra max for gpt-5.6-luna low mid-effort, with
+# nothing on screen or in the log to say so.
+#
+# So this is a veto, not a matcher: while either menu is visible the pane is not
+# auto-answered at all. Suppression rather than "select the safe option"
+# deliberately — sending Down+Enter to land on "Dismiss and keep waiting" would
+# be one more blind write into a TUI whose layout we are inferring, which is
+# exactly how a recovery Enter once landed in a model picker. It errs wide for
+# the same reason _LUNA_RE does: a pane the human has to answer by hand costs a
+# minute, a silent tier downgrade costs the effort's provenance. A pane merely
+# *displaying* this text (an agent reading this file) is therefore also
+# suppressed.
+_CODEX_DOWNGRADE_RE = re.compile(
+    r"Retry with a faster model"
+    r"|Dismiss and keep waiting"
+    r"|thinking a bit more about this request"
+    r"|Approaching rate limits"
+    r"|for lower credit usage",
+    re.IGNORECASE,
+)
+
 _OPTION_REGION_LOOKBACK = 60
 _OPTION_SEP_RE = re.compile(r"^\s*─{10,}")
 _OPTION_LINE_RE = re.compile(r"^\s*(?:[^\d\s]\s*)?\d+[.)]\s+\S")
@@ -289,6 +329,30 @@ def _detect_autoyes_prompt(tail, agent_kind):
             if _SELECTED_YES_RE.search(region):
                 return ("selected-yes", "", True, _extract_summary(tail, "numbered"))
     return None
+
+
+def detect_answerable_prompt(tail, agent_kind, target=None):
+    """What the scanner may actually act on: a detection minus the codex vetoes.
+
+    Detection and veto are kept as two steps rather than folded into
+    _detect_autoyes_prompt's branches so a countdown already ticking when the
+    vetoed text appears is cancelled by the scanner's `if not detected` branch
+    rather than left to fire. Pure and side-effect-free apart from the log line,
+    so the vetoes are testable without a tmux server (see
+    tests/test_autoyes_downgrade_menu.py).
+    """
+    detected = _detect_autoyes_prompt(tail, agent_kind)
+    if not detected or agent_kind != "codex":
+        return detected
+    if _LUNA_RE.search(tail):
+        log.info("autoyes: luna on %s — suppressed %s", target, detected[0])
+        return None
+    if _CODEX_DOWNGRADE_RE.search(tail):
+        log.info(
+            "autoyes: codex downgrade menu on %s — suppressed %s", target, detected[0]
+        )
+        return None
+    return detected
 
 
 # Patterns for extracting the tool/action being approved
@@ -484,10 +548,10 @@ def _scan_interval():
 
     Fixed at 1s because each tick runs expected_target_identity() — a
     full `tmux -C attach-session` open/close — per prompt-bearing pane, and
-    overlapping control clients are what crash the tmux 3.4 server
-    (docs/incidents/2026-08-31-artifacts/teardown-fix-REPORT.md §3.4). Ticking
-    at a sub-second delay multiplied that churn 10x, so a sub-second delay now
-    means "answer on the next 1s tick", not "tick at that resolution".
+    overlapping control clients are what crashed the tmux 3.4 server on
+    2026-08-31. Ticking at a sub-second delay multiplied that churn 10x, so a
+    sub-second delay now means "answer on the next 1s tick", not "tick at that
+    resolution".
     """
     return 1.0
 
@@ -647,15 +711,11 @@ def _autoyes_scan_tick():
             continue
         qualified.add(session_name)
         phash = _prompt_hash(tail)
-        detected = _detect_autoyes_prompt(tail, agent_kind)
-
-        # Luna kill-switch (see _LUNA_RE). Applied AFTER detection rather than
-        # instead of it, so a countdown already ticking when luna appears is
-        # cancelled by the `if not detected` branch below rather than being
-        # left to fire.
-        if detected and agent_kind == "codex" and _LUNA_RE.search(tail):
-            log.info("autoyes: luna on %s — suppressed %s", target, detected[0])
-            detected = None
+        # Detection plus the codex vetoes (see _LUNA_RE, _CODEX_DOWNGRADE_RE).
+        # The vetoes are applied AFTER detection rather than instead of it, so a
+        # countdown already ticking when the vetoed text appears is cancelled by
+        # the `if not detected` branch below rather than being left to fire.
+        detected = detect_answerable_prompt(tail, agent_kind, target)
 
         # Collect broadcast event to fire AFTER releasing the lock
         # (broadcast_autoyes_event also acquires autoyes_lock — avoid deadlock).
@@ -971,9 +1031,9 @@ def announce_posture():
     that posture for weeks without anything ever saying so. The startup log is
     already where the operator is told the auth token; this belongs beside it.
 
-    print(), not log.info(): nothing configures logging here, so log.info is
-    swallowed, and this line existing only in theory would be worse than not
-    writing it at all.
+    print(), not log.info(): this must reach the startup log even when
+    ASSIST_LOG_LEVEL is raised above INFO, and a line that exists only in
+    theory would be worse than not writing it at all.
     """
     delay = _safe_delay(state.get_setting("autoyes", "default_delay"))
     if state.get_setting("autoyes", "all_sessions") != "on":

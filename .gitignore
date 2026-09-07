@@ -66,7 +66,8 @@ docs/archive/ACTIVE_CONTEXT-*.md
 /design/assist-dev-icon-options/assist-dev-icon-d-bracket-agent.png
 /design/assist-dev-icon-options/assist-dev-icon-options-board.png
 /HARDENING-REPORT.md
-/docs/audits/2026-07-30-dead-code-audit.md
+/docs/audits/
+/docs/backlog/
 /docs/dead-code-cursor-report.md
 /docs/TIERED_DOCUMENTATION_GUIDE.md
 /.doc-librarian.yml

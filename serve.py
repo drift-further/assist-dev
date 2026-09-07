@@ -3,6 +3,7 @@
 App factory: imports all blueprints, registers them, starts background threads.
 """
 
+import logging
 import os
 import threading
 
@@ -172,10 +173,41 @@ def start_application_backgrounds():
     automate_recover()
 
 
+def configure_logging():
+    """Send this app's own log records to stderr, which assist-ctl tees to the log.
+
+    Nothing configured logging before, so the root logger sat at its WARNING
+    default and every `log.info` under routes/ and shared/ was discarded — the
+    `autoyes: detected`/`FIRED` lines included. The 2026-09-05 luna-switch
+    investigation could not establish from the server log whether auto-yes had
+    pressed anything in either affected pane, only that nothing was recorded:
+    8.5 MB of log, 22 `autoyes:`
+    lines, all of them the same ERROR traceback. An automatic keystroke sender
+    with no audit trail is not diagnosable after the fact.
+
+    Scoped to this app's two logger namespaces rather than the root, so third
+    party INFO chatter stays out; werkzeug keeps its own handler, so the access
+    log is unchanged. ASSIST_LOG_LEVEL overrides for a quieter run.
+    """
+    level = os.environ.get("ASSIST_LOG_LEVEL", "INFO").upper()
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    )
+    for name in ("routes", "shared"):
+        logger = logging.getLogger(name)
+        if any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
+            continue  # already configured — a second call must not double every line
+        logger.setLevel(level)
+        logger.addHandler(handler)
+        logger.propagate = False
+
+
 # WSGI/flask-run compatibility retains the established import-time app.  The
 # direct executable path below is separate so activation can remain observer-
 # only until the controller authorises the bind.
 if __name__ != "__main__":
+    configure_logging()
     app = create_app()
     start_application_backgrounds()
 
@@ -221,6 +253,7 @@ if __name__ == "__main__":
 
         initialize_for_startup()
 
+    configure_logging()
     app = create_app()
     server = make_server(args.host, args.port, app, threaded=True)
     # Binding is the activation milestone.  Publish it before recovery/scanner
