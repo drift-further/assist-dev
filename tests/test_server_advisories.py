@@ -75,7 +75,9 @@ class ProcStatParserTests(unittest.TestCase):
         fields = ["S", "42", *("0" for _ in range(17)), "987654", "0"]
         fixture = f"123 (tmux: server) {' '.join(fields)}\n"
 
-        with mock.patch("builtins.open", mock.mock_open(read_data=fixture)):
+        with mock.patch.object(agent_identity, "_IS_MAC", False), mock.patch(
+            "builtins.open", mock.mock_open(read_data=fixture)
+        ):
             self.assertEqual(agent_identity._stat_fields(123), ("S", 42, "987654"))
             self.assertEqual(tmux._process_start_time(123), "987654")
             self.assertEqual(launch_provenance._process_start_time(123), "987654")

@@ -1,5 +1,6 @@
 """Resolve the coding-agent identity of a tmux pane."""
 
+import ctypes
 import logging
 import os
 import platform
@@ -8,6 +9,7 @@ import shlex
 import subprocess
 import threading
 import time
+from functools import lru_cache
 
 from shared import tab_state
 
@@ -69,7 +71,72 @@ def _log_failure_once(target, message):
     log.exception("agent identity: %s for %s", message, target)
 
 
+class _DarwinProcBsdInfo(ctypes.Structure):
+    # Public proc_pidinfo(PROC_PIDTBSDINFO) ABI, shared by Intel and Apple Silicon:
+    # https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/proc_info.h
+    _fields_ = [
+        ("pbi_flags", ctypes.c_uint32),
+        ("pbi_status", ctypes.c_uint32),
+        ("pbi_xstatus", ctypes.c_uint32),
+        ("pbi_pid", ctypes.c_uint32),
+        ("pbi_ppid", ctypes.c_uint32),
+        ("pbi_uid", ctypes.c_uint32),
+        ("pbi_gid", ctypes.c_uint32),
+        ("pbi_ruid", ctypes.c_uint32),
+        ("pbi_rgid", ctypes.c_uint32),
+        ("pbi_svuid", ctypes.c_uint32),
+        ("pbi_svgid", ctypes.c_uint32),
+        ("rfu_1", ctypes.c_uint32),
+        ("pbi_comm", ctypes.c_char * 16),
+        ("pbi_name", ctypes.c_char * 32),
+        ("pbi_nfiles", ctypes.c_uint32),
+        ("pbi_pgid", ctypes.c_uint32),
+        ("pbi_pjobc", ctypes.c_uint32),
+        ("e_tdev", ctypes.c_uint32),
+        ("e_tpgid", ctypes.c_uint32),
+        ("pbi_nice", ctypes.c_int32),
+        ("pbi_start_tvsec", ctypes.c_uint64),
+        ("pbi_start_tvusec", ctypes.c_uint64),
+    ]
+
+
+@lru_cache(maxsize=1)
+def _darwin_pidinfo():
+    # Load lazily so Linux never needs a macOS library. Cache the function, not
+    # process observations: every bracket must read the current generation.
+    library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+    try:
+        function = library.proc_pidinfo
+    except AttributeError as exc:
+        raise OSError("proc_pidinfo unavailable") from exc
+    function.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+    function.restype = ctypes.c_int
+    return function
+
+
+def _darwin_stat_fields(pid):
+    pid = int(pid)
+    if not 0 < pid <= 0x7fffffff:
+        raise ValueError("invalid process id")
+    info = _DarwinProcBsdInfo()
+    size = ctypes.sizeof(info)
+    if _darwin_pidinfo()(pid, 3, 0, ctypes.byref(info), size) != size or info.pbi_pid != pid:
+        raise OSError("process identity unavailable")
+    # sys/proc.h: SIDL, SRUN, SSLEEP, SSTOP, SZOMB. Keep zombie rejection in
+    # the existing callers, and never turn a short/failed native read into an id.
+    states = {1: "I", 2: "R", 3: "S", 4: "T", 5: "Z"}
+    if info.pbi_status not in states or not info.pbi_start_tvsec or info.pbi_start_tvusec >= 1000000:
+        raise ValueError("invalid process identity")
+    # ps lstart rounds to seconds. Keep the kernel's microseconds so a reused
+    # pid within the same second still compares as a different generation.
+    start = f"darwin:{info.pbi_start_tvsec}.{info.pbi_start_tvusec:06d}"
+    return states[info.pbi_status], int(info.pbi_ppid), start
+
+
 def _stat_fields(pid):
+    """Return process state, parent pid and precise start identity on this OS."""
+    if _IS_MAC:
+        return _darwin_stat_fields(pid)
     with open(f"/proc/{pid}/stat", encoding="utf-8", errors="replace") as f:
         raw = f.read()
     close = raw.rfind(")")

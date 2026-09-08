@@ -16,9 +16,10 @@ Primary use case: control a Claude Code session running on your dev box from a p
 
 ## Prerequisites
 
-Assist currently supports **Linux only**. Some clipboard helpers also support
-macOS (`pbcopy`/`pbpaste`), but the v16 process-identity and launch-provenance
-path requires Linux `/proc`.
+Linux is the primary deployment platform. Interactive tmux input and launch
+provenance read process identity through Linux `/proc` or macOS `libproc`;
+macOS clipboard helpers use `pbcopy`/`pbpaste`. The v16 activation/drain tooling
+still requires Linux `/proc`.
 
 Before installing, make sure you have the required tools:
 
