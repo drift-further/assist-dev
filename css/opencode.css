@@ -1,0 +1,52 @@
+/* Saved OpenCode output uses native browser layout and scrolling. */
+.term-display.opencode-hidden { display: none; }
+.has-opencode .term-info-cmd { display: none; }
+.has-opencode .term-info { gap: 6px; left: 0; }
+.opencode-open {
+    min-height: 38px; padding: 0 8px; border: 1px solid var(--cyan);
+    border-radius: 3px; background: var(--bg); color: var(--cyan);
+    font: 11px var(--font); cursor: pointer;
+}
+.opencode-open.hidden, .opencode-output.hidden { display: none; }
+.opencode-output {
+    display: flex; flex-direction: column; flex: 1; min-height: 80px;
+    min-width: 0; overflow: hidden; color: var(--text); background: var(--bg-term);
+    border: 1px solid var(--cyan); font: 12px/1.45 var(--font);
+}
+.opencode-header { padding: 8px; border-bottom: 1px solid var(--text-muted); }
+.opencode-toolbar { display: flex; align-items: center; gap: 8px; }
+.opencode-toolbar strong { flex: 1; color: var(--cyan); font-size: 12px; }
+.opencode-output button, .opencode-output select {
+    min-height: 40px; background: var(--bg); color: var(--cyan);
+    border: 1px solid var(--text-muted); border-radius: 3px;
+    padding: 6px 8px; font: inherit; cursor: pointer;
+}
+.opencode-output button:focus-visible, .opencode-output select:focus-visible,
+.opencode-output summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.opencode-output button:disabled, .opencode-output select:disabled { opacity: .55; }
+.opencode-picker { display: block; margin-top: 6px; color: var(--text-dim); }
+.opencode-picker select { display: block; width: 100%; min-width: 0; margin-top: 3px; }
+.opencode-hint { margin: 6px 0; color: var(--text-dim); font-size: 10px; }
+.opencode-meta { color: var(--amber); overflow-wrap: anywhere; }
+.opencode-identity { color: var(--text-muted); font-size: 10px; overflow-wrap: anywhere; }
+.opencode-scroll {
+    flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain;
+    touch-action: pan-y; -webkit-overflow-scrolling: touch;
+    -webkit-user-select: text; user-select: text; padding: 8px;
+}
+.opencode-message { margin-bottom: 14px; padding: 8px; border-left: 2px solid var(--green); }
+.opencode-message.user { border-color: var(--cyan); background: var(--bg); }
+.opencode-role { color: var(--green); font-size: 10px; margin-bottom: 5px; }
+.opencode-message.user .opencode-role { color: var(--cyan); }
+.opencode-text {
+    font: inherit; white-space: pre-wrap; overflow-wrap: anywhere;
+    word-break: normal; margin: 4px 0; color: var(--text);
+}
+.opencode-detail summary { min-height: 36px; padding: 4px 0; box-sizing: border-box; cursor: pointer; color: var(--text-dim); }
+.opencode-text.error { color: var(--red); }
+.opencode-text.file, .opencode-empty { color: var(--text-dim); }
+.opencode-footer { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-top: 1px solid var(--text-muted); }
+.opencode-status { flex: 1; color: var(--text-dim); font-size: 10px; overflow-wrap: anywhere; }
+.opencode-status.error { color: var(--amber); }
+.opencode-output .unfollowed { color: var(--amber); border-color: var(--amber); }
+.opencode-output [hidden] { display: none; }

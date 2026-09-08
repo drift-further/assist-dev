@@ -40,6 +40,7 @@ def _classify(result: str, *functions: str) -> None:
 
 
 _classify("fixed:observe", "serve.py:start_application_backgrounds")
+_classify("fixed:observe", "shared/opencode.py:pane_context", "shared/opencode.py:run_cli")
 _classify(
     "intent:automate_trust_answer|automate_auto_answer",
     "routes/automate.py:_automate_scheduled_answer.effect",
@@ -299,6 +300,7 @@ class ExecutionParkInventoryTests(unittest.TestCase):
             ROOT / "serve.py",
             *sorted((ROOT / "routes").glob("*.py")),
             ROOT / "shared" / "tmux.py",
+            ROOT / "shared" / "opencode.py",
         ]
         for path in sources:
             relative = path.relative_to(ROOT).as_posix()

@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="/css/status-bar.css?v=4">
     <link rel="stylesheet" href="/css/input.css?v=8">
     <link rel="stylesheet" href="/css/terminal.css?v=12">
+    <link rel="stylesheet" href="/css/opencode.css?v=2">
     <link rel="stylesheet" href="/css/drawers.css?v=2">
     <link rel="stylesheet" href="/css/widgets.css?v=1">
     <link rel="stylesheet" href="/css/commands.css?v=1">
@@ -490,19 +491,44 @@
                 <div class="term-info" id="term-info">
                     <button class="term-tui-chip hidden" id="term-tui-chip" onclick="cycleTuiMode()" title="Terminal mode — tap to override auto-detect">TUI</button>
                     <span class="term-info-cmd" id="term-info-cmd"></span>
+                    <button class="opencode-open hidden" id="opencode-open" title="Read an OpenCode conversation">Output</button>
                     <span class="term-info-dim" id="term-info-dim"></span>
                     <!-- TUI panes have no browser-side scrollback (alt screen),
                          so history is paged inside the app. Shown only for TUI. -->
                     <span class="term-tui-nav hidden" id="term-tui-nav">
                         <button class="tui-nav-btn" onclick="tuiPage(true)" title="Page up through the transcript">&#9650;</button>
                         <button class="tui-nav-btn" onclick="tuiPage(false)" title="Page down through the transcript">&#9660;</button>
-                        <button class="tui-nav-btn" onclick="tuiJumpEnd()" title="Jump to the latest output">End</button>
+                        <button class="tui-nav-btn" id="term-tui-end" onclick="tuiJumpEnd()" title="Jump to the latest output">End</button>
                     </span>
                 </div>
                 <div class="term-load-more" id="term-load-more" onclick="loadMore()">Load more &#8593;</div>
                 <pre class="term-content" id="term-content"></pre>
                 <div class="term-new-output" id="term-new-output" onclick="resumeTerminal()">New output &#8595;</div>
             </div>
+
+            <section class="opencode-output hidden" id="opencode-output" aria-label="OpenCode output">
+                <div class="opencode-header">
+                    <div class="opencode-toolbar">
+                        <button id="opencode-terminal">Terminal</button>
+                        <strong>OpenCode output</strong>
+                        <button id="opencode-refresh">Refresh</button>
+                    </div>
+                    <label class="opencode-picker">Conversation
+                        <select id="opencode-session"><option value="">Choose conversation…</option></select>
+                    </label>
+                    <p class="opencode-hint">Choose again here after switching conversations in OpenCode. Input still goes to the pane.</p>
+                    <div class="opencode-meta" id="opencode-meta"></div>
+                    <div class="opencode-identity" id="opencode-identity"></div>
+                </div>
+                <div class="opencode-scroll" id="opencode-scroll">
+                    <button id="opencode-older" hidden>Show older messages</button>
+                    <div id="opencode-messages"></div>
+                </div>
+                <div class="opencode-footer">
+                    <span class="opencode-status" id="opencode-status" role="status"></span>
+                    <button id="opencode-latest">Latest</button>
+                </div>
+            </section>
 
             <div class="cmd-output" id="cmd-output">
                 <div class="cmd-output-header">
@@ -618,7 +644,8 @@
     <script src="/js/segments.js?v=3"></script>
     <script src="/js/drafts.js?v=4"></script>
     <script src="/js/keylabels.js?v=4"></script>
-    <script src="/js/terminal.js?v=25"></script>
+    <script src="/js/terminal.js?v=27"></script>
+    <script src="/js/opencode.js?v=2"></script>
     <script src="/js/actions.js?v=15"></script>
     <script src="/js/commands.js?v=4"></script>
     <script src="/js/container.js?v=1"></script>

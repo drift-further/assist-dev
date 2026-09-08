@@ -604,6 +604,7 @@ function selectTab(target, auto) {
     // run BEFORE _termTarget moves — the draft module reads it for "here".
     if (typeof onTabSwitchDraft === 'function') onTabSwitchDraft(_termTarget, target, !auto);
     _termTarget = target;
+    if (typeof OpenCodeOutput !== 'undefined') OpenCodeOutput.onTargetChange();
     // Opening a tab is the act of looking — clear its model caret.
     if (typeof _markModelSeen === 'function') _markModelSeen(target);
     // Selecting a snoozed tab wakes it (covers any selection path).
@@ -723,6 +724,10 @@ function _isTuiInfo(info, target) {
     return _autoTuiInfo(info);
 }
 
+function _isOpenCodeTui(target = _termTarget) {
+    return !!_paneTui[target] && _paneInfo[target]?.agent_kind === 'opencode';
+}
+
 /** Wire flag for subscribe frames. Omitted when the pane is on auto so the
  *  server keeps applying its own detection, exactly as before. Sent when
  *  pinned so the capture range (-S 0 vs full scrollback) matches the chip —
@@ -758,6 +763,11 @@ function _updateTuiChip(target) {
     // Paging buttons only make sense where browser scrollback doesn't exist.
     const nav = document.getElementById('term-tui-nav');
     if (nav) nav.classList.toggle('hidden', !isTui);
+    const latest = document.getElementById('term-tui-end');
+    if (latest) latest.textContent = _isOpenCodeTui(target) ? 'Latest' : 'End';
+    if (_isOpenCodeTui(target)) {
+        chip.title = 'OpenCode TUI: drag to pan; swipe at an edge or use ▲/▼ to page. Tap to change mode.';
+    }
     // Nothing to load in TUI mode — the capture is exactly one screen.
     const more = document.getElementById('term-load-more');
     if (more && isTui) more.classList.remove('visible');
@@ -831,6 +841,18 @@ function _doRender(content, info, target) {
         if (target === _termTarget && typeof applyKeyLabels === 'function') applyKeyLabels(target);
     }
 
+    // Readable OpenCode output has its own browser scroll container. Keep
+    // feeding smart actions from the actual TUI, including while reading up.
+    const actionTarget = target || _termTarget;
+    const actionInfo = _paneInfo[actionTarget];
+    const detected = detectSmartActions(stripAnsi(content), actionTarget, actionInfo && actionInfo.agent_kind);
+    if (typeof OpenCodeOutput !== 'undefined' && OpenCodeOutput.onFrame(actionTarget, actionInfo, detected)) {
+        _termLastContent = content;
+        _termLatestContent = content;
+        renderSmartActions(detected);
+        return;
+    }
+
     // The active session used to be spelled out in .term-toggle-status. That
     // element is gone: the active tab in the session rail carries the same name,
     // and now reads as active structurally (connected shelf, see terminal.css).
@@ -867,7 +889,11 @@ function _doRender(content, info, target) {
         }
     }
 
-    if (_termPaused) {
+    // OpenCode's capture may be much larger than the phone. Keep the TUI
+    // live while the user pans it, but preserve their viewport until Latest.
+    // Normal terminals retain their existing frozen-scrollback behavior.
+    const readingOpenCode = _isOpenCodeTui(actionTarget) && _termPaused;
+    if (_termPaused && !readingOpenCode) {
         if (content !== _termLastContent) {
             _termLatestContent = content;
             _termHasNew = true;
@@ -876,15 +902,21 @@ function _doRender(content, info, target) {
     } else {
         const pre = document.getElementById('term-content');
         const display = document.getElementById('term-display');
+        const top = display.scrollTop;
         pre.innerHTML = ansiToHtml(content);
         // Re-apply line selection highlights (survives innerHTML replacement)
         if (typeof applySelectionHighlights === 'function') applySelectionHighlights();
         _termLastContent = content;
         _termLatestContent = content;
         _termHasNew = false;
+        if (_isOpenCodeTui(actionTarget)) {
+            // This frame is already painted. The sticky Latest button resumes
+            // following; no queued-output overlay is needed over the live TUI.
+            document.getElementById('term-new-output').classList.remove('visible');
+        }
         // Guard programmatic scroll — prevent false scroll-freeze
         _autoScrolling = true;
-        display.scrollTop = display.scrollHeight;
+        display.scrollTop = readingOpenCode ? top : display.scrollHeight;
         requestAnimationFrame(() => { _autoScrolling = false; });
         // Release scroll lock after layout settles
         if (_tabSwitchScrollLock) {
@@ -899,13 +931,6 @@ function _doRender(content, info, target) {
         'visible', lineCount >= _termLines - 5 && !_paneTui[target || _termTarget]);
 
     // Smart actions always run (user needs to respond to prompts quickly)
-    const actionTarget = target || _termTarget;
-    const actionInfo = _paneInfo[actionTarget];
-    const detected = detectSmartActions(
-        stripAnsi(content),
-        actionTarget,
-        actionInfo && actionInfo.agent_kind
-    );
     renderSmartActions(detected);
 }
 
@@ -1131,7 +1156,9 @@ let _autoScrolling = false;  // true during programmatic scroll-to-bottom
     display.addEventListener('scroll', function() {
         // Ignore scroll events caused by programmatic scroll, smart-actions layout shift, or tab switch
         if (_autoScrolling || _layoutShifting || _tabSwitchScrollLock) return;
-        const atBottom = display.scrollHeight - display.scrollTop - display.clientHeight < 40;
+        // Even a small pan is deliberate in OpenCode's live TUI. Keep the
+        // existing normal/generic threshold; only allow rounding slack here.
+        const atBottom = display.scrollHeight - display.scrollTop - display.clientHeight < (_isOpenCodeTui() ? 2 : 40);
         if (!atBottom && !_termPaused) {
             _termPaused = true;
         }
@@ -1327,8 +1354,8 @@ async function fitTuiToScreen(target) {
     } catch(e) {}
 }
 
-// TUI scroll forwarding: the capture is exactly one screen, so browser
-// scrolling is meaningless — swipes/wheel page the TUI's own transcript.
+// Generic TUI scroll forwarding: swipes/wheel page the app's own transcript.
+// OpenCode pans its captured screen first, then pages at the edges (below).
 // Taps and long-presses (text selection) pass through untouched.
 let _tuiTouchY = null;
 let _tuiWheelAcc = 0;
@@ -1375,6 +1402,10 @@ function tuiPage(pageUp) { _tuiSendScroll(pageUp); }
 const _TUI_END_PAGES = 8;
 
 async function tuiJumpEnd() {
+    if (_isOpenCodeTui()) {
+        resumeTerminal();
+        document.getElementById('term-display').scrollLeft = 0;
+    }
     if (typeof showFlash === 'function') showFlash('sent', 'Jump to end');
     _tuiSendKey('End');
     for (let i = 0; i < _TUI_END_PAGES; i++) {
@@ -1388,10 +1419,24 @@ async function tuiJumpEnd() {
     }
 }
 
+// A TUI capture is one tmux screen, which can still overflow the phone in
+// both directions. Pan that screen first; page its transcript at an edge.
+// Deltas use wheel direction (positive Y moves toward the bottom).
+function _openCodeCanPan(display, dx, dy) {
+    if (Math.abs(dx) > Math.abs(dy) || dy === 0) return true;
+    return dy < 0 ? display.scrollTop > 2
+        : display.scrollHeight - display.clientHeight - display.scrollTop > 2;
+}
+
 (function _wireTuiScroll() {
     const display = document.getElementById('term-display');
+    let nativePan = null;
     display.addEventListener('wheel', function(e) {
         if (!_paneTui[_termTarget]) return;
+        if (_isOpenCodeTui() && _openCodeCanPan(display, e.deltaX, e.deltaY)) {
+            _tuiWheelAcc = 0;
+            return;
+        }
         e.preventDefault();
         _tuiWheelAcc += e.deltaY;
         if (Math.abs(_tuiWheelAcc) >= 120) {
@@ -1401,6 +1446,7 @@ async function tuiJumpEnd() {
     }, { passive: false });
     display.addEventListener('touchstart', function(e) {
         if (!_paneTui[_termTarget]) return;
+        nativePan = null;
         _tuiTouchY = e.touches[0].clientY;
         _tuiTapStartX = e.touches[0].clientX;
         _tuiTapStartY = e.touches[0].clientY;
@@ -1416,6 +1462,18 @@ async function tuiJumpEnd() {
         // drag-to-extend gesture moves >80px, which would otherwise scroll.
         // (typeof guard matches the defensive cross-file idiom used above.)
         if (typeof _selDragging !== 'undefined' && _selDragging) return;
+        if (_isOpenCodeTui()) {
+            if (e.touches.length !== 1) return;
+            if (nativePan === null) {
+                const dx = _tuiTapStartX - e.touches[0].clientX;
+                const dy = _tuiTapStartY - e.touches[0].clientY;
+                if (Math.max(Math.abs(dx), Math.abs(dy)) < 4) return;
+                nativePan = _openCodeCanPan(display, dx, dy);
+            }
+            // Lock the choice for this gesture: reaching an edge during a
+            // native drag must not turn the same drag into app keystrokes.
+            if (nativePan) return;
+        }
         e.preventDefault();
         const dy = e.touches[0].clientY - _tuiTouchY;
         if (Math.abs(dy) >= _tuiThreshold) {

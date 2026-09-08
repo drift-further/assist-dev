@@ -11,6 +11,11 @@ import tempfile
 import threading
 from pathlib import Path
 
+# OpenCode export reader: bounded, short-lived snapshots shared by viewers.
+opencode_lock = threading.Lock()
+opencode_slots = threading.BoundedSemaphore(2)
+opencode_cache = {}
+
 # ---------------------------------------------------------------------------
 # Claude launch mode
 # ---------------------------------------------------------------------------

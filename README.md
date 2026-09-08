@@ -4,6 +4,24 @@ A web terminal interface for [Claude Code](https://claude.com/claude-code) tmux 
 
 Primary use case: control a Claude Code session running on your dev box from a phone over the LAN.
 
+OpenCode panes also offer **Output**: choose the conversation shown in the pane
+to read wrapped messages, reasoning and tool details with normal browser scrolling.
+**Latest** follows new output; **Terminal** returns to the interactive TUI, and
+detected prompts return there automatically. Input always goes to the pane, so
+choose again in Output after switching conversations inside OpenCode.
+
+In OpenCode's **Terminal** view, drag in either direction to pan a capture
+larger than the phone. Swipe at its top or bottom edge, or use **▲ / ▼**, to
+page through the app's transcript. The TUI stays live while you read;
+scrolling up holds your position, and **Latest** returns to the newest output.
+
+The reader uses the host's `opencode session list` and `opencode export --pure`
+(verified with 1.18.18), refreshing snapshots while visible. It needs no plugin
+or listening OpenCode server. Selection lasts for the browser's current pane
+generation. Remote/custom data stores use Terminal; a local `attach` must share
+the host's OpenCode store. The picker searches 200 recent sessions in the pane's
+exact folder; message/detail limits are disclosed in the reader.
+
 > ### ⚠ Read this before you install
 >
 > Assist is a **single-owner** tool: one shared secret, no accounts, no roles, no audit trail. Anyone holding the secret is the owner.
@@ -201,6 +219,7 @@ All configuration is environment-variable based, via `.env` in the repo. See `en
 | `ASSIST_REPLY_TO` | Reply address used by the `assist send` callback hint | (the caller's own tmux session) |
 | `ASSIST_MOUNT_SCRIPT` | Container launch script used by Automate | `docker/claude-mount.sh` when that file exists; otherwise none |
 | `ASSIST_CLI_BIN` | Host CLI exposed to containers via `/api/cli-proxy` | (none — proxy disabled) |
+| `ASSIST_OPENCODE_BIN` | OpenCode executable used by the Output reader | Auto-detected; see below |
 | `ASSIST_CLI_DIR` | Working directory used when invoking `ASSIST_CLI_BIN` | `~` |
 | `ASSIST_CLI_ALLOWED` | Comma-separated allowlist of subcommands (**empty = proxy disabled**) | (empty) |
 | `ASSIST_DB_NAME` | PostgreSQL DB for session history | `claude_archives` |
@@ -211,6 +230,14 @@ All configuration is environment-variable based, via `.env` in the repo. See `en
 | `ASSIST_AUTH_TOKEN_PATH` | Shared-secret file | `<assist-home>/auth_token` |
 | `ASSIST_ALLOWED_ORIGINS` | Browser origins accepted by the CSRF check, comma-separated. **Required on any install reached from more than localhost** — `shared/security.py` ships loopback only, so list your hostname and the LAN address your phone uses or every POST from them 403s while GETs still work | (loopback only) |
 | `DISPLAY` | X11 display for clipboard helpers | `:0` |
+
+The OpenCode reader uses the first executable file found in this order:
+`ASSIST_OPENCODE_BIN`, `opencode` on the server's `PATH`,
+`~/.local/bin/opencode`, `~/.opencode/bin/opencode`,
+`/opt/homebrew/bin/opencode`, then `/usr/local/bin/opencode`.
+Set `ASSIST_OPENCODE_BIN` to an absolute path for a custom installation;
+`~/` is also accepted. Missing paths, directories and non-executable files
+are skipped. These fallbacks work when a service has a minimal `PATH`.
 
 Changes to `.env` require `assist restart` to take effect.
 

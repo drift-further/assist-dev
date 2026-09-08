@@ -115,6 +115,7 @@ def create_app():
     from routes.access import access_bp
     from routes.input import input_bp
     from routes.terminal import terminal_bp
+    from routes.opencode import opencode_bp
     from routes.git import git_bp
     from routes.commands import commands_bp
     from routes.autoyes import autoyes_bp
@@ -130,6 +131,7 @@ def create_app():
     app.register_blueprint(access_bp)
     app.register_blueprint(input_bp)
     app.register_blueprint(terminal_bp)
+    app.register_blueprint(opencode_bp)
     app.register_blueprint(git_bp)
     app.register_blueprint(commands_bp)
     app.register_blueprint(autoyes_bp)
