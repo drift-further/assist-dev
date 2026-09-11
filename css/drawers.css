@@ -1,4 +1,4 @@
-/* drawers.css — Drawer overlay, left/right/bottom drawers, edge tab, hotkeys, history list */
+/* drawers.css — Drawer overlay, left/right/bottom drawers, More tab, hotkeys, history list */
 
 .drawer-overlay {
     display: none;
@@ -68,17 +68,28 @@
     color: var(--green);
 }
 
-/* Edge tab (left) */
-.edge-tab-left {
-    position: fixed;
-    top: 50%;
+/* More tab: the left drawer's trigger, on the bottom-left corner of whichever
+   view fills .term-panel, so it sits just above the composer. The dock comes
+   after the views and before the prompt/auto-yes stack, so a prompt or
+   countdown docked above the input pushes the tab up with it instead of
+   sitting under it. The dock is a zero-height flex item whose -6px margin
+   cancels the .term-panel gap it adds, so nothing moves. The button is the
+   touch target and also spans the empty gap below the view; ::before is the
+   visible tab. z-index 4 clears .term-new-output (3) and stays under the
+   .cmd-output overlay (10). */
+.more-tab-dock {
+    position: relative;
+    flex: none;
+    height: 0;
+    margin-top: -6px;
+}
+.more-tab {
+    position: absolute;
     left: 0;
-    transform: translateY(-50%);
-    z-index: 20;
-    width: 40px;
-    min-width: 40px;
-    height: 54px;
-    min-height: 40px;
+    bottom: -6px;
+    z-index: 4;
+    width: 60px;
+    height: 40px;
     padding: 0;
     background: transparent;
     border: 0;
@@ -90,27 +101,27 @@
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
 }
-.edge-tab-left::before {
+.more-tab::before {
     content: 'More';
     position: absolute;
-    inset: 0 auto 0 0;
+    left: 1px;
+    bottom: 7px;
     box-sizing: border-box;
-    width: 19px;
+    height: 20px;
+    padding: 0 10px;
     display: flex;
     align-items: center;
-    justify-content: center;
-    writing-mode: vertical-rl;
-    text-orientation: mixed;
-    background: rgba(10, 22, 14, 0.9);
+    background: rgba(10, 22, 14, 0.92);
     border: 1px solid var(--border);
     border-left: none;
-    border-radius: 0 4px 4px 0;
+    border-bottom: none;
+    border-radius: 0 4px 0 0;
     color: var(--text-dim);
-    font-size: 8px;
+    font-size: 9px;
     letter-spacing: 2px;
     transition: all 0.15s;
 }
-.edge-tab-left:active::before {
+.more-tab:active::before {
     color: var(--green);
     border-color: rgba(0, 255, 65, 0.3);
     background: rgba(0, 255, 65, 0.08);
