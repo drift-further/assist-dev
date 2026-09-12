@@ -113,7 +113,7 @@ async function consolidatedPoll() {
         // Scan — prompt detection + activity on background tabs
         _applyScanData(data.scan || []);
 
-        // A sudo prompt in any pane — a 5 s Yes/No popup (sudo-prompt.js)
+        // A sudo prompt in any pane — a Yes/No popup (prompt-popup.js)
         if (typeof _applySudoPrompts === 'function') _applySudoPrompts(data.sudo_prompts || []);
 
         // Composer drafts — tab markers, plus the resync that lets a draft
@@ -498,9 +498,17 @@ function _applyStatesData(states) {
 }
 
 function _applyScanData(scanPanes) {
+    // For the question popup (prompt-popup.js): prompts detected in tabs not in
+    // view, plus the tab in view, whose prompt counts as seen.
+    const questions = [];
     for (const pane of scanPanes) {
         const isActive = _termOpen && pane.target === _termTarget;
-        if (isActive) continue;
+        if (isActive) {
+            if (pane.prompt) {
+                questions.push({target: pane.target, session: pane.session, prompt: pane.prompt, inView: true});
+            }
+            continue;
+        }
 
         const raw = detectSmartActions(
             stripAnsi(pane.tail),
@@ -513,6 +521,9 @@ function _applyScanData(scanPanes) {
         // dead pane's tab marked as needing input forever.
         const detected = (raw && raw.passive) ? null : raw;
         const tab = document.querySelector(`.session-tab[data-target="${CSS.escape(pane.target)}"]`);
+        if (detected && pane.prompt) {
+            questions.push({target: pane.target, session: pane.session, detected, prompt: pane.prompt});
+        }
 
         if (detected) {
             if (!_sessionPrompts[pane.target]) {
@@ -553,6 +564,7 @@ function _applyScanData(scanPanes) {
             }, 10000);
         }
     }
+    if (typeof _applyQuestionPrompts === 'function') _applyQuestionPrompts(questions);
 }
 
 // ================================================================

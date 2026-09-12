@@ -86,6 +86,10 @@ DEFAULT_SETTINGS = {
         # panes snoozed by hand. Toggled from the tab pull-out's header.
         "idle_tab_tucking": "on",
         "recent_projects_limit": 20,
+        # Sudo and question popups (js/prompt-popup.js). "off" keeps each one up
+        # until it is answered, closed, or its prompt goes away.
+        "popup_autohide": "on",
+        "popup_seconds": 5,
     },
     "limits": {
         "max_history": 2500,

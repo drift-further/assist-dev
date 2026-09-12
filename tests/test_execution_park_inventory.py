@@ -146,6 +146,7 @@ _classify(
     "shared/tmux.py:pane_awaits_secret",
     "shared/tmux.py:prompt_owner_waiting",
     "shared/tmux.py:_tty_prompt_waiters",
+    "shared/tmux.py:_tty_echo_off",
     "shared/tmux.py:tmux_target_exists",
 )
 _classify("intent:operator_interactive", "shared/tmux.py:get_clipboard")

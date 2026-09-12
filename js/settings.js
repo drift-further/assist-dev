@@ -52,6 +52,8 @@ const _SETTINGS_SECTIONS = [
             { key: 'idle_tab_tucking', label: 'Idle Tab Tucking', type: 'toggle', options: ['on', 'off'] },
             { key: 'stale_tab_threshold_sec', label: 'Stale Tab Threshold', type: 'number', min: 300, max: 86400, suffix: 's' },
             { key: 'recent_projects_limit', label: 'Recent Projects', type: 'number', min: 5, max: 100 },
+            { key: 'popup_autohide', label: 'Auto-hide Popups', type: 'toggle', options: ['on', 'off'] },
+            { key: 'popup_seconds', label: 'Popup Seconds', type: 'number', min: 1, max: 60, suffix: 's' },
         ]
     },
     {

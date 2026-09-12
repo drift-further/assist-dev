@@ -203,10 +203,22 @@ The `[$sudo]` quick key is offered from prompt shape alone. A pane can fake that
 shape, so look at the prompt before you tap it.
 
 The sudo popup asks for more than shape. It appears only when sudo's prompt is a
-pane's last line and a `sudo` process with no children is in the foreground of
-that pane's terminal, and the command it shows is sudo's own argv, not pane text.
-Its Yes and No name that process, and the server delivers neither once the process
-has stopped waiting.
+pane's last line, exactly one childless process is waiting in that pane's
+foreground and it is `sudo`, and the terminal has echo switched off. The single
+waiter is what rules out a `cmd | sudo -S` pipeline, where sudo reads the pipe
+and a value typed into the pane would reach the sibling instead: that has two
+waiters. Whether sudo reads the terminal or a pipe cannot be observed directly —
+sudo is setuid-root, so its file descriptors are not readable here, and echo is a
+shared terminal switch — so the popup errs toward Open tab. The command it shows
+is sudo's own argv, not pane text. Its Send names that process, and the
+server types nothing unless the same test still holds for that pid: a sudo that
+runs its command without forking keeps its pid, which may belong to ssh by then.
+
+Question popups answer nothing. They say which tab has a prompt waiting and offer
+to open it. Their card is keyed by a fingerprint of the last 40 lines of the
+prompt on screen; a prompt taller than that (a very long command wrapped at a
+narrow width) can re-key when the pane scrolls, so a dismissed card may reappear
+once. It is a re-notification, never an answer.
 
 ## What is deliberately not here
 

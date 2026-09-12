@@ -1109,10 +1109,14 @@ def pane_awaits_secret(target):
         return False
 
 
-# sudo's own prompt and nothing wider. Mirrors VAULT_SUDO_PROMPT_RE in js/vault.js:
-# the sudo popup's Yes sends the vault's $sudo value, so an ssh or key-passphrase
-# prompt must never qualify.
-SUDO_PROMPT_RE = re.compile(r"^\[sudo\]\s+password for\b[^:\n]*:\s*$", re.IGNORECASE)
+# sudo's own prompts and nothing wider: `[sudo] password for <user>:` on Linux and
+# a bare `Password:`, macOS's default. The popup's Send types the vault's $sudo
+# value, so the text is only ever trusted together with a childless foreground
+# sudo on the pane's tty: su, ssh or a login prompt showing the same words does
+# not qualify. The Linux form mirrors VAULT_SUDO_PROMPT_RE in js/vault.js.
+SUDO_PROMPT_RE = re.compile(
+    r"^(?:\[sudo\]\s+password for\b[^:\n]*|Password):\s*$", re.IGNORECASE
+)
 
 
 def _last_visible_line(text):
@@ -1160,6 +1164,102 @@ def _tty_prompt_waiters(pane_tty):
     return waiters
 
 
+def _tty_echo_off(pane_tty):
+    """True only when the pane's terminal has echo switched off right now.
+
+    An extra gate on the sudo popup: a password prompt is up but not yet answered.
+    Never the sole proof that sudo reads this terminal — echo is one switch on the
+    shared terminal that anything can toggle. Any failure is no.
+    """
+    if not pane_tty:
+        return False
+    try:
+        proc = subprocess.run(
+            ["stty", "-f" if _IS_MAC else "-F", pane_tty, "-a"],
+            capture_output=True, text=True, timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0 and "-echo" in re.split(r"[\s;]+", proc.stdout)
+
+
+# sudo short options that take a value: in a cluster like -pS the rest of the
+# token is the value, so the S is not the stdin flag. From `sudo -h`.
+_SUDO_SHORT_VALUE_FLAGS = frozenset("bCDghpRrTUu")
+
+
+def _sudo_reads_terminal(pid):
+    """False when sudo `pid` reads its password from stdin (-S/--stdin), not the tty.
+
+    This is the one fact that decides where a typed password lands, and sudo's own
+    behaviour makes it answerable: it opens `/dev/tty` for the password unless
+    -S/--stdin is given, and only then reads stdin (a pipe, an inherited fd). The
+    flags live in the process's argv, and `/proc/<pid>/cmdline` exposes it with the
+    real NUL boundaries even for a setuid-root sudo (unlike `/proc/<pid>/fd`), so
+    -S survives the quoting that flattened `ps` output loses. Linux only; anything
+    unreadable or unknown is False, so Send is withheld and the popup offers Open
+    tab — never authorise a password on an unproven reader.
+    """
+    if _IS_MAC or not os.path.isdir("/proc"):
+        return False
+    try:
+        raw = Path(f"/proc/{int(pid)}/cmdline").read_bytes()
+    except (OSError, ValueError, TypeError):
+        return False
+    tokens = [t.decode("utf-8", "replace") for t in raw.split(b"\0") if t]
+    return bool(tokens) and _argv_reads_terminal(tokens)
+
+
+def _argv_reads_terminal(tokens):
+    """False when sudo's argv (argv[0] first) asks it to read stdin: -S / --stdin.
+
+    Options come before the command, so parsing stops at the first `--` or
+    operand. A short cluster is read left to right until a value-taking flag,
+    after which the rest of the token is that flag's value — so the S in `-pS`
+    (an odd prompt) is a value, but the S in `-kS` is the stdin flag.
+    """
+    for token in tokens[1:]:
+        if token == "--" or not token.startswith("-") or token == "-":
+            break  # end of options, or the command operand
+        if token.startswith("--"):
+            if "--stdin".startswith(token):  # --stdin or an abbreviation of it
+                return False
+            continue
+        for ch in token[1:]:
+            if ch == "S":
+                return False
+            if ch in _SUDO_SHORT_VALUE_FLAGS:
+                break  # the rest of the cluster is this flag's value
+    return True
+
+
+def _waiting_sudos(pane_tty):
+    """[(pid, args)] when a lone sudo is waiting for a password typed at `pane_tty`.
+
+    What we type goes into the pane's terminal, and only a process reading that
+    terminal receives it, so every gate here answers "will this sudo read it":
+
+    - one waiter, and it is sudo (_tty_prompt_waiters). More than one — a
+      `cmd | sudo` pipeline whose sibling also has the tty — or a lone non-sudo
+      means refuse; a non-forking sudo that became ssh is caught here too.
+    - that sudo reads the terminal, not stdin (_sudo_reads_terminal, from its
+      argv). This is the load-bearing one: it is what stops `sudo -S` fed by a
+      pipe, an inherited fd included, where the password would land in the shell.
+    - the terminal's echo is off (_tty_echo_off): the prompt is up, unanswered.
+
+    A refused sudo is not lost — the popup offers Open tab instead of Send.
+    """
+    waiters = _tty_prompt_waiters(pane_tty)
+    if len(waiters) != 1:
+        return []
+    pid, args = waiters[0]
+    if os.path.basename(args.split(None, 1)[0]) != "sudo":
+        return []
+    if not _sudo_reads_terminal(pid):
+        return []
+    return [(pid, args)] if _tty_echo_off(pane_tty) else []
+
+
 def sudo_prompt_waiting(pane_tty, tail):
     """The sudo process waiting at this pane's password prompt, or None.
 
@@ -1168,14 +1268,16 @@ def sudo_prompt_waiting(pane_tty, tail):
     returned command is sudo's own argv, so pane text cannot put words in the
     popup. `tail` may carry escape sequences (capture-pane -e).
     """
-    if not tail or "sudo" not in tail:
+    # Both prompt forms contain this; the invocation itself may have scrolled away.
+    if not tail or "assword" not in tail:
         return None
     if not SUDO_PROMPT_RE.search(_last_visible_line(tail)):
         return None
-    for pid, args in _tty_prompt_waiters(pane_tty):
-        if os.path.basename(args.split(None, 1)[0]) == "sudo":
-            return {"pid": pid, "command": args}
-    return None
+    waiting = _waiting_sudos(pane_tty)
+    if not waiting:
+        return None
+    pid, args = waiting[0]
+    return {"pid": pid, "command": args}
 
 
 def prompt_owner_waiting(pane_id, pid):
@@ -1185,8 +1287,9 @@ def prompt_owner_waiting(pane_id, pid):
     gap the prompt can be answered at the keyboard, time out, or give way to a
     shell, and a password typed with Enter into a shell runs as a command and
     lands in its history. So the tap names the process it answers, and delivery
-    goes ahead only while that process is still a childless foreground process
-    on the pane's tty and the pane still ends in a password prompt.
+    goes ahead only while the test that raised the popup still holds for that
+    pid: the pane ends in sudo's prompt and the process is a waiting sudo that
+    reads this tty (_waiting_sudos).
     """
     if isinstance(pid, bool):
         return False
@@ -1206,9 +1309,9 @@ def prompt_owner_waiting(pane_id, pid):
         return False
     if tty.returncode != 0 or screen.returncode != 0:
         return False
-    if not PASSWORD_PROMPT_RE.search(_last_visible_line(screen.stdout)):
+    if not SUDO_PROMPT_RE.search(_last_visible_line(screen.stdout)):
         return False
-    return any(owner == pid for owner, _args in _tty_prompt_waiters(tty.stdout.strip()))
+    return any(owner == pid for owner, _args in _waiting_sudos(tty.stdout.strip()))
 
 
 def set_ws_send_timeout(ws):

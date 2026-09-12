@@ -17,12 +17,14 @@ from shared import execution_park as park
 import shared.state as state
 import shared.tab_state as tab_state
 from shared.agent_identity import (
+    _ANSI_ESCAPE_RE,
     _VERSION_CMD_RE,
     refine_with_content,
     resolve_process,
 )
 from shared.agent_model import observe as observe_model
 from shared.tmux import prettify_command, sudo_prompt_waiting
+from routes.autoyes import autoyes_will_consider, prompt_popup_info
 from routes.terminal import enrich_panes_with_agents
 
 poll_bp = Blueprint("poll_bp", __name__)
@@ -310,6 +312,7 @@ def consolidated_poll():
     # Must run BEFORE states so content-based idle_seconds is available.
     scan_results = []
     sudo_prompts = []
+    autoyes_by_session = {}
     live_targets = set()
     for pane in panes:
         target = pane["target"]
@@ -349,13 +352,23 @@ def consolidated_poll():
                     elif content_hash != prev_hash:
                         state.pane_last_activity[target] = now
                     state.pane_content_hash[target] = content_hash
-                # Every open browser pops these (js/sudo-prompt.js), whichever
+                # Every open browser pops these (js/prompt-popup.js), whichever
                 # tab is in view.
                 waiting = sudo_prompt_waiting(pane_ttys.get(target), tail)
                 if waiting:
                     sudo_prompts.append(
                         {"target": target, "session": pane["session"], **waiting}
                     )
+                # For the question popup. "Armed" follows the scanner's own scope
+                # rule: a globally-armed session leaves plain shell panes manual.
+                session = pane["session"]
+                if session not in autoyes_by_session:
+                    autoyes_by_session[session] = state.autoyes_enabled_for(session)
+                enabled, source = autoyes_by_session[session]
+                armed = autoyes_will_consider(
+                    target, enabled, source, process_kinds.get(target), agent_kind
+                )
+                prompt = prompt_popup_info(_ANSI_ESCAPE_RE.sub("", tail), agent_kind, armed)
                 scan_results.append(
                     {
                         "target": target,
@@ -363,6 +376,7 @@ def consolidated_poll():
                         "command": pane["command"],
                         "agent_kind": agent_kind,
                         "tail": tail,
+                        "prompt": prompt,
                     }
                 )
     result["scan"] = scan_results

@@ -1,5 +1,6 @@
 """routes/autoyes.py — Server-side auto-yes: scan prompts, countdown, fire."""
 
+import hashlib
 import logging
 import re
 import subprocess
@@ -9,7 +10,12 @@ from flask import Blueprint, jsonify, request
 
 import shared.state as state
 from shared import execution_park as park
-from shared.agent_identity import AGENT_KINDS, refine_with_content, resolve_process
+from shared.agent_identity import (
+    _ANSI_ESCAPE_RE,
+    AGENT_KINDS,
+    refine_with_content,
+    resolve_process,
+)
 from shared.tmux import expected_target_identity, generation_bound_delivery
 from routes.streaming import broadcast_autoyes_event
 
@@ -430,8 +436,10 @@ def _extract_summary(tail, prompt_type):
             if m:
                 return m.group(1).strip()[:80]
     elif prompt_type == "confirm":
-        # Look for the question line above (y/n)
-        for i, line in enumerate(lines):
+        # The live prompt is the LAST matching line. Searching from the top found
+        # the shell's echo of the command that asked, or an answered prompt still
+        # in the scrollback.
+        for line in reversed(lines):
             if re.search(r"\(y/n\)|\[Y/n\]|\(yes/no\)", line, re.IGNORECASE):
                 text = line.strip()
                 # Remove the (y/n) suffix
@@ -481,33 +489,106 @@ _PROMPT_TERMINATOR_RE = re.compile(
     r"(?:Enter to select|Esc to cancel|Navigate)\s*[·•]"
     r"|Press enter to (?:confirm|continue)"
     r"|Allow once\s+Allow always\s+Reject"
+    # Claude's two y/a/n permission rows (js/actions.js permission-yna).
+    r"|Allow once\s+Always allow\s+Deny"
+    r"|Yes[^\n]*\(y\)[^\n]*Always[^\n]*\(a\)[^\n]*No[^\n]*\(n\)"
     r"|Skip & tell the agent what to do instead"
     r"|Use arrow keys to navigate"
     r"|\(y/n(?:/a)?\)"
     r"|\[Y/n(?:/a)?\]"
     r"|\[y/N\]"
-    r"|\(yes/no\)",
+    r"|\(yes/no(?:/\[fingerprint\])?\)",
     re.IGNORECASE,
 )
 
 
-def _prompt_hash(tail):
-    """Hash a stable region of the prompt to detect the same prompt across ticks.
+# Lines of dialog the notification fingerprint keeps, counted up from the
+# terminator. Above any real Claude/codex/opencode prompt's height, and below the
+# 60-line -60 capture, so the fingerprint holds the whole dialog but no scrollback.
+_FINGERPRINT_LINES = 40
 
-    Hashes ~500 chars ending at the prompt's terminator line (the footer or
-    y/n marker), so the animated status bar below the prompt doesn't change
-    the hash every second. Falls back to the last 500 chars when no
-    terminator is found.
+
+def _prompt_region(tail, size=500):
+    """`size` chars ending at the prompt's terminator line (the footer or y/n
+    marker), so the animated status bar below the prompt is left out. The last
+    `size` chars when no terminator is found. size=None keeps everything up to
+    the terminator line.
     """
     matches = list(_PROMPT_TERMINATOR_RE.finditer(tail))
     if matches:
-        last = matches[-1]
-        end = tail.find("\n", last.end())
+        end = tail.find("\n", matches[-1].end())
         if end < 0:
             end = len(tail)
-        start = max(0, end - 500)
-        return hash(tail[start:end])
-    return hash(tail[-500:])
+        return tail[max(0, end - size) if size else 0:end]
+    return tail[-size:] if size else tail
+
+
+def _prompt_hash(tail):
+    """Hash a stable region of the prompt to detect the same prompt across ticks."""
+    return hash(_prompt_region(tail))
+
+
+def prompt_fingerprint(tail):
+    """A stable identity for the prompt on screen.
+
+    /poll sends it with every pane and the question popup keys on it: one popup
+    per prompt, and a new prompt in the same pane pops again. Escapes are
+    stripped first so a colour change alone does not count, and md5 rather than
+    hash() so the value is the same from one request to the next.
+
+    The region ends at the terminator and reaches back at most _FINGERPRINT_LINES
+    lines. Ending at the terminator drops the animated status bar below it; the
+    line cap drops scrollback far above the dialog, which /poll's -60 capture
+    otherwise includes and which shifts every time a line is appended below,
+    re-popping a dismissed card. The cap is well above any real dialog's height,
+    so two prompts that differ anywhere within the dialog — a path in the middle
+    of a wrapped command included — still hash apart.
+    """
+    region = _prompt_region(_ANSI_ESCAPE_RE.sub("", tail or ""), size=None)
+    region = "\n".join(region.split("\n")[-_FINGERPRINT_LINES:])
+    return hashlib.md5(region.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def prompt_popup_info(tail, agent_kind, autoyes_armed):
+    """What the question popup needs from the server about one pane's prompt.
+
+    The browser decides whether a prompt is showing, with the detection the
+    action bar uses. The server adds what only it has: a fingerprint to key
+    the popup on, a summary, and whether Auto-Yes is about to answer this prompt
+    itself, in which case the popup stays away. Takes an escape-free tail. No
+    logging, unlike detect_answerable_prompt: /poll runs this for every pane on
+    every cycle.
+    """
+    detected = _detect_autoyes_prompt(tail, agent_kind)
+    vetoed = agent_kind == "codex" and bool(
+        _LUNA_RE.search(tail) or _CODEX_DOWNGRADE_RE.search(tail)
+    )
+    summary = detected[3] if detected else None
+    if not summary:
+        summary = _extract_summary(tail, "numbered") or _extract_summary(tail, "confirm")
+    return {
+        "fp": prompt_fingerprint(tail),
+        "summary": summary,
+        "autoyes": bool(autoyes_armed and detected and not vetoed),
+    }
+
+
+def autoyes_will_consider(target, enabled, source, process_kind, agent_kind):
+    """Whether the scanner would act on this pane's prompt at all.
+
+    The same scope rule as _autoyes_scan_tick: a globally-armed session covers
+    agent panes only, judged by the process (a shell) AND by content (a
+    non-agent program such as apt in the foreground). And once the human cancels
+    a countdown, the scanner leaves that prompt alone for as long as it stays on
+    screen, so the question popup must not be suppressed for it either.
+    """
+    if not enabled:
+        return False
+    if source == "global" and (process_kind == "shell" or agent_kind not in AGENT_KINDS):
+        return False
+    with state.autoyes_lock:
+        countdown = state.autoyes_countdowns.get(target)
+    return not (countdown and countdown.get("cancelled"))
 
 
 def _clamp_delay(value):
@@ -754,14 +835,22 @@ def _autoyes_scan_tick():
                     del state.autoyes_answered[target]
 
             existing = state.autoyes_countdowns.get(target)
+            # The same prompt means the same region AND the same detected type. An
+            # old prompt's terminator can stay in the capture above a new prompt
+            # whose own line is not one, and must not hand it the old countdown.
+            same_prompt = bool(
+                existing
+                and existing["prompt_hash"] == phash
+                and existing.get("prompt_type") == detected[0]
+            )
 
             if existing and existing["cancelled"]:
-                if existing["prompt_hash"] == phash:
+                if same_prompt:
                     continue
                 del state.autoyes_countdowns[target]
                 existing = None
 
-            if existing and existing["prompt_hash"] == phash:
+            if existing and same_prompt:
                 if now >= existing["deadline"]:
                     prompt_type, send_text, with_enter, _summary = detected
                     state.autoyes_countdowns.pop(target, None)
