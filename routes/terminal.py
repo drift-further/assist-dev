@@ -1,9 +1,11 @@
 """routes/terminal.py — Terminal session management, projects, capture."""
 
+from datetime import datetime
 import json
 import os
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -29,10 +31,44 @@ from shared.tmux import (
 )
 
 terminal_bp = Blueprint("terminal_bp", __name__)
+KILL_AUDIT_FILE = state.DATA_DIR / "kill-audit.log"
+_kill_audit_lock = threading.Lock()
 
 
 def _http_refusal(refusal):
     return jsonify(refusal.body()), refusal.http_status
+
+
+def _audit_terminal_kill(session, outcome, stderr=""):
+    """Append one durable kill record without ever affecting the request."""
+    try:
+        forwarded_for = request.headers.get("X-Forwarded-For", "")
+        source_ip = (
+            request.headers.get("X-Real-IP")
+            or forwarded_for.split(",", 1)[0].strip()
+            or request.remote_addr
+            or ""
+        )
+        record = {
+            "timestamp": datetime.now().astimezone().isoformat(),
+            "session": session,
+            "outcome": outcome,
+            "stderr": stderr,
+            "source_ip": source_ip,
+            "user_agent": request.headers.get("User-Agent", ""),
+            "referrer": request.referrer or "",
+        }
+        line = (json.dumps(record, ensure_ascii=False) + "\n").encode("utf-8")
+        with _kill_audit_lock:
+            fd = os.open(KILL_AUDIT_FILE, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+            try:
+                os.fchmod(fd, 0o600)
+                os.write(fd, line)
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+    except Exception:
+        pass
 
 
 @terminal_bp.route("/terminal/projects")
@@ -532,20 +568,28 @@ def _terminal_kill_effect():
     data = request.get_json(silent=True) or {}
     session = (data.get("session") or "").strip()
     if not session:
+        _audit_terminal_kill(session, "failure", "No session specified")
         return jsonify({"ok": False, "error": "No session specified"}), 400
 
-    proc = subprocess.run(
-        ["tmux", "kill-session", "-t", f"={session}"],
-        capture_output=True,
-        text=True,
-        timeout=5,
-    )
+    try:
+        proc = subprocess.run(
+            ["tmux", "kill-session", "-t", f"={session}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception as exc:
+        stderr = getattr(exc, "stderr", "") or str(exc)
+        _audit_terminal_kill(session, "failure", stderr)
+        raise
     if proc.returncode != 0:
+        _audit_terminal_kill(session, "failure", proc.stderr)
         return (
             jsonify({"ok": False, "error": f"kill-session failed: {proc.stderr}"}),
             500,
         )
 
+    _audit_terminal_kill(session, "success")
     if state.tmux_target and state.tmux_target.startswith(f"{session}:"):
         state.tmux_target = None
 
