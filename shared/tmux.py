@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from shared.agent_identity import (
+    _ANSI_ESCAPE_RE,
     _VERSION_CMD_RE,
     _has_wrapper_descendant,
     _stat_fields,
@@ -1095,6 +1096,109 @@ def pane_awaits_secret(target):
         return False
     except Exception:
         return False
+
+
+# sudo's own prompt and nothing wider. Mirrors VAULT_SUDO_PROMPT_RE in js/vault.js:
+# the sudo popup's Yes sends the vault's $sudo value, so an ssh or key-passphrase
+# prompt must never qualify.
+SUDO_PROMPT_RE = re.compile(r"^\[sudo\]\s+password for\b[^:\n]*:\s*$", re.IGNORECASE)
+
+
+def _last_visible_line(text):
+    """Last non-empty line of a pane capture, escape sequences removed."""
+    for line in reversed(_ANSI_ESCAPE_RE.sub("", text or "").split("\n")):
+        if line.strip():
+            return line
+    return ""
+
+
+def _tty_prompt_waiters(pane_tty):
+    """(pid, args) for every childless foreground process on `pane_tty`.
+
+    A process blocked reading a password sits in the tty's foreground group and
+    has not started anything yet. sudo forks its command once authenticated, so
+    it gains a child while its prompt line can stay on screen: a silent
+    `sudo sleep 60` would otherwise look exactly like a sudo still waiting.
+    ps rather than /proc, so this also runs on macOS.
+    """
+    if not pane_tty:
+        return []
+    try:
+        on_tty = subprocess.run(
+            ["ps", "-t", pane_tty, "-o", "pid=,stat=,args="],
+            capture_output=True, text=True, timeout=2,
+        ).stdout
+        parents = set(
+            subprocess.run(
+                ["ps", "-A", "-o", "ppid="],
+                capture_output=True, text=True, timeout=2,
+            ).stdout.split()
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    waiters = []
+    for row in on_tty.splitlines():
+        parts = row.split(None, 2)
+        if (
+            len(parts) == 3
+            and parts[0].isdigit()
+            and "+" in parts[1]
+            and parts[0] not in parents
+        ):
+            waiters.append((int(parts[0]), parts[2]))
+    return waiters
+
+
+def sudo_prompt_waiting(pane_tty, tail):
+    """The sudo process waiting at this pane's password prompt, or None.
+
+    Both halves are required. The prompt line alone can be printed by anything,
+    and a sudo process alone may already be authenticated and running. The
+    returned command is sudo's own argv, so pane text cannot put words in the
+    popup. `tail` may carry escape sequences (capture-pane -e).
+    """
+    if not tail or "sudo" not in tail:
+        return None
+    if not SUDO_PROMPT_RE.search(_last_visible_line(tail)):
+        return None
+    for pid, args in _tty_prompt_waiters(pane_tty):
+        if os.path.basename(args.split(None, 1)[0]) == "sudo":
+            return {"pid": pid, "command": args}
+    return None
+
+
+def prompt_owner_waiting(pane_id, pid):
+    """True while process `pid` is still waiting at `pane_id`'s password prompt.
+
+    A one-tap answer (the sudo popup) is decided seconds before it lands. In that
+    gap the prompt can be answered at the keyboard, time out, or give way to a
+    shell, and a password typed with Enter into a shell runs as a command and
+    lands in its history. So the tap names the process it answers, and delivery
+    goes ahead only while that process is still a childless foreground process
+    on the pane's tty and the pane still ends in a password prompt.
+    """
+    if isinstance(pid, bool):
+        return False
+    try:
+        pid = int(pid)
+        # A pane id (%N) is already exact. tmux_exact_target's `=%N:` form does
+        # not resolve one, so it is deliberately not used here.
+        tty = subprocess.run(
+            ["tmux", "display-message", "-p", "-t", pane_id, "#{pane_tty}"],
+            capture_output=True, text=True, timeout=2,
+        )
+        screen = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-t", pane_id],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=2,
+        )
+    except (TypeError, ValueError, OSError, subprocess.SubprocessError):
+        return False
+    if tty.returncode != 0 or screen.returncode != 0:
+        return False
+    if not PASSWORD_PROMPT_RE.search(_last_visible_line(screen.stdout)):
+        return False
+    return any(owner == pid for owner, _args in _tty_prompt_waiters(tty.stdout.strip()))
 
 
 def set_ws_send_timeout(ws):

@@ -1,7 +1,7 @@
 // sw.js — Service worker for Assist (network-first for static assets, cache fallback when offline)
 // Browsers register this only in a secure context (with a loopback exception),
 // so it is inert on the current plain-HTTP phone origin until TLS lands.
-const VERSION = 'assist-v3-039';
+const VERSION = 'assist-v3-040';
 const STATIC_CACHE = 'assist-static-' + VERSION;
 const STATIC_URLS = [
     '/',
@@ -28,7 +28,7 @@ const STATIC_URLS = [
     '/js/commands.js?v=4',
     '/js/monitor.js?v=6',
     '/js/chrome.js?v=3',
-    '/js/app.js?v=16',
+    '/js/app.js?v=17',
 ];
 
 self.addEventListener('install', event => {

@@ -33,6 +33,7 @@ from shared.tmux import (
     generation_bound_delivery,
     get_clipboard,
     pane_awaits_secret,
+    prompt_owner_waiting,
 )
 from shared.utils import (
     add_to_history,
@@ -201,6 +202,8 @@ def _send_key_effect():
     expected = expected_target_identity(target) if target else None
     if expected is None:
         return jsonify({"ok": False, "error": "target_absent"}), 409
+    if _prompt_answer_is_stale(data, expected):
+        return jsonify({"ok": False, "error": "prompt_gone"}), 409
     if keys == "ctrl+shift+v":
         try:
             content = get_clipboard()
@@ -226,6 +229,18 @@ def _send_key_effect():
         return jsonify({"ok": False, "error": result.status}), status
     state.touch_activity(target)
     return jsonify({"ok": True, "via": "tmux"})
+
+
+def _prompt_answer_is_stale(data, expected):
+    """True when a one-tap prompt answer names a process that stopped waiting.
+
+    The sudo popup's Yes and No carry `expect_prompt_pid`. Without it nothing
+    changes; with it, delivery waits on shared/tmux.py:prompt_owner_waiting, so a
+    late tap cannot type a password into a shell or interrupt whatever replaced
+    the prompt.
+    """
+    pid = data.get("expect_prompt_pid")
+    return pid is not None and not prompt_owner_waiting(expected.pane_id, pid)
 
 
 @input_bp.route("/type", methods=["POST"])
@@ -269,6 +284,8 @@ def _type_text_effect(require_carried_identity=False):
         expected = expected_target_identity(target) if target else None
     if expected is None:
         return jsonify({"ok": False, "error": "target_absent"}), 409
+    if _prompt_answer_is_stale(data, expected):
+        return jsonify({"ok": False, "error": "prompt_gone"}), 409
 
     # A secret is text typed at a password prompt. Every convenience applied below
     # rewrites a password into the wrong string — the surrounding whitespace is

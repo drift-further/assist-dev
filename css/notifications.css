@@ -26,3 +26,68 @@
 .toast.toast-success { border-left-color: var(--green); }
 .toast.toast-error { border-left-color: var(--red); }
 .toast.swiped { transform: translateX(100%); opacity: 0; }
+
+/* Sudo prompt popup (js/sudo-prompt.js). Fixed, so it moves no layout; the host
+   passes touches through everywhere except the card itself. */
+.sudo-popup-host {
+    position: fixed;
+    top: calc(var(--status-bar-h, 32px) + 4px);
+    left: 8px; right: 8px;
+    z-index: 210;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    pointer-events: none;
+}
+.sudo-popup {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    max-width: 420px;
+    padding: 5px 6px 7px 10px;
+    background: rgba(3, 8, 6, 0.96);
+    border: 1px solid rgba(255, 149, 0, 0.3);
+    border-left: 3px solid var(--amber);
+    font-family: var(--font);
+    font-size: 11px;
+    color: var(--text);
+    overflow: hidden;
+    pointer-events: auto;
+    touch-action: manipulation;
+    user-select: none;
+    -webkit-user-select: none;
+    opacity: 0;
+    transform: translateY(-6px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.sudo-popup.visible { opacity: 1; transform: none; }
+.sudo-popup-text { flex: 1; min-width: 0; }
+.sudo-popup-where,
+.sudo-popup-cmd { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sudo-popup-where { color: var(--amber); font-size: 10px; }
+.sudo-popup button {
+    flex: none;
+    min-width: 52px;
+    height: 34px;
+    padding: 0 10px;
+    background: transparent;
+    border: 1px solid;
+    border-radius: 3px;
+    font-family: var(--font);
+    font-size: 12px;
+    cursor: pointer;
+}
+.sudo-popup-yes { color: var(--green); border-color: rgba(0, 255, 65, 0.5); }
+.sudo-popup-no { color: var(--red); border-color: rgba(255, 0, 64, 0.5); }
+.sudo-popup-timer {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 2px;
+    background: var(--amber);
+    transform-origin: left;
+    animation: sudo-popup-countdown linear forwards;
+}
+@keyframes sudo-popup-countdown { from { transform: scaleX(1); } to { transform: scaleX(0); } }

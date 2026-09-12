@@ -22,7 +22,7 @@ from shared.agent_identity import (
     resolve_process,
 )
 from shared.agent_model import observe as observe_model
-from shared.tmux import prettify_command
+from shared.tmux import prettify_command, sudo_prompt_waiting
 from routes.terminal import enrich_panes_with_agents
 
 poll_bp = Blueprint("poll_bp", __name__)
@@ -248,7 +248,8 @@ def consolidated_poll():
             "-F",
             "#{session_name}\t#{window_index}\t#{pane_index}\t"
             "#{pane_current_command}\t#{pane_width}\t#{pane_height}\t"
-            "#{session_activity}\t#{pane_pid}\t#{pane_id}\t#{session_created}",
+            "#{session_activity}\t#{pane_pid}\t#{pane_id}\t#{session_created}\t"
+            "#{pane_tty}",
         ],
         capture_output=True,
         text=True,
@@ -256,6 +257,8 @@ def consolidated_poll():
     )
 
     panes = []
+    # Kept off the pane dicts: the browser has no use for a tty path.
+    pane_ttys = {}
     seen_sessions = set()
     now = time.time()
     if proc.returncode == 0:
@@ -270,6 +273,7 @@ def consolidated_poll():
                 # Epoch seconds the tmux session was opened — the key behind
                 # "sort by opened date" in the tab strip.
                 created = int(parts[9]) if len(parts) >= 10 and parts[9].isdigit() else 0
+                pane_ttys[target] = parts[10] if len(parts) >= 11 else ""
                 is_subpane = parts[0] in seen_sessions
                 seen_sessions.add(parts[0])
                 panes.append(
@@ -305,6 +309,7 @@ def consolidated_poll():
     # --- Scan ---
     # Must run BEFORE states so content-based idle_seconds is available.
     scan_results = []
+    sudo_prompts = []
     live_targets = set()
     for pane in panes:
         target = pane["target"]
@@ -344,6 +349,13 @@ def consolidated_poll():
                     elif content_hash != prev_hash:
                         state.pane_last_activity[target] = now
                     state.pane_content_hash[target] = content_hash
+                # Every open browser pops these (js/sudo-prompt.js), whichever
+                # tab is in view.
+                waiting = sudo_prompt_waiting(pane_ttys.get(target), tail)
+                if waiting:
+                    sudo_prompts.append(
+                        {"target": target, "session": pane["session"], **waiting}
+                    )
                 scan_results.append(
                     {
                         "target": target,
@@ -354,6 +366,7 @@ def consolidated_poll():
                     }
                 )
     result["scan"] = scan_results
+    result["sudo_prompts"] = sudo_prompts
 
     # Clean up stale targets no longer in tmux
     if proc.returncode == 0:

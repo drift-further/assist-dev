@@ -202,6 +202,12 @@ to remove browser-stored values.
 The `[$sudo]` quick key is offered from prompt shape alone. A pane can fake that
 shape, so look at the prompt before you tap it.
 
+The sudo popup asks for more than shape. It appears only when sudo's prompt is a
+pane's last line and a `sudo` process with no children is in the foreground of
+that pane's terminal, and the command it shows is sudo's own argv, not pane text.
+Its Yes and No name that process, and the server delivers neither once the process
+has stopped waiting.
+
 ## What is deliberately not here
 
 **No server-stored sudo password.** Assist used to keep one in `sudo_pw.dat` and

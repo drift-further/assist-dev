@@ -144,6 +144,8 @@ _classify(
     "fixed:observe",
     "shared/tmux.py:capture_pane",
     "shared/tmux.py:pane_awaits_secret",
+    "shared/tmux.py:prompt_owner_waiting",
+    "shared/tmux.py:_tty_prompt_waiters",
     "shared/tmux.py:tmux_target_exists",
 )
 _classify("intent:operator_interactive", "shared/tmux.py:get_clipboard")

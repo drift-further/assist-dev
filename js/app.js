@@ -113,6 +113,9 @@ async function consolidatedPoll() {
         // Scan — prompt detection + activity on background tabs
         _applyScanData(data.scan || []);
 
+        // A sudo prompt in any pane — a 5 s Yes/No popup (sudo-prompt.js)
+        if (typeof _applySudoPrompts === 'function') _applySudoPrompts(data.sudo_prompts || []);
+
         // Composer drafts — tab markers, plus the resync that lets a draft
         // written on one device turn up on the other. Runs after the strip is
         // rebuilt so the markers land on the fresh nodes.
