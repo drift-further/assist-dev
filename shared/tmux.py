@@ -1043,6 +1043,10 @@ def capture_pane(target, lines=2000, tui=None):
     return content, info
 
 
+# tmux's own ids: %pane, @window, $session. Exact by construction.
+_TMUX_ID_RE = re.compile(r"[%@$]\d+")
+
+
 def tmux_exact_target(target):
     """Return the exact-match form of a `session[:window.pane]` target.
 
@@ -1052,7 +1056,14 @@ def tmux_exact_target(target):
     makes pane-target commands fail ("can't find pane") and display-message
     silently expand every format variable EMPTY. `=name:` pins exact
     session matching and resolves to the session's active pane.
+
+    A tmux id (`%3` pane, `@2` window, `$1` session) is already exact and goes
+    through untouched. `=` names a session, so `=%3:` resolves to nothing: the
+    /type password check, which addresses the pane by id, silently got False
+    for every pane until this passed ids through.
     """
+    if _TMUX_ID_RE.fullmatch(target):
+        return target
     name, _sep, rest = target.partition(":")
     return f"={name}:{rest}"
 
@@ -1181,14 +1192,13 @@ def prompt_owner_waiting(pane_id, pid):
         return False
     try:
         pid = int(pid)
-        # A pane id (%N) is already exact. tmux_exact_target's `=%N:` form does
-        # not resolve one, so it is deliberately not used here.
         tty = subprocess.run(
-            ["tmux", "display-message", "-p", "-t", pane_id, "#{pane_tty}"],
+            ["tmux", "display-message", "-p", "-t", tmux_exact_target(pane_id),
+             "#{pane_tty}"],
             capture_output=True, text=True, timeout=2,
         )
         screen = subprocess.run(
-            ["tmux", "capture-pane", "-p", "-t", pane_id],
+            ["tmux", "capture-pane", "-p", "-t", tmux_exact_target(pane_id)],
             capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=2,
         )
