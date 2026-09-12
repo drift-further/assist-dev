@@ -4,8 +4,10 @@ import os
 import platform
 import re
 import selectors
+import shlex
 import stat
 import subprocess
+import time
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -18,7 +20,7 @@ from shared.agent_identity import (
     refine_with_content,
     resolve_process,
 )
-from shared.state import WS_SEND_TIMEOUT
+from shared.state import WS_SEND_TIMEOUT, get_setting
 
 _IS_MAC = platform.system() == "Darwin"
 
@@ -889,6 +891,41 @@ def detect_venv(project_path):
         if (project_path / venv_dir / "bin" / "activate").exists():
             return venv_dir
     return None
+
+
+def activate_venv(target, project_path):
+    """Source the project's virtualenv in a pane Assist just created.
+
+    Returns the venv directory name actually activated, or None when nothing
+    was sent -- either no venv is present or server.venv_auto_activate is off.
+    Detection stays separate (detect_venv), so a project can still report and
+    badge its venv while the switch is off.
+
+    EVERY pane-creating surface calls this rather than open-coding the send.
+    The send used to be copied into each creation site, and the
+    public-readiness restructure moved two of those sites into park effect
+    functions and dropped the activation from both on the way, while the copy
+    in the saved-command split survived -- so `source .venv/bin/activate`
+    silently stopped happening for new and duplicated terminals. One function
+    is the reason that cannot happen a second time.
+
+    The path is absolute and quoted: the pane's cwd is the project directory
+    today, but a relative source breaks the moment a caller creates the pane
+    somewhere else, and an unquoted one breaks on a project path with a space.
+    """
+    if get_setting("server", "venv_auto_activate") != "on":
+        return None
+    project_path = Path(project_path)
+    venv = detect_venv(project_path)
+    if not venv:
+        return None
+    activate = project_path / venv / "bin" / "activate"
+    tmux_send_text(target, f"source {shlex.quote(str(activate))}")
+    tmux_send_keys(target, "Enter")
+    # Let the shell finish sourcing before the caller sends its own command,
+    # so an init command or saved command runs INSIDE the venv.
+    time.sleep(0.3)
+    return venv
 
 
 def capture_pane(target, lines=2000, tui=None):

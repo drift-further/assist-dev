@@ -38,6 +38,14 @@ DEFAULT_SETTINGS = {
     "server": {
         "claude_mode": "claude",
         "session_init_cmd": os.environ.get("ASSIST_SESSION_INIT_CMD", ""),
+        # Source a project's virtualenv in every pane Assist opens in that
+        # project. "on"/"off" as a string, not a bool: the settings panel's
+        # _renderToggle compares against its option strings -- same shape as
+        # autoyes.all_sessions and ui.idle_tab_tucking. Default on, because
+        # activation was unconditional until a restructure dropped it from the
+        # launch and duplicate paths and a fresh terminal stopped picking up
+        # .venv while the UI kept showing the venv badge.
+        "venv_auto_activate": "on",
         "projects_dir": str(
             Path(
                 os.environ.get("ASSIST_PROJECTS_DIR", Path.home() / "projects")

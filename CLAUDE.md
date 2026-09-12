@@ -61,6 +61,7 @@ Run the full unittest regression suite from the repo root:
 | `test_vault_grammar` | `$` vault tokens stay outside the server segment grammar; secret `/type` sends stay exact and unrecorded |
 | `test_vault_client_contract` | client-only guards couple vault resolution to secret sending and keep vault chip preview local |
 | `test_favorites` | the star on a history row: add, remove, keep-a-segment. The add path broke one-directionally when a refactor dropped an import, and the phone showed nothing |
+| `test_venv_autoactivate` | that a pane Assist opens in a project actually enters that project's venv, on every creation surface. Activation was open-coded at each site and a restructure dropped it from two of the three while detection kept reporting a venv, so nothing failed loudly. Fixtures in both directions, plus a source guard that no surface open-codes the send again |
 | `test_autoyes_downgrade_menu` | the codex veto: while a model-downgrade menu (or the luna model) is on screen, a codex pane is not auto-answered, because a bare Enter there takes the downgrade. Fixtures in both directions, so the veto cannot silently widen to every codex pane |
 
 One test is **not** in that command, because it needs a browser and a running server:
@@ -182,6 +183,7 @@ separately via `register_streaming(sock)`.
 
 - **WebSocket terminal streaming**: flask-sock, captures tmux panes, streams to connected clients
 - **Smart actions**: JS pattern detection for permission prompts and numbered options — surfaces one-tap mobile actions. Mirrors the server matchers in `routes/autoyes.py`; keep the two in step
+- **Venv auto-activation**: a pane opened in a project directory sources that project's `venv`, `.venv` or `env` before anything else runs — so a configured init command, and anything typed after it, executes inside the venv. `shared/tmux.py:activate_venv` is the ONLY implementation; every pane-creating surface calls it rather than sending its own `source`. Gated by `server.venv_auto_activate` (Settings → Server Controls → Auto-Activate venv, default `on`). Detection is separate: the venv badge and the launch response's `venv` field stay honest with the switch off, and `venv_activated` says whether the pane is actually in it. `/api/venv/create` activates regardless — that button is the user asking directly
 - **Prompt segments**: a favorite given a handle becomes `[handle]`; `shared/segments.py` expands it server-side in `/type` (opt-in via an `expand` flag) while history keeps the token form
 - **Auto-yes**: Background scanner with per-session countdown timers for auto-approving prompts. An `autoyes.all_sessions` switch arms every agent pane at once — resolved at scan time (runtime map → project settings → switch), so new sessions are covered with no backfill — with a per-session opt-out. Codex panes are vetoed rather than answered while the luna model or one of codex's model-downgrade menus is on screen: a bare Enter there re-tiers the pane
 - **Automate**: Continuous mode exists, but its start/relaunch/clear/resend/trust/answer execution intents are temporarily parked while container host wiring migrates

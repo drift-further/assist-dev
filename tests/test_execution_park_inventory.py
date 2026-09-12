@@ -156,6 +156,15 @@ _classify(
     "intent:automate_start|automate_hard_relaunch|terminal_init_launch|terminal_init_duplicate|bare_terminal|saved_command|fixed_git",
     "shared/tmux.py:_create_tmux_resource",
 )
+# Reached from the three surfaces that open a pane in a project directory:
+# a fresh terminal and a duplicate (each with or without a configured init
+# command) and the saved-command split. It sends `source <venv>/bin/activate`
+# and nothing else -- the path comes from detect_venv, which only ever yields
+# "venv", ".venv" or "env" under a directory the caller already resolved.
+_classify(
+    "intent:terminal_init_launch|terminal_init_duplicate|bare_terminal|saved_command",
+    "shared/tmux.py:activate_venv",
+)
 
 
 PARK_BINDINGS = {

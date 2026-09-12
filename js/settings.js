@@ -15,6 +15,7 @@ const _SETTINGS_SECTIONS = [
         key: 'server', label: 'Server Controls', fields: [
             { key: 'claude_mode', label: 'Claude Mode', type: 'toggle', options: ['npx', 'claude'] },
             { key: 'session_init_cmd', label: 'Session Init Cmd', type: 'text', restart: true },
+            { key: 'venv_auto_activate', label: 'Auto-Activate venv', type: 'toggle', options: ['on', 'off'] },
             { key: 'projects_dir', label: 'Projects Dir', type: 'text', restart: true },
             { key: 'restart_cmd', label: 'Restart Command', type: 'text', restart: true },
         ]

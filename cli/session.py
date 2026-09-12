@@ -225,7 +225,7 @@ def launch(
         payload["rows"] = rows
 
     response = http.post("/terminal/launch", payload)
-    for key in ("session", "target", "venv", "existed"):
+    for key in ("session", "target", "venv", "venv_activated", "existed"):
         print(f"{key}: {_text(response.get(key))}")
 
     if wait_for_completion:

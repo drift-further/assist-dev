@@ -8,7 +8,12 @@ from flask import Blueprint, jsonify, request
 
 import shared.state as state
 from shared import execution_park as park
-from shared.tmux import create_tmux_split, detect_venv, tmux_send_keys, tmux_send_text
+from shared.tmux import (
+    activate_venv,
+    create_tmux_split,
+    tmux_send_keys,
+    tmux_send_text,
+)
 
 commands_bp = Blueprint("commands_bp", __name__)
 
@@ -150,11 +155,8 @@ def _run_command_effect():
 
     if project:
         project_path = state.PROJECTS_DIR / project
-        venv = detect_venv(project_path) if project_path.is_dir() else None
-        if venv:
-            tmux_send_text(delivery_target, f"source {project_path}/{venv}/bin/activate")
-            tmux_send_keys(delivery_target, "Enter")
-            time.sleep(0.2)
+        if project_path.is_dir():
+            activate_venv(delivery_target, project_path)
 
     tmux_send_text(delivery_target, cmd)
     tmux_send_keys(delivery_target, "Enter")

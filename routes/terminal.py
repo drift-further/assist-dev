@@ -15,6 +15,7 @@ import shared.state as state
 import shared.tab_state as tab_state
 from shared.agent_identity import resolve_process
 from shared.tmux import (
+    activate_venv,
     capture_pane,
     create_tmux_session,
     detect_venv,
@@ -183,6 +184,9 @@ def _terminal_launch_effect(project_path, session_name, cols, rows, init_cmd):
         )
 
     venv = detect_venv(project_path)
+    # Activation goes BEFORE the init command, so the init command runs inside
+    # the venv -- that ordering is the whole point of activating at all.
+    activated = activate_venv(f"{session_name}:0.0", project_path)
     if init_cmd:
         tmux_send_text(f"{session_name}:0.0", init_cmd)
         tmux_send_keys(f"{session_name}:0.0", "Enter")
@@ -195,6 +199,9 @@ def _terminal_launch_effect(project_path, session_name, cols, rows, init_cmd):
             "session": session_name,
             "target": state.tmux_target,
             "venv": venv,
+            # Detection and activation are reported separately: `venv` says a
+            # venv is there, `venv_activated` says the pane is actually in it.
+            "venv_activated": bool(activated),
             "existed": False,
             "init_cmd": init_cmd or "",
             "expected_target_identity": identity.as_dict(),
@@ -745,6 +752,10 @@ def _terminal_duplicate_effect(new_name, cwd, cols, rows, init_cmd):
             timeout=5,
         )
 
+    project_path = Path(cwd)
+    venv = detect_venv(project_path) if project_path.is_dir() else None
+    activated = activate_venv(f"{new_name}:0.0", project_path)
+
     # Run the configured session initialization command.
     if init_cmd:
         tmux_send_text(f"{new_name}:0.0", init_cmd)
@@ -760,6 +771,8 @@ def _terminal_duplicate_effect(new_name, cwd, cols, rows, init_cmd):
             "session": new_name,
             "target": target,
             "cwd": cwd,
+            "venv": venv,
+            "venv_activated": bool(activated),
             "init_cmd": init_cmd or "",
             "expected_target_identity": identity.as_dict(),
         }
