@@ -1,5 +1,5 @@
 [project]
-name = "claude-assist"
+name = "drift-assist"
 version = "0.1.0"
 description = "Web terminal interface for Claude Code tmux sessions"
 requires-python = ">=3.11"

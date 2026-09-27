@@ -8,7 +8,8 @@
     position: relative;
     flex: 0 0 auto;
     padding-top: env(safe-area-inset-top, 0px);
-    background: #080c10;
+    background: var(--bg-bar);
+    border-bottom: 1px solid var(--line);
     z-index: 10;
 }
 
@@ -16,7 +17,7 @@
     position: relative;
     box-sizing: border-box;
     width: 100%;
-    background: linear-gradient(180deg, #0a1210 0%, #060e0a 100%);
+    background: var(--bg-bar);
     height: 41px;
     min-height: 41px;
     padding: 0 8px;
@@ -41,27 +42,47 @@
 }
 .status-dot.ok {
     background: var(--green);
-    box-shadow: 0 0 8px var(--green), 0 0 16px rgba(0, 255, 65, 0.3);
+    box-shadow: 0 0 6px rgba(131, 215, 162, 0.45);
 }
 .status-dot.err {
     background: var(--red);
     box-shadow: 0 0 8px var(--red);
 }
 .status-title {
-    min-width: 36px;
-    max-width: 46px;
+    min-width: 0;
+    max-width: 220px;
     overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
     font-size: 10px;
     line-height: 1;
-    font-weight: 700;
-    color: var(--green);
-    letter-spacing: 1px;
-    text-transform: uppercase;
-    flex: 0 0 46px;
-    text-shadow: 0 0 10px rgba(0, 255, 65, 0.3);
+    font-weight: 500;
+    color: var(--text-dim);
+    letter-spacing: 0.2px;
+    flex: 0 1 auto;
 }
 .status-title span { display: none; color: var(--text-dim); font-weight: 400; }
+
+/* Brand lockup: the Live threads mark and the Studio-style lowercase address.
+   Purely a label — no handler — so it cannot steal a tap from the tabs. */
+.brand-lockup {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    flex: 0 0 auto;
+    margin-right: 6px;
+    color: var(--text-strong);
+    white-space: nowrap;
+    user-select: none;
+}
+.brand-mark { width: 20px; height: 20px; color: var(--coral); flex-shrink: 0; }
+.brand-word {
+    font-family: var(--font);
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: -0.04em;
+}
+.brand-word span { color: var(--text-dim); font-weight: 400; }
 
 /* The tabs no longer live in this bar — they own .session-rail below it, at
    full width. The overrides that used to sit here (flex: 0 1 auto,
@@ -88,13 +109,14 @@
 }
 .tmux-indicator.active { opacity: 1; }
 .status-studio {
+    font-family: var(--font);
     font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 1px;
-    color: var(--purple);
-    background: rgba(191, 90, 242, 0.10);
-    border: 1px solid rgba(191, 90, 242, 0.45);
-    border-radius: 5px;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+    color: var(--text);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
     min-width: 40px;
     height: 40px;
     padding: 0 6px;
@@ -108,8 +130,8 @@
     -webkit-tap-highlight-color: transparent;
 }
 .status-studio:hover, .status-studio:active {
-    background: rgba(191, 90, 242, 0.22);
-    box-shadow: 0 0 8px rgba(191, 90, 242, 0.35);
+    background: var(--bg-selected);
+    border-color: #3a4650;
 }
 .btn-actions {
     height: 40px;
@@ -121,23 +143,23 @@
     justify-content: center;
     gap: 6px;
     flex: 0 0 auto;
-    color: var(--green);
-    border: 1px solid rgba(0, 255, 65, 0.38);
-    border-radius: 5px;
-    background: rgba(0, 255, 65, 0.06);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-card);
     font-family: var(--font);
-    font-size: 9px;
-    font-weight: 800;
-    letter-spacing: 0.6px;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.3px;
     cursor: pointer;
     white-space: nowrap;
     -webkit-tap-highlight-color: transparent;
 }
-.btn-actions:active { background: rgba(0, 255, 65, 0.15); }
+.btn-actions:active { background: var(--bg-selected); }
 .btn-actions.active {
-    color: var(--bg);
-    border-color: var(--green);
-    background: var(--green);
+    color: var(--text-strong);
+    border-color: #3a4650;
+    background: var(--bg-selected);
 }
 .actions-menu-bars { font-size: 12px; line-height: 1; }
 /* Not a clock — js/monitor.js:updateStatusTime() writes "12s ago" for the last
@@ -157,6 +179,10 @@
 @media (max-width: 600px) {
     .status-bar, .session-rail { padding-left: 4px; padding-right: 4px; }
     .tmux-indicator { max-width: 64px; }
+    /* The lockup carries the identity here; the session/waiting counts
+       only fit on wider screens (they never fit the old 46px slot either). */
+    .status-title { display: none; }
+    .brand-lockup { margin-right: 2px; }
     /* Studio keeps its 40px touch target and its attention badge; only the
        word goes, leaving the diamond. */
     .status-studio { min-width: 40px; padding: 0; }

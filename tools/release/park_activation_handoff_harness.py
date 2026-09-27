@@ -117,6 +117,9 @@ def snapshot_external(canonical: Path, assist_root: Path):
         "canonical_tracked": tracked_inventory(canonical),
         "dispatch_entrypoints": selected_entrypoints(assist_root),
         "default_xdg_marker": path_identity(
+            Path.home() / ".config" / "drift-assist" / "config.env"
+        ),
+        "legacy_xdg_marker": path_identity(
             Path.home() / ".config" / "claude-assist" / "config.env"
         ),
         "live_pid": path_identity(Path("/tmp/assist-server.pid")),
@@ -169,8 +172,8 @@ def main():
     os.chmod(root, 0o700)
     home = root / "home"
     positive_xdg = root / "positive-xdg"
-    default_config = home / ".config" / "claude-assist" / "config.env"
-    positive_config = positive_xdg / "claude-assist" / "config.env"
+    default_config = home / ".config" / "drift-assist" / "config.env"
+    positive_config = positive_xdg / "drift-assist" / "config.env"
     directories = [
         home,
         positive_config.parent,

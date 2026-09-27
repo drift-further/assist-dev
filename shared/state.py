@@ -361,6 +361,11 @@ CONTAINER_CONFIG_FILE = DATA_DIR / "container_config.json"
 _container_config = {}
 _container_config_lock = threading.Lock()
 
+CONTAINER_IMAGE_NAME = "drift-assist-container"
+# The pre-rename default. Status reports it for one release while it is the
+# only image built; a build always writes CONTAINER_IMAGE_NAME.
+LEGACY_CONTAINER_IMAGE_NAME = "claude-assist-container"
+
 DEFAULT_CONTAINER_CONFIG = {
     "base": {
         "node_version": "20",
@@ -383,7 +388,7 @@ DEFAULT_CONTAINER_CONFIG = {
         "system": [],
     },
     "image": {
-        "name": "claude-assist-container",
+        "name": CONTAINER_IMAGE_NAME,
         "built_at": None,
         "build_hash": None,
     },

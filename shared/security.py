@@ -1,6 +1,6 @@
 """Origin allowlisting for HTTP and WebSocket requests.
 
-Claude Assist is a single-owner LAN tool protected by a shared secret. Origin
+Drift Assist is a single-owner LAN tool protected by a shared secret. Origin
 checking is an independent browser-side defense against a hostile website
 causing command execution with an authenticated browser session. These helpers
 reject cross-origin requests while leaving same-origin and non-browser (curl,

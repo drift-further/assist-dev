@@ -126,10 +126,11 @@ async function consolidatedPoll() {
         const promptCount = Object.keys(_sessionPrompts).filter(k => _sessionPrompts[k]).length;
         const statusTitle = document.querySelector('.status-title');
         if (statusTitle) {
-            let text = 'Assist';
-            if (sessionCount > 0) text += ' \u00B7 ' + sessionCount + ' session' + (sessionCount > 1 ? 's' : '');
-            if (promptCount > 0) text += ' \u00B7 ' + promptCount + ' waiting';
-            statusTitle.innerHTML = text + ' <span>// Claude Code</span>';
+            // The brand lockup beside it names the app; this is the counts.
+            const parts = [];
+            if (sessionCount > 0) parts.push(sessionCount + ' session' + (sessionCount > 1 ? 's' : ''));
+            if (promptCount > 0) parts.push(promptCount + ' waiting');
+            statusTitle.textContent = parts.join(' \u00B7 ');
         }
 
         // Automate status

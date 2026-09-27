@@ -18,7 +18,7 @@ static_bp = Blueprint("static_bp", __name__)
 # gate, so a logged-out browser cannot load one.
 _REQUEST_UI = """
   <div class="req-sep">or</div>
-  <button type="button" id="req-btn" class="req-btn">Request approval from a logged-in session</button>
+  <button type="button" id="req-btn" class="req-btn">Request device approval</button>
   <div id="req-state" class="req-state"></div>
 <script>
 (function () {
@@ -38,7 +38,7 @@ _REQUEST_UI = """
     out.className = 'req-state';
     out.textContent = msg || '';
     btn.disabled = false;
-    btn.textContent = 'Request approval from a logged-in session';
+    btn.textContent = 'Request device approval';
   }
   function waiting(code) {
     // The request has landed; leaving the button on "Requesting…" would read
@@ -108,37 +108,67 @@ _REQUEST_UI = """
 _LOGIN_PAGE = """<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Assist // Sign in</title>
+<title>Sign in \u00b7 Drift Assist</title>
 <style>
-  body {{ background:#080c10; color:#00ff41; font-family:'JetBrains Mono',ui-monospace,monospace;
-         display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; }}
-  form {{ width:min(92vw,340px); }}
-  h1 {{ font-size:15px; color:#00d4ff; letter-spacing:1px; margin:0 0 4px; }}
-  p {{ font-size:12px; color:#5a6b7a; margin:0 0 18px; line-height:1.5; }}
-  input {{ width:100%; box-sizing:border-box; background:#0d141a; color:#00ff41;
-           border:1px solid #1d2b36; border-radius:4px; padding:13px; font:inherit;
-           font-size:16px; margin-bottom:10px; }}
-  button {{ width:100%; background:transparent; color:#ff9500; border:1px solid #ff9500;
-            border-radius:4px; padding:13px; font:inherit; font-size:14px; }}
-  .err {{ color:#ff0040; font-size:12px; min-height:16px; margin-top:10px; }}
-  .req-sep {{ color:#5a6b7a; font-size:11px; text-align:center; margin:14px 0 10px; }}
-  .req-btn {{ width:100%; background:transparent; color:#00d4ff; border:1px solid #1d2b36;
-              border-radius:4px; padding:13px; font:inherit; font-size:13px; }}
-  .req-btn:disabled {{ color:#5a6b7a; }}
-  .req-state {{ color:#5a6b7a; font-size:12px; text-align:center; min-height:18px;
+  body {{ background:#0e1113; color:#e7e9ea; margin:0; min-height:100vh;
+         font-family:'Helvetica Neue',Helvetica,Arial,system-ui,sans-serif;
+         display:grid; place-items:center; padding:20px; box-sizing:border-box;
+         background-image:radial-gradient(circle at 50% 42%,#171c202b,transparent 38%); }}
+  form {{ width:min(390px,100%); box-sizing:border-box; padding:28px;
+          background:#111518; border:1px solid #242b32; border-radius:8px;
+          box-shadow:0 24px 60px #0008; }}
+  .brand {{ display:flex; align-items:center; gap:10px; margin-bottom:25px; }}
+  .brand svg {{ width:32px; height:32px; color:#eb4328; flex:none; }}
+  .word {{ font:500 22px 'JetBrains Mono',ui-monospace,monospace; letter-spacing:-.055em; }}
+  .word span {{ color:#8d959b; font-weight:400; }}
+  h1 {{ margin:0 0 8px; font-size:24px; line-height:1.25; }}
+  p {{ margin:0 0 23px; color:#a8b0b6; font-size:13px; line-height:1.55; }}
+  code {{ font-family:'JetBrains Mono',ui-monospace,monospace; font-size:12px; color:#c8cfd4; }}
+  label {{ display:block; margin-bottom:7px; color:#c8cfd4; font-size:12px; font-weight:600; }}
+  .token {{ display:flex; gap:8px; }}
+  input {{ min-width:0; flex:1; height:42px; box-sizing:border-box; padding:0 11px;
+           background:#0c0f11; color:#e7e9ea; border:1px solid #242b32; border-radius:6px;
+           outline:0; font:16px 'JetBrains Mono',ui-monospace,monospace; }}
+  input:focus {{ border-color:#3a4650; }}
+  button {{ height:42px; border-radius:6px; padding:0 16px; font-size:13px; font-weight:700;
+            font-family:inherit; cursor:pointer; }}
+  button[type=submit] {{ background:#eb4328; border:1px solid #eb4328; color:#fff; }}
+  button[type=submit]:active {{ background:#d23a21; }}
+  .err {{ color:#f25767; font-size:12px; min-height:16px; margin-top:10px; }}
+  .req-sep {{ display:flex; align-items:center; gap:10px; margin:14px 0 20px; color:#5f686e;
+              font:10px 'JetBrains Mono',ui-monospace,monospace; text-transform:uppercase;
+              letter-spacing:.1em; }}
+  .req-sep:before, .req-sep:after {{ content:""; height:1px; flex:1; background:#1c2126; }}
+  .req-btn {{ width:100%; background:#141819; color:#c8cfd4; border:1px solid #242b32; }}
+  .req-btn:disabled {{ color:#5f686e; }}
+  .req-state {{ color:#8d959b; font-size:12px; text-align:center; min-height:18px;
                 margin-top:12px; line-height:1.6; }}
-  .req-state.waiting {{ color:#00ff41; }}
-  .req-code {{ font-size:34px; letter-spacing:10px; color:#00d4ff; margin-bottom:6px;
-               text-indent:10px; }}
+  .req-state.waiting {{ color:#83d7a2; }}
+  .req-code {{ font:500 34px 'JetBrains Mono',ui-monospace,monospace; letter-spacing:10px;
+               color:#e7e9ea; margin-bottom:6px; text-indent:10px; }}
+  .foot {{ margin-top:18px; padding-top:17px; border-top:1px solid #1c2126; text-align:center;
+           color:#5f686e; font:9px 'JetBrains Mono',ui-monospace,monospace; letter-spacing:.06em; }}
+  @media (max-width:480px) {{
+    body {{ place-items:start center; padding:36px 12px; }}
+    form {{ padding:24px 20px; }}
+    .token {{ flex-direction:column; }}
+    .token input, .token button {{ flex:none; width:100%; }}
+  }}
 </style></head>
 <body><form method="POST" action="/login">
-  <h1>&#9671; ASSIST</h1>
-  <p>Paste the token from <code>auth_token</code> in the install directory.</p>
-  <input type="password" name="token" placeholder="token" autocomplete="current-password"
-         autocapitalize="off" spellcheck="false" autofocus>
-  <button type="submit">Sign in</button>
+  <div class="brand"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M24 8H48Q56 8 56 16V48Q56 56 48 56H24M8 18H39M8 32H39M8 46H39" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="39" cy="18" r="5" fill="currentColor"/><circle cx="39" cy="32" r="5" fill="currentColor"/><circle cx="39" cy="46" r="5" fill="currentColor"/></svg><span class="word">driftassist<span>.dev</span></span></div>
+  <h1>Connect to Assist</h1>
+  <p>Paste the access token from <code>auth_token</code> in the install directory, or request
+     approval from a device that is already signed in.</p>
+  <label for="token">Access token</label>
+  <div class="token">
+    <input type="password" id="token" name="token" placeholder="token" autocomplete="current-password"
+           autocapitalize="off" spellcheck="false" autofocus>
+    <button type="submit">Continue</button>
+  </div>
   <div class="err">{error}</div>
   {request_ui}
+  <div class="foot">PRIVATE TERMINAL ACCESS</div>
 </form></body></html>"""
 
 

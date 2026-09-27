@@ -1,4 +1,4 @@
-"""Process-oriented commands for the Claude Assist CLI."""
+"""Process-oriented commands for the Drift Assist CLI."""
 
 import os
 import shutil
@@ -227,12 +227,13 @@ def doctor(resolved: Config) -> int:
 
 
 def studio(arguments: list[str]) -> int:
-    if shutil.which("studio"):
-        executable = "studio"
-        argv = ["studio", *arguments]
-    else:
-        print_error("no studio CLI on PATH")
+    # `sto` is the name the Studio skill and hosted install teach; `studio`
+    # is the older name, still accepted.
+    executable = next((name for name in ("sto", "studio") if shutil.which(name)), None)
+    if executable is None:
+        print_error("no Studio CLI on PATH (looked for sto, then studio)")
         return 1
+    argv = [executable, *arguments]
 
     try:
         os.execvp(executable, argv)

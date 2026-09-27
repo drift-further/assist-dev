@@ -5,8 +5,8 @@
     display: none;
     flex-shrink: 0;
     padding: 8px;
-    background: linear-gradient(180deg, rgba(0, 212, 255, 0.06) 0%, rgba(0, 212, 255, 0.02) 100%);
-    border: 1px solid rgba(0, 212, 255, 0.2);
+    background: linear-gradient(180deg, rgba(112, 174, 249, 0.06) 0%, rgba(112, 174, 249, 0.02) 100%);
+    border: 1px solid rgba(112, 174, 249, 0.2);
     animation: fadeSlide 0.2s ease-out;
 }
 .smart-actions.visible { display: block; }
@@ -20,12 +20,12 @@
 }
 .smart-actions-label::before { content: '\25CF'; font-size: 6px; animation: pulseGlow 2s ease-in-out infinite; }
 .smart-actions-close {
-    background: transparent; border: 1px solid rgba(255, 55, 95, 0.3);
+    background: transparent; border: 1px solid rgba(242, 87, 103, 0.3);
     color: var(--red); font-size: 12px; width: 24px; height: 24px;
     cursor: pointer; display: flex; align-items: center; justify-content: center;
     -webkit-tap-highlight-color: transparent; transition: all 0.12s; font-family: var(--font);
 }
-.smart-actions-close:active { background: rgba(255, 55, 95, 0.15); transform: scale(0.9); }
+.smart-actions-close:active { background: rgba(242, 87, 103, 0.15); transform: scale(0.9); }
 .smart-actions-grid { display: flex; gap: 6px; flex-wrap: wrap; }
 .smart-actions-grid.sa-vertical { flex-direction: column; }
 .sa-btn {
@@ -35,14 +35,14 @@
     cursor: pointer; transition: all 0.12s; -webkit-tap-highlight-color: transparent;
 }
 .sa-btn:active { transform: scale(0.93); }
-.sa-btn.sa-green { color: var(--green); border-color: rgba(0, 255, 65, 0.4); }
-.sa-btn.sa-green:active { background: rgba(0, 255, 65, 0.15); box-shadow: 0 0 12px rgba(0, 255, 65, 0.3); }
-.sa-btn.sa-cyan { color: var(--cyan); border-color: rgba(0, 212, 255, 0.4); }
-.sa-btn.sa-cyan:active { background: rgba(0, 212, 255, 0.15); box-shadow: 0 0 12px rgba(0, 212, 255, 0.3); }
-.sa-btn.sa-red { color: var(--red); border-color: rgba(255, 0, 64, 0.4); }
-.sa-btn.sa-red:active { background: rgba(255, 0, 64, 0.15); box-shadow: 0 0 12px rgba(255, 0, 64, 0.3); }
-.sa-btn.sa-amber { color: var(--amber); border-color: rgba(255, 149, 0, 0.4); }
-.sa-btn.sa-amber:active { background: rgba(255, 149, 0, 0.15); box-shadow: 0 0 12px rgba(255, 149, 0, 0.3); }
+.sa-btn.sa-green { color: var(--green); border-color: rgba(131, 215, 162, 0.4); }
+.sa-btn.sa-green:active { background: rgba(131, 215, 162, 0.15); box-shadow: 0 0 12px rgba(131, 215, 162, 0.3); }
+.sa-btn.sa-cyan { color: var(--cyan); border-color: rgba(112, 174, 249, 0.4); }
+.sa-btn.sa-cyan:active { background: rgba(112, 174, 249, 0.15); box-shadow: 0 0 12px rgba(112, 174, 249, 0.3); }
+.sa-btn.sa-red { color: var(--red); border-color: rgba(242, 87, 103, 0.4); }
+.sa-btn.sa-red:active { background: rgba(242, 87, 103, 0.15); box-shadow: 0 0 12px rgba(242, 87, 103, 0.3); }
+.sa-btn.sa-amber { color: var(--amber); border-color: rgba(225, 181, 106, 0.4); }
+.sa-btn.sa-amber:active { background: rgba(225, 181, 106, 0.15); box-shadow: 0 0 12px rgba(225, 181, 106, 0.3); }
 .smart-actions-grid.sa-vertical .sa-btn {
     flex: none; text-align: left; padding: 10px 12px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -50,30 +50,30 @@
 /* Auto-Yes toggle */
 .sa-autoyes {
     font-size: 10px; padding: 3px 8px; margin-left: 8px;
-    border: 1px solid rgba(255, 149, 0, 0.3); background: transparent;
+    border: 1px solid rgba(225, 181, 106, 0.3); background: transparent;
     color: #777; cursor: pointer; font-family: var(--font); font-weight: 700;
     letter-spacing: 0.5px; transition: all 0.15s;
     -webkit-tap-highlight-color: transparent;
 }
 .sa-autoyes.active {
-    color: var(--amber); border-color: rgba(255, 149, 0, 0.5);
-    background: rgba(255, 149, 0, 0.1); box-shadow: 0 0 8px rgba(255, 149, 0, 0.15);
+    color: var(--amber); border-color: rgba(225, 181, 106, 0.5);
+    background: rgba(225, 181, 106, 0.1); box-shadow: 0 0 8px rgba(225, 181, 106, 0.15);
 }
 .sa-autoyes:active { transform: scale(0.93); }
 
 /* Git Quick Actions */
 .btn-git {
-    background: transparent; border: 1px solid rgba(255, 149, 0, 0.3);
+    background: transparent; border: 1px solid rgba(225, 181, 106, 0.3);
     color: var(--amber); font-size: 9px; font-weight: 700; font-family: var(--font);
     padding: 2px 7px; cursor: pointer; -webkit-tap-highlight-color: transparent;
     border-radius: 3px; transition: all 0.15s; letter-spacing: 0.5px;
 }
-.btn-git:active { transform: scale(0.9); background: rgba(255, 149, 0, 0.15); }
-.btn-git.active { background: rgba(255, 149, 0, 0.1); border-color: rgba(255, 149, 0, 0.5); }
+.btn-git:active { transform: scale(0.9); background: rgba(225, 181, 106, 0.15); }
+.btn-git.active { background: rgba(225, 181, 106, 0.1); border-color: rgba(225, 181, 106, 0.5); }
 .git-panel {
     display: none; flex-shrink: 0; padding: 8px;
-    background: linear-gradient(180deg, rgba(255, 149, 0, 0.06) 0%, rgba(255, 149, 0, 0.02) 100%);
-    border: 1px solid rgba(255, 149, 0, 0.2); animation: fadeSlide 0.2s ease-out;
+    background: linear-gradient(180deg, rgba(225, 181, 106, 0.06) 0%, rgba(225, 181, 106, 0.02) 100%);
+    border: 1px solid rgba(225, 181, 106, 0.2); animation: fadeSlide 0.2s ease-out;
 }
 .git-panel.visible { display: block; }
 .git-row { display: flex; gap: 6px; align-items: center; }
@@ -85,51 +85,51 @@
     transition: all 0.12s; -webkit-tap-highlight-color: transparent; white-space: nowrap;
 }
 .git-btn:active { transform: scale(0.93); }
-.git-btn.git-status { color: var(--cyan); border-color: rgba(0, 212, 255, 0.4); }
-.git-btn.git-status:active { background: rgba(0, 212, 255, 0.15); }
-.git-btn.git-push { color: var(--green); border-color: rgba(0, 255, 65, 0.4); }
-.git-btn.git-push:active { background: rgba(0, 255, 65, 0.15); }
-.git-btn.git-venv { color: var(--purple); border-color: rgba(191, 90, 242, 0.4); }
-.git-btn.git-venv:active { background: rgba(191, 90, 242, 0.15); }
-.git-btn.git-commit { color: var(--amber); border-color: rgba(255, 149, 0, 0.4); }
-.git-btn.git-commit:active { background: rgba(255, 149, 0, 0.15); }
-.git-btn.git-close { margin-left: auto; color: var(--red); border-color: rgba(255, 55, 95, 0.4); padding: 10px 14px; }
-.git-btn.git-close:active { background: rgba(255, 55, 95, 0.15); }
+.git-btn.git-status { color: var(--cyan); border-color: rgba(112, 174, 249, 0.4); }
+.git-btn.git-status:active { background: rgba(112, 174, 249, 0.15); }
+.git-btn.git-push { color: var(--green); border-color: rgba(131, 215, 162, 0.4); }
+.git-btn.git-push:active { background: rgba(131, 215, 162, 0.15); }
+.git-btn.git-venv { color: var(--purple); border-color: rgba(182, 156, 242, 0.4); }
+.git-btn.git-venv:active { background: rgba(182, 156, 242, 0.15); }
+.git-btn.git-commit { color: var(--amber); border-color: rgba(225, 181, 106, 0.4); }
+.git-btn.git-commit:active { background: rgba(225, 181, 106, 0.15); }
+.git-btn.git-close { margin-left: auto; color: var(--red); border-color: rgba(242, 87, 103, 0.4); padding: 10px 14px; }
+.git-btn.git-close:active { background: rgba(242, 87, 103, 0.15); }
 .git-commit-input {
     flex: 1; min-width: 0; padding: 8px 10px;
-    background: var(--bg-card); border: 1px solid rgba(255, 149, 0, 0.25);
+    background: var(--bg-card); border: 1px solid rgba(225, 181, 106, 0.25);
     color: var(--amber); font-family: var(--font); font-size: 11px;
     outline: none; caret-color: var(--amber);
 }
 .git-commit-input::placeholder { color: var(--text-muted); }
-.git-commit-input:focus { border-color: rgba(255, 149, 0, 0.5); }
+.git-commit-input:focus { border-color: rgba(225, 181, 106, 0.5); }
 
 /* Insert mode button */
 .btn-insert {
-    background: transparent; border: 1px solid rgba(255, 149, 0, 0.3);
+    background: transparent; border: 1px solid rgba(225, 181, 106, 0.3);
     color: var(--amber); font-size: 12px; font-weight: 600;
     font-family: 'JetBrains Mono', monospace; padding: 2px 7px;
     cursor: pointer; -webkit-tap-highlight-color: transparent;
     border-radius: 3px; transition: all 0.15s; letter-spacing: 0.5px;
 }
-.btn-insert:active { transform: scale(0.9); background: rgba(255, 149, 0, 0.15); }
+.btn-insert:active { transform: scale(0.9); background: rgba(225, 181, 106, 0.15); }
 
 /* Claude Info Bar */
 .btn-info {
-    background: transparent; border: 1px solid rgba(0, 212, 255, 0.3);
+    background: transparent; border: 1px solid rgba(112, 174, 249, 0.3);
     color: var(--cyan); font-size: 12px; font-weight: 700;
     font-family: 'JetBrains Mono', monospace; padding: 2px 7px;
     cursor: pointer; -webkit-tap-highlight-color: transparent;
     border-radius: 3px; transition: all 0.15s; letter-spacing: 0.5px;
     font-style: italic;
 }
-.btn-info:active { transform: scale(0.9); background: rgba(0, 212, 255, 0.15); }
-.btn-info.active { background: rgba(0, 212, 255, 0.1); border-color: rgba(0, 212, 255, 0.5); }
+.btn-info:active { transform: scale(0.9); background: rgba(112, 174, 249, 0.15); }
+.btn-info.active { background: rgba(112, 174, 249, 0.1); border-color: rgba(112, 174, 249, 0.5); }
 
 .claude-info-bar {
     display: none; flex-shrink: 0; padding: 6px 8px;
-    background: linear-gradient(180deg, rgba(0, 212, 255, 0.06) 0%, rgba(0, 212, 255, 0.02) 100%);
-    border: 1px solid rgba(0, 212, 255, 0.15);
+    background: linear-gradient(180deg, rgba(112, 174, 249, 0.06) 0%, rgba(112, 174, 249, 0.02) 100%);
+    border: 1px solid rgba(112, 174, 249, 0.15);
     animation: fadeSlide 0.2s ease-out;
     font-size: 10px; line-height: 1.6;
 }

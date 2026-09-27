@@ -1,19 +1,32 @@
 /* base.css — Variables, reset, body, background effects */
 
 :root {
-    --bg: #080c10;
-    --bg-card: rgba(10, 22, 14, 0.6);
-    --bg-term: #030806;
-    --border: #0d3b1a;
-    --green: #00ff41;
-    --cyan: #00d4ff;
-    --amber: #ff9500;
-    --red: #ff0040;
-    --purple: #bf5af2;
-    --text: #c0e0c8;
-    --text-dim: #4a6a50;
-    --text-muted: #2a3e2e;
+    /* Drift Studio family (mock-assist-brand/NOTES.md). The token NAMES are
+       the historical ones every module reads; only the values moved, from the
+       neon terminal set to Studio's charcoal shell with muted semantic colours.
+       Coral is the brand: the mark, the active-session rule and Send only. */
+    --bg: #0e1113;
+    --bg-panel: #0c0f11;
+    --bg-bar: #0f1214;
+    --bg-card: #111518;
+    --bg-raised: #111518;
+    --bg-selected: #151b21;
+    --bg-term: #090c0e;
+    --border: #242b32;
+    --line: #1c2126;
+    --coral: #eb4328;
+    --coral-hi: #ff795f;
+    --green: #83d7a2;
+    --cyan: #70aef9;
+    --amber: #e1b56a;
+    --red: #f25767;
+    --purple: #b69cf2;
+    --text-strong: #e7e9ea;
+    --text: #c8cfd4;
+    --text-dim: #8d959b;
+    --text-muted: #5f686e;
     --font: 'JetBrains Mono', 'Fira Code', 'SF Mono', monospace;
+    --sans: 'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -28,18 +41,7 @@ body {
     overflow: hidden;
 }
 
-/* Grid background */
-body::before {
-    content: '';
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background-image:
-        linear-gradient(rgba(0, 255, 65, 0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0, 255, 65, 0.03) 1px, transparent 1px);
-    background-size: 40px 40px;
-    pointer-events: none;
-    z-index: 0;
-}
+/* The neon grid background is gone: the Studio-family shell is flat. */
 
 /* Scanline overlay removed — repeating-linear-gradient at 4px intervals
    forced a compositor layer repaint on every scroll/layout shift.
@@ -61,8 +63,8 @@ body::before {
 }
 
 @keyframes pulseGlow {
-    0%, 100% { box-shadow: 0 -4px 12px rgba(0, 212, 255, 0.1); }
-    50% { box-shadow: 0 -4px 20px rgba(0, 212, 255, 0.25); }
+    0%, 100% { box-shadow: 0 -4px 12px rgba(112, 174, 249, 0.1); }
+    50% { box-shadow: 0 -4px 20px rgba(112, 174, 249, 0.25); }
 }
 
 /* Scrollbar — vertical */

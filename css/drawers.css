@@ -17,13 +17,14 @@
     color: var(--text-dim);
     font-size: 18px;
     font-family: var(--font);
+    border-radius: 6px;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     -webkit-tap-highlight-color: transparent;
 }
-.drawer-close:active { color: var(--red); border-color: rgba(255, 0, 64, 0.3); }
+.drawer-close:active { color: var(--red); border-color: rgba(242, 87, 103, 0.3); }
 
 /* Left drawer (more keys) */
 .drawer-left {
@@ -35,7 +36,7 @@
        the Claude drawer fits whole, Codex keeps one short scroll. Question 1846. */
     max-height: 60vh;
     width: 280px;
-    background: rgba(10, 22, 14, 0.97);
+    background: rgba(17, 21, 24, 0.97);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
     z-index: 51;
@@ -63,9 +64,9 @@
 .drawer-left .drawer-header span {
     font-size: 11px;
     font-weight: 700;
-    letter-spacing: 2px;
+    letter-spacing: 1.5px;
     text-transform: uppercase;
-    color: var(--green);
+    color: var(--text-dim);
 }
 
 /* More tab: the left drawer's trigger, on the bottom-left corner of whichever
@@ -111,7 +112,7 @@
     padding: 0 10px;
     display: flex;
     align-items: center;
-    background: rgba(10, 22, 14, 0.92);
+    background: rgba(17, 21, 24, 0.92);
     border: 1px solid var(--border);
     border-left: none;
     border-bottom: none;
@@ -123,8 +124,8 @@
 }
 .more-tab:active::before {
     color: var(--green);
-    border-color: rgba(0, 255, 65, 0.3);
-    background: rgba(0, 255, 65, 0.08);
+    border-color: rgba(131, 215, 162, 0.3);
+    background: rgba(131, 215, 162, 0.08);
 }
 
 /* Bottom drawer (history) */
@@ -174,13 +175,13 @@
 }
 .drawer-tab:first-child { border-radius: 4px 0 0 4px; }
 .drawer-tab:last-child { border-radius: 0 4px 4px 0; border-left: none; }
-.drawer-tab.active { color: var(--green); border-color: rgba(0, 255, 65, 0.4); background: rgba(0, 255, 65, 0.08); }
+.drawer-tab.active { color: var(--green); border-color: rgba(131, 215, 162, 0.4); background: rgba(131, 215, 162, 0.08); }
 .drawer-tab:active { transform: scale(0.95); }
 
 .filter-row {
     position: relative;
     padding: 6px 8px;
-    border-bottom: 1px solid rgba(0, 255, 65, 0.15);
+    border-bottom: 1px solid rgba(131, 215, 162, 0.15);
 }
 
 .hist-filter {
@@ -188,7 +189,7 @@
     box-sizing: border-box;
     background: rgba(0, 0, 0, 0.4);
     color: var(--text);
-    border: 1px solid rgba(0, 255, 65, 0.25);
+    border: 1px solid rgba(131, 215, 162, 0.25);
     border-radius: 4px;
     padding: 8px 28px 8px 10px;
     font: 12px 'JetBrains Mono', 'Fira Code', monospace;
@@ -197,7 +198,7 @@
 
 .hist-filter:focus {
     border-color: var(--green);
-    background: rgba(0, 255, 65, 0.05);
+    background: rgba(131, 215, 162, 0.05);
 }
 
 .hist-filter::placeholder {
@@ -230,17 +231,17 @@
 .keys-panel {
     display: none; flex-shrink: 0; padding: 8px;
     width: 100%; max-width: 720px; align-self: center;
-    background: linear-gradient(180deg, rgba(0, 255, 65, 0.06) 0%, rgba(0, 255, 65, 0.02) 100%);
-    border: 1px solid rgba(0, 255, 65, 0.2); animation: fadeSlide 0.2s ease-out;
+    background: linear-gradient(180deg, rgba(131, 215, 162, 0.06) 0%, rgba(131, 215, 162, 0.02) 100%);
+    border: 1px solid rgba(131, 215, 162, 0.2); animation: fadeSlide 0.2s ease-out;
 }
 .keys-panel.visible { display: block; }
 
 /* Keys/Hist buttons in btn-row */
-.btn-keys { color: var(--green); border-color: rgba(0, 255, 65, 0.3); }
-.btn-keys:active { color: var(--green); border-color: rgba(0, 255, 65, 0.5); background: rgba(0, 255, 65, 0.1); }
-.btn-keys.active { background: rgba(0, 255, 65, 0.1); border-color: rgba(0, 255, 65, 0.5); }
-.btn-hist { color: var(--text-dim); border-color: var(--border); }
-.btn-hist:active { color: var(--green); border-color: rgba(0, 255, 65, 0.4); background: rgba(0, 255, 65, 0.1); }
+.btn-keys { color: var(--text); border-color: var(--border); }
+.btn-keys:active { border-color: #3a4650; background: var(--bg-selected); }
+.btn-keys.active { color: var(--text-strong); background: var(--bg-selected); border-color: #3a4650; }
+.btn-hist { color: var(--text); border-color: var(--border); }
+.btn-hist:active { border-color: #3a4650; background: var(--bg-selected); }
 
 /* Hotkey grids (shared by left + right drawers) */
 .hk-group-label {
@@ -276,16 +277,16 @@
 .hk-btn:active { transform: scale(0.93); }
 .hk-btn .hk-label { display: block; font-size: 9px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hk-btn .hk-sub { display: block; font-size: 7px; margin-top: 1px; opacity: 0.5; }
-.hk-red { color: var(--red); border-color: rgba(255, 0, 64, 0.3); }
-.hk-red:active { background: rgba(255, 0, 64, 0.15); box-shadow: 0 0 10px rgba(255, 0, 64, 0.2); }
-.hk-green { color: var(--green); border-color: rgba(0, 255, 65, 0.3); }
-.hk-green:active { background: rgba(0, 255, 65, 0.15); box-shadow: 0 0 10px rgba(0, 255, 65, 0.2); }
-.hk-cyan { color: var(--cyan); border-color: rgba(0, 212, 255, 0.3); }
-.hk-cyan:active { background: rgba(0, 212, 255, 0.15); box-shadow: 0 0 10px rgba(0, 212, 255, 0.2); }
-.hk-amber { color: var(--amber); border-color: rgba(255, 149, 0, 0.3); }
-.hk-amber:active { background: rgba(255, 149, 0, 0.15); box-shadow: 0 0 10px rgba(255, 149, 0, 0.2); }
+.hk-red { color: var(--red); border-color: rgba(242, 87, 103, 0.3); }
+.hk-red:active { background: rgba(242, 87, 103, 0.15); box-shadow: 0 0 10px rgba(242, 87, 103, 0.2); }
+.hk-green { color: var(--green); border-color: rgba(131, 215, 162, 0.3); }
+.hk-green:active { background: rgba(131, 215, 162, 0.15); box-shadow: 0 0 10px rgba(131, 215, 162, 0.2); }
+.hk-cyan { color: var(--cyan); border-color: rgba(112, 174, 249, 0.3); }
+.hk-cyan:active { background: rgba(112, 174, 249, 0.15); box-shadow: 0 0 10px rgba(112, 174, 249, 0.2); }
+.hk-amber { color: var(--amber); border-color: rgba(225, 181, 106, 0.3); }
+.hk-amber:active { background: rgba(225, 181, 106, 0.15); box-shadow: 0 0 10px rgba(225, 181, 106, 0.2); }
 .hk-dim { color: var(--text-dim); border-color: var(--border); }
-.hk-dim:active { background: rgba(0, 255, 65, 0.05); }
+.hk-dim:active { background: rgba(131, 215, 162, 0.05); }
 .hk-wide { grid-column: span 2; }
 /* A key the pane's CLI has no use for (see js/keylabels.js). */
 .hk-hidden { display: none; }
@@ -311,13 +312,13 @@
 .list-area { max-height: 50dvh; overflow-y: auto; }
 .list-item {
     display: flex; align-items: center; gap: 4px; padding: 5px 6px;
-    border-bottom: 1px solid rgba(13, 59, 26, 0.15);
+    border-bottom: 1px solid rgba(36, 43, 50, 0.15);
     cursor: pointer; transition: background 0.15s; -webkit-tap-highlight-color: transparent;
 }
-.list-item:active { background: rgba(0, 255, 65, 0.05); }
+.list-item:active { background: rgba(131, 215, 162, 0.05); }
 .list-item-text { flex: 1; font-size: 10px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .list-item-text mark {
-    background: rgba(0, 212, 255, 0.25);
+    background: rgba(112, 174, 249, 0.25);
     color: var(--cyan);
     padding: 0 1px;
     border-radius: 2px;
@@ -334,9 +335,9 @@
 
 /* Clear history button */
 .clear-btn {
-    width: 100%; padding: 10px; border: 1px solid rgba(255, 0, 64, 0.2);
+    width: 100%; padding: 10px; border: 1px solid rgba(242, 87, 103, 0.2);
     background: transparent; color: var(--text-muted); font-family: var(--font);
     font-size: 10px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase;
     cursor: pointer; transition: all 0.2s; flex-shrink: 0; -webkit-tap-highlight-color: transparent;
 }
-.clear-btn:active { color: var(--red); border-color: var(--red); background: rgba(255, 0, 64, 0.1); }
+.clear-btn:active { color: var(--red); border-color: var(--red); background: rgba(242, 87, 103, 0.1); }

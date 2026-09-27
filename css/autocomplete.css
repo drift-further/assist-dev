@@ -11,15 +11,15 @@
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     padding: 6px;
-    background: linear-gradient(180deg, rgba(8, 14, 18, 0.98) 0%, rgba(6, 10, 13, 0.97) 100%);
-    border: 1px solid rgba(0, 212, 255, 0.25);
+    background: linear-gradient(180deg, rgba(14, 17, 19, 0.98) 0%, rgba(14, 17, 19, 0.97) 100%);
+    border: 1px solid rgba(112, 174, 249, 0.25);
     box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.6);
     animation: fadeSlide 0.15s ease-out;
 }
 .ac-popup.visible { display: block; }
 
 /* Skills variant tints green to match the / namespace */
-.ac-popup.ac-skills { border-color: rgba(48, 209, 88, 0.3); }
+.ac-popup.ac-skills { border-color: rgba(131, 215, 162, 0.3); }
 
 .ac-section {
     font-size: 8px;
@@ -64,13 +64,13 @@
 .ac-skill .ac-primary { color: var(--green); }
 
 .ac-item.ac-active {
-    background: rgba(0, 212, 255, 0.12);
+    background: rgba(112, 174, 249, 0.12);
     border-left-color: var(--cyan);
 }
-.ac-folder.ac-active { background: rgba(255, 149, 0, 0.12); border-left-color: var(--amber); }
-.ac-skill.ac-active { background: rgba(48, 209, 88, 0.12); border-left-color: var(--green); }
-.ac-item:active { background: rgba(0, 212, 255, 0.18); }
+.ac-folder.ac-active { background: rgba(225, 181, 106, 0.12); border-left-color: var(--amber); }
+.ac-skill.ac-active { background: rgba(131, 215, 162, 0.12); border-left-color: var(--green); }
+.ac-item:active { background: rgba(112, 174, 249, 0.18); }
 
 .ac-popup::-webkit-scrollbar { width: 4px; }
 .ac-popup::-webkit-scrollbar-track { background: transparent; }
-.ac-popup::-webkit-scrollbar-thumb { background: rgba(0, 212, 255, 0.25); border-radius: 2px; }
+.ac-popup::-webkit-scrollbar-thumb { background: rgba(112, 174, 249, 0.25); border-radius: 2px; }

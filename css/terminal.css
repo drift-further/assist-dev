@@ -51,7 +51,7 @@
     min-height: 48px;
     padding: 0 8px;
     overflow: hidden;
-    background: linear-gradient(180deg, #0a1210 0%, #060e0a 100%);
+    background: var(--bg-bar);
     /* An INSET shadow, not border-bottom: a border would eat 1px of the 48px
        content box (box-sizing: border-box) and clip the tabs' bottom edge, and
        the active tab could never paint over it. An inset shadow paints above
@@ -68,8 +68,9 @@
     bottom: 0;
     left: 0; right: 0;
     height: 1px;
-    background: linear-gradient(90deg, transparent 0%, var(--green) 30%, var(--green) 70%, transparent 100%);
-    opacity: 0.4;
+    /* Flat Studio hairline now, not the old neon glow. */
+    background: var(--line);
+    opacity: 1;
     z-index: 1;
 }
 
@@ -107,12 +108,13 @@
     height: 40px;
     min-height: 40px;
     padding: 6px 10px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--line);
+    border-radius: 6px 6px 0 0;
     background: transparent;
     font-family: var(--font);
-    font-size: 9px;
-    font-weight: 600;
-    letter-spacing: 0.5px;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.1px;
     color: var(--text-dim);
     cursor: pointer;
     transition: all 0.15s;
@@ -128,11 +130,12 @@
    it survives glare, colour-blindness, and the loss of the old
    .term-toggle-status text that used to name the active session in words. */
 .session-tab.active {
-    color: #d8ffe4;
-    border-color: var(--green);
+    color: var(--text-strong);
+    border-color: #3a4650;
     border-bottom-color: transparent;
-    background: rgba(0, 255, 65, 0.18);
-    text-shadow: 0 0 6px rgba(0, 255, 65, 0.35);
+    background: var(--bg-selected);
+    /* The coral active-session rule — one of the three places coral is used. */
+    box-shadow: inset 0 2px 0 var(--coral);
 }
 
 /* Background tab with activity: pulsing green border (replaces conic-gradient wire
@@ -143,14 +146,14 @@
    ceiling — an animation beats a normal declaration, so capping only the rule
    above would leave the border repainting at full green anyway. */
 .session-tab.running:not(.active) {
-    border-color: rgba(0, 255, 65, 0.55);
-    box-shadow: 0 0 8px rgba(0, 255, 65, 0.15);
+    border-color: rgba(131, 215, 162, 0.55);
+    box-shadow: 0 0 8px rgba(131, 215, 162, 0.15);
     color: var(--green);
     animation: runningBorderPulse 1.5s ease-in-out infinite;
 }
 @keyframes runningBorderPulse {
-    0%, 100% { border-color: rgba(0, 255, 65, 0.55); box-shadow: 0 0 8px rgba(0, 255, 65, 0.15); }
-    50% { border-color: rgba(0, 255, 65, 0.22); box-shadow: 0 0 3px rgba(0, 255, 65, 0.05); }
+    0%, 100% { border-color: rgba(131, 215, 162, 0.55); box-shadow: 0 0 8px rgba(131, 215, 162, 0.15); }
+    50% { border-color: rgba(131, 215, 162, 0.22); box-shadow: 0 0 3px rgba(131, 215, 162, 0.05); }
 }
 .session-tab .tab-dot {
     position: absolute;
@@ -160,7 +163,7 @@
     height: 8px;
     border-radius: 50%;
     background: var(--cyan);
-    box-shadow: 0 0 6px var(--cyan), 0 0 12px rgba(0, 212, 255, 0.4);
+    box-shadow: 0 0 6px var(--cyan), 0 0 12px rgba(112, 174, 249, 0.4);
     display: none;
     animation: tabDotPulse 2s ease-in-out infinite;
 }
@@ -173,11 +176,11 @@
     top: -4px;
     right: -4px;
     background: var(--green);
-    box-shadow: 0 0 8px var(--green), 0 0 16px rgba(0, 255, 65, 0.5);
+    box-shadow: 0 0 8px var(--green), 0 0 16px rgba(131, 215, 162, 0.5);
     animation: runningDotPulse 1.5s ease-in-out infinite;
 }
 @keyframes runningDotPulse {
-    0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--green), 0 0 16px rgba(0, 255, 65, 0.5); }
+    0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--green), 0 0 16px rgba(131, 215, 162, 0.5); }
     50% { opacity: 0.6; box-shadow: 0 0 4px var(--green); }
 }
 
@@ -185,11 +188,11 @@
 .session-tab.has-prompt .tab-dot {
     display: block;
     background: var(--cyan);
-    box-shadow: 0 0 6px var(--cyan), 0 0 12px rgba(0, 212, 255, 0.4);
+    box-shadow: 0 0 6px var(--cyan), 0 0 12px rgba(112, 174, 249, 0.4);
     animation: tabDotPulse 2s ease-in-out infinite;
 }
 @keyframes tabDotPulse {
-    0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--cyan), 0 0 12px rgba(0, 212, 255, 0.4); }
+    0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--cyan), 0 0 12px rgba(112, 174, 249, 0.4); }
     50% { opacity: 0.5; box-shadow: 0 0 3px var(--cyan); }
 }
 
@@ -198,7 +201,7 @@
     display: block;
     background: transparent;
     border: 2px solid var(--purple);
-    box-shadow: 0 0 6px var(--purple), 0 0 12px rgba(191, 90, 242, 0.4);
+    box-shadow: 0 0 6px var(--purple), 0 0 12px rgba(182, 156, 242, 0.4);
     animation: doneDotPulse 3s ease-in-out infinite;
 }
 @keyframes doneDotPulse {
@@ -239,18 +242,18 @@
 
 /* Stage 1 (5-10 min): subtle amber */
 .session-tab.idle-fade-1 {
-    border-color: rgba(255, 149, 0, 0.25);
-    color: rgba(255, 149, 0, 0.5);
+    border-color: rgba(225, 181, 106, 0.25);
+    color: rgba(225, 181, 106, 0.5);
 }
 .session-tab.idle-fade-1 .tab-idle-time {
-    color: rgba(255, 149, 0, 0.5);
+    color: rgba(225, 181, 106, 0.5);
 }
 
 /* Stage 2 (10-15 min): clear amber glow */
 .session-tab.idle-fade-2 {
-    border-color: rgba(255, 149, 0, 0.5);
+    border-color: rgba(225, 181, 106, 0.5);
     color: var(--amber);
-    box-shadow: 0 0 6px rgba(255, 149, 0, 0.1);
+    box-shadow: 0 0 6px rgba(225, 181, 106, 0.1);
 }
 .session-tab.idle-fade-2 .tab-idle-time {
     color: var(--amber);
@@ -258,16 +261,16 @@
 
 /* Stage 3 (15-60 min): orange-red pulse, maximum attention */
 .session-tab.idle-fade-3 {
-    border-color: #ff6432;
-    color: #ff6432;
+    border-color: #f25767;
+    color: #f25767;
     animation: idlePulse 2.5s ease-in-out infinite;
 }
 .session-tab.idle-fade-3 .tab-idle-time {
-    color: #ff6432;
+    color: #f25767;
 }
 @keyframes idlePulse {
-    0%, 100% { border-color: #ff6432; box-shadow: 0 0 8px rgba(255, 100, 50, 0.25); }
-    50% { border-color: #ff4010; box-shadow: 0 0 14px rgba(255, 64, 16, 0.4); }
+    0%, 100% { border-color: #f25767; box-shadow: 0 0 8px rgba(242, 87, 103, 0.25); }
+    50% { border-color: #d9434f; box-shadow: 0 0 14px rgba(217, 67, 79, 0.4); }
 }
 
 /* Stage 4 — Expired (60+ min): gray, no animation, diagonal slash */
@@ -347,40 +350,40 @@
 /* Fit menu (terminal width presets) */
 .fit-menu {
     display: none; flex-shrink: 0; padding: 6px;
-    background: linear-gradient(180deg, rgba(0, 212, 255, 0.06) 0%, rgba(0, 212, 255, 0.02) 100%);
-    border: 1px solid rgba(0, 212, 255, 0.2); animation: fadeSlide 0.2s ease-out;
+    background: linear-gradient(180deg, rgba(112, 174, 249, 0.06) 0%, rgba(112, 174, 249, 0.02) 100%);
+    border: 1px solid rgba(112, 174, 249, 0.2); animation: fadeSlide 0.2s ease-out;
     gap: 6px; flex-wrap: wrap;
 }
 .fit-menu.visible { display: flex; }
 .fit-item {
-    padding: 10px 14px; border: 1px solid rgba(0, 212, 255, 0.3);
+    padding: 10px 14px; border: 1px solid rgba(112, 174, 249, 0.3);
     background: transparent; color: var(--cyan);
     font-family: var(--font); font-size: 10px; font-weight: 700;
     letter-spacing: 0.5px; text-transform: uppercase; cursor: pointer;
     transition: all 0.12s; -webkit-tap-highlight-color: transparent;
     flex: 1; text-align: center; min-width: 70px; min-height: 40px;
 }
-.fit-item:active { transform: scale(0.93); background: rgba(0, 212, 255, 0.15); }
-.fit-item.active { background: rgba(0, 212, 255, 0.12); border-color: rgba(0, 212, 255, 0.6); }
-.fit-follow { flex-basis: 100%; color: var(--amber); border-color: rgba(255, 149, 0, 0.4); }
-.fit-follow:active { background: rgba(255, 149, 0, 0.15); }
+.fit-item:active { transform: scale(0.93); background: rgba(112, 174, 249, 0.15); }
+.fit-item.active { background: rgba(112, 174, 249, 0.12); border-color: rgba(112, 174, 249, 0.6); }
+.fit-follow { flex-basis: 100%; color: var(--amber); border-color: rgba(225, 181, 106, 0.4); }
+.fit-follow:active { background: rgba(225, 181, 106, 0.15); }
 .fit-custom {
     display: flex; gap: 4px; flex-basis: 100%; align-items: center;
 }
 .fit-custom-x {
-    flex: 0 0 auto; color: rgba(0, 212, 255, 0.5);
+    flex: 0 0 auto; color: rgba(112, 174, 249, 0.5);
     font-family: var(--font); font-size: 13px; font-weight: 700;
 }
 .fit-custom-input {
     flex: 1; min-width: 0;
-    padding: 8px 10px; border: 1px solid rgba(0, 212, 255, 0.3);
+    padding: 8px 10px; border: 1px solid rgba(112, 174, 249, 0.3);
     background: rgba(0, 0, 0, 0.3); color: var(--cyan);
     font-family: var(--font); font-size: 13px; font-weight: 700;
     text-align: center; -webkit-appearance: none; appearance: none;
     -webkit-tap-highlight-color: transparent;
     min-height: 40px;
 }
-.fit-custom-input:focus { outline: none; border-color: rgba(0, 212, 255, 0.6); }
+.fit-custom-input:focus { outline: none; border-color: rgba(112, 174, 249, 0.6); }
 .fit-custom-input::-webkit-outer-spin-button,
 .fit-custom-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .fit-apply { flex: 0 0 auto; }
@@ -398,8 +401,8 @@
     flex: 0 1 auto;
     overflow-y: auto;
     overscroll-behavior: contain;
-    background: rgba(6, 14, 12, 0.98);
-    border: 1px solid rgba(0, 212, 255, 0.28);
+    background: rgba(14, 17, 19, 0.98);
+    border: 1px solid rgba(112, 174, 249, 0.28);
     border-radius: 8px;
     animation: fadeSlide 0.2s ease-out;
     -webkit-overflow-scrolling: touch;
@@ -411,12 +414,12 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    border-bottom: 1px solid rgba(0, 212, 255, 0.15);
+    border-bottom: 1px solid rgba(112, 174, 249, 0.15);
 }
 .actions-deck-title {
-    color: var(--cyan);
+    color: var(--text-strong);
     font-size: 10px;
-    font-weight: 900;
+    font-weight: 700;
     letter-spacing: 1.2px;
     text-transform: uppercase;
 }
@@ -438,24 +441,24 @@
     align-items: center;
     justify-content: center;
     color: var(--red);
-    border: 1px solid rgba(255, 0, 64, 0.35);
+    border: 1px solid rgba(242, 87, 103, 0.35);
     border-radius: 4px;
     background: transparent;
     font-family: var(--font);
     font-size: 15px;
     cursor: pointer;
 }
-.actions-deck-close:active { background: rgba(255, 0, 64, 0.12); }
+.actions-deck-close:active { background: rgba(242, 87, 103, 0.12); }
 .actions-groups {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 1px;
-    background: rgba(0, 212, 255, 0.1);
+    background: rgba(112, 174, 249, 0.1);
 }
 .actions-group {
     min-width: 0;
     padding: 10px;
-    background: #07100e;
+    background: #0f1214;
 }
 .actions-group h4 {
     margin: 0 0 8px;
@@ -477,9 +480,9 @@
     display: flex;
     align-items: center;
     color: var(--text);
-    border: 1px solid rgba(0, 212, 255, 0.22);
+    border: 1px solid rgba(112, 174, 249, 0.22);
     border-radius: 5px;
-    background: rgba(0, 212, 255, 0.035);
+    background: rgba(112, 174, 249, 0.035);
     font-family: var(--font);
     font-size: 9px;
     font-style: normal;
@@ -503,19 +506,19 @@
 }
 .actions-deck .actions-item:active {
     transform: none;
-    background: rgba(0, 212, 255, 0.12);
+    background: rgba(112, 174, 249, 0.12);
 }
 .actions-deck .actions-item.attention,
 .actions-deck .actions-item.active,
 .actions-deck .actions-item.is-on {
     color: var(--amber);
-    border-color: rgba(255, 149, 0, 0.35);
-    background: rgba(255, 149, 0, 0.08);
+    border-color: rgba(225, 181, 106, 0.35);
+    background: rgba(225, 181, 106, 0.08);
 }
 .actions-deck .actions-item.has-pw { color: var(--green); }
 .actions-deck .actions-item.workspace {
-    color: #8aa491;
-    border-color: rgba(0, 255, 65, 0.18);
+    color: #8d959b;
+    border-color: rgba(131, 215, 162, 0.18);
 }
 
 /* Phone-shaped control modules stay grouped instead of spanning a monitor. */
@@ -535,8 +538,8 @@
 /* Auto-Yes delay picker */
 .autoyes-picker {
     display: none; align-items: center; gap: 8px;
-    padding: 8px 12px; background: rgba(255, 149, 0, 0.08);
-    border: 1px solid rgba(255, 149, 0, 0.3); border-radius: 6px;
+    padding: 8px 12px; background: rgba(225, 181, 106, 0.08);
+    border: 1px solid rgba(225, 181, 106, 0.3); border-radius: 6px;
     margin: 0 2px;
 }
 .autoyes-picker.visible { display: flex; }
@@ -546,12 +549,12 @@
 }
 .ay-pick-btn {
     font-family: var(--font); font-size: 16px; font-weight: 700;
-    color: var(--amber); background: rgba(255, 149, 0, 0.1);
-    border: 1px solid rgba(255, 149, 0, 0.3); border-radius: 4px;
+    color: var(--amber); background: rgba(225, 181, 106, 0.1);
+    border: 1px solid rgba(225, 181, 106, 0.3); border-radius: 4px;
     width: 32px; height: 32px; cursor: pointer; line-height: 1;
     -webkit-tap-highlight-color: transparent;
 }
-.ay-pick-btn:active { background: rgba(255, 149, 0, 0.25); transform: scale(0.93); }
+.ay-pick-btn:active { background: rgba(225, 181, 106, 0.25); transform: scale(0.93); }
 .ay-pick-val {
     font-size: 20px; font-weight: 700; color: var(--amber);
     min-width: 28px; text-align: center; font-variant-numeric: tabular-nums;
@@ -571,12 +574,12 @@
 .ay-pick-off {
     font-family: var(--font); font-size: 11px; font-weight: 700;
     color: var(--red); background: transparent;
-    border: 1px solid rgba(255, 0, 64, 0.4); border-radius: 4px;
+    border: 1px solid rgba(242, 87, 103, 0.4); border-radius: 4px;
     padding: 6px 12px; cursor: pointer; letter-spacing: 0.5px;
     margin-left: auto;
     -webkit-tap-highlight-color: transparent;
 }
-.ay-pick-off:active { background: rgba(255, 0, 64, 0.15); transform: scale(0.95); }
+.ay-pick-off:active { background: rgba(242, 87, 103, 0.15); transform: scale(0.95); }
 .ay-pick-x {
     font-family: var(--font); font-size: 14px; font-weight: 700;
     color: #888; background: transparent;
@@ -588,8 +591,8 @@
 /* Auto-Yes countdown bar */
 .autoyes-countdown {
     display: none; align-items: center; gap: 10px;
-    padding: 8px 12px; background: rgba(255, 149, 0, 0.1);
-    border: 1px solid rgba(255, 149, 0, 0.4); border-radius: 6px;
+    padding: 8px 12px; background: rgba(225, 181, 106, 0.1);
+    border: 1px solid rgba(225, 181, 106, 0.4); border-radius: 6px;
     margin: 0 2px;
 }
 .autoyes-countdown.visible { display: flex; }
@@ -603,7 +606,7 @@
     pointer-events: none;
 }
 .ay-track {
-    flex: 1; height: 6px; background: rgba(255, 149, 0, 0.15);
+    flex: 1; height: 6px; background: rgba(225, 181, 106, 0.15);
     border-radius: 3px; overflow: hidden;
 }
 .ay-progress {
@@ -622,12 +625,12 @@
 }
 .ay-cancel {
     font-family: var(--font); font-size: 10px; font-weight: 700;
-    color: var(--red); background: rgba(255, 0, 64, 0.1);
-    border: 1px solid rgba(255, 0, 64, 0.4); border-radius: 4px;
+    color: var(--red); background: rgba(242, 87, 103, 0.1);
+    border: 1px solid rgba(242, 87, 103, 0.4); border-radius: 4px;
     padding: 4px 12px; cursor: pointer; letter-spacing: 1px;
     -webkit-tap-highlight-color: transparent;
 }
-.ay-cancel:active { background: rgba(255, 0, 64, 0.25); transform: scale(0.95); }
+.ay-cancel:active { background: rgba(242, 87, 103, 0.25); transform: scale(0.95); }
 
 /* Project launcher */
 .term-projects { display: flex; flex-direction: column; gap: 6px; }
@@ -648,7 +651,7 @@
     transition: all 0.12s;
 }
 .explore-btn:active, .explore-btn.active {
-    background: rgba(0, 212, 255, 0.15);
+    background: rgba(112, 174, 249, 0.15);
     border-color: var(--cyan);
 }
 
@@ -659,7 +662,7 @@
     font-family: var(--font); font-size: 11px; outline: none; caret-color: var(--cyan);
 }
 .term-filter::placeholder { color: var(--text-muted); }
-.term-filter:focus { border-color: rgba(0, 212, 255, 0.4); }
+.term-filter:focus { border-color: rgba(112, 174, 249, 0.4); }
 .term-project-grid {
     display: flex; flex-direction: column; gap: 2px;
     max-height: 40dvh; overflow-y: auto;
@@ -681,29 +684,30 @@
     -webkit-tap-highlight-color: transparent; overflow: hidden; position: relative;
     line-height: 1.3; display: flex; flex-direction: column; justify-content: center;
 }
-.proj-btn:active { transform: scale(0.95); background: rgba(0, 255, 65, 0.1); border-color: rgba(0, 255, 65, 0.4); }
+.proj-btn:active { transform: scale(0.95); background: rgba(131, 215, 162, 0.1); border-color: rgba(131, 215, 162, 0.4); }
 .proj-btn .proj-name { display: block; font-weight: 600; overflow-wrap: break-word; word-break: break-word; }
 .proj-btn .proj-badges { display: flex; gap: 4px; margin-top: 2px; }
 .proj-badge { font-size: 7px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; padding: 1px 3px; }
-.proj-badge.venv { color: var(--green); border: 1px solid rgba(0, 255, 65, 0.25); }
-.proj-badge.git { color: var(--amber); border: 1px solid rgba(255, 149, 0, 0.25); }
+.proj-badge.venv { color: var(--green); border: 1px solid rgba(131, 215, 162, 0.25); }
+.proj-badge.git { color: var(--amber); border: 1px solid rgba(225, 181, 106, 0.25); }
 .proj-btn.launching { border-color: var(--cyan); color: var(--cyan); }
 
 /* Session restore buttons below project cards */
 .proj-sessions { display: flex; gap: 4px; flex-wrap: wrap; padding: 2px 0; }
 .proj-session-btn {
     font-size: 9px; color: var(--cyan); background: none;
-    border: 1px solid rgba(0, 212, 255, 0.2); padding: 2px 6px;
+    border: 1px solid rgba(112, 174, 249, 0.2); padding: 2px 6px;
     cursor: pointer; font-family: var(--font);
 }
-.proj-session-btn:active { background: rgba(0, 212, 255, 0.1); }
+.proj-session-btn:active { background: rgba(112, 174, 249, 0.1); }
 
 /* Terminal display */
 .term-display {
     position: relative;
     background: var(--bg-term);
-    border: 1px solid rgba(0, 255, 65, 0.1);
-    box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.4), 0 0 12px rgba(0, 255, 65, 0.03);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    box-shadow: none;
     flex: 1; min-height: 80px; overflow-y: auto; overflow-x: auto;
 }
 .term-display.hidden { display: none; }
@@ -717,7 +721,7 @@
     height: 41px; min-height: 41px; padding: 0 8px;
     font-weight: 600; color: var(--text-dim); letter-spacing: 1px;
     display: flex; gap: 10px; align-items: center;
-    border-bottom: 1px solid rgba(13, 59, 26, 0.3);
+    border-bottom: 1px solid rgba(36, 43, 50, 0.3);
 }
 .term-info-cmd,
 .term-info-dim { font-size: 8px; text-transform: uppercase; }
@@ -725,12 +729,12 @@
 .term-info-dim { color: var(--text-muted); }
 .term-content {
     padding: 4px 8px 8px; font-family: var(--font); font-size: 11px; line-height: 1.35;
-    color: #d0e8d4; white-space: pre; min-width: 80ch;
+    color: #c8cfd4; white-space: pre; min-width: 80ch;
     -webkit-user-select: text; user-select: text; min-height: 80px;
 }
 .term-link {
     color: var(--cyan); text-decoration: underline;
-    text-decoration-color: rgba(0, 212, 255, 0.4);
+    text-decoration-color: rgba(112, 174, 249, 0.4);
     cursor: pointer;
 }
 .term-link:hover, .term-link:active { color: var(--amber); text-decoration-color: var(--amber); }
@@ -738,14 +742,14 @@
     display: none; text-align: center; padding: 6px;
     font-size: 8px; font-weight: 600; color: var(--text-dim);
     letter-spacing: 1px; text-transform: uppercase; cursor: pointer;
-    -webkit-tap-highlight-color: transparent; border-bottom: 1px solid rgba(13, 59, 26, 0.2);
+    -webkit-tap-highlight-color: transparent; border-bottom: 1px solid rgba(36, 43, 50, 0.2);
 }
 .term-load-more:active { color: var(--cyan); }
 .term-load-more.visible { display: block; }
 .term-new-output {
     display: none; position: sticky; bottom: 0; z-index: 3;
     text-align: center; padding: 6px;
-    background: rgba(0, 212, 255, 0.1); border-top: 1px solid rgba(0, 212, 255, 0.3);
+    background: rgba(112, 174, 249, 0.1); border-top: 1px solid rgba(112, 174, 249, 0.3);
     font-size: 9px; font-weight: 700; color: var(--cyan);
     letter-spacing: 1.5px; text-transform: uppercase; cursor: pointer;
     -webkit-tap-highlight-color: transparent; animation: pulseGlow 2s ease-in-out infinite;
@@ -758,14 +762,14 @@
 
 /* Terminal horizontal scrollbar */
 .term-display::-webkit-scrollbar { height: 8px; }
-.term-display::-webkit-scrollbar-track { background: rgba(3, 8, 6, 0.8); }
-.term-display::-webkit-scrollbar-thumb { background: rgba(0, 255, 65, 0.25); border-radius: 4px; }
-.term-display::-webkit-scrollbar-thumb:active { background: rgba(0, 255, 65, 0.5); }
+.term-display::-webkit-scrollbar-track { background: rgba(9, 12, 14, 0.8); }
+.term-display::-webkit-scrollbar-thumb { background: rgba(131, 215, 162, 0.25); border-radius: 4px; }
+.term-display::-webkit-scrollbar-thumb:active { background: rgba(131, 215, 162, 0.5); }
 .term-display { -webkit-overflow-scrolling: touch; touch-action: pan-x pan-y; }
 
 /* Line selection */
 .sel-line {
-    background: rgba(0, 212, 255, 0.12);
+    background: rgba(112, 174, 249, 0.12);
     display: inline;
 }
 .sel-bar {
@@ -781,7 +785,7 @@
 .sel-bar.visible { display: flex; }
 .sel-copy-btn {
     padding: 12px 24px;
-    background: rgba(0, 212, 255, 0.2);
+    background: rgba(112, 174, 249, 0.2);
     border: 1px solid var(--cyan);
     color: var(--cyan);
     font-family: var(--font);
@@ -792,13 +796,13 @@
     cursor: pointer;
     backdrop-filter: blur(8px);
     -webkit-tap-highlight-color: transparent;
-    box-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
+    box-shadow: 0 0 20px rgba(112, 174, 249, 0.3);
 }
-.sel-copy-btn:active { background: rgba(0, 212, 255, 0.4); transform: scale(0.95); }
+.sel-copy-btn:active { background: rgba(112, 174, 249, 0.4); transform: scale(0.95); }
 .sel-cancel-btn {
     padding: 12px 16px;
-    background: rgba(255, 0, 64, 0.15);
-    border: 1px solid rgba(255, 0, 64, 0.5);
+    background: rgba(242, 87, 103, 0.15);
+    border: 1px solid rgba(242, 87, 103, 0.5);
     color: var(--red);
     font-family: var(--font);
     font-size: 16px;
@@ -808,7 +812,7 @@
     -webkit-tap-highlight-color: transparent;
     line-height: 1;
 }
-.sel-cancel-btn:active { background: rgba(255, 0, 64, 0.3); transform: scale(0.95); }
+.sel-cancel-btn:active { background: rgba(242, 87, 103, 0.3); transform: scale(0.95); }
 
 /* Terminal search */
 .term-search {
@@ -904,7 +908,7 @@
     flex-shrink: 0;
     width: 1px;
     height: 20px;
-    background: rgba(0, 212, 255, 0.3);
+    background: rgba(112, 174, 249, 0.3);
     align-self: center;
     margin: 0 2px;
 }
@@ -933,7 +937,7 @@
 .tab-context-menu {
     position: fixed;
     z-index: 200;
-    background: rgba(10, 22, 14, 0.97);
+    background: rgba(17, 21, 24, 0.97);
     border: 1px solid var(--border);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
@@ -955,11 +959,11 @@
     text-align: left;
 }
 .tab-ctx-item:last-child { border-bottom: none; }
-.tab-ctx-item:active { background: rgba(0, 255, 65, 0.1); }
+.tab-ctx-item:active { background: rgba(131, 215, 162, 0.1); }
 .tab-ctx-kill { color: var(--red); }
-.tab-ctx-kill:active { background: rgba(255, 0, 64, 0.1); }
+.tab-ctx-kill:active { background: rgba(242, 87, 103, 0.1); }
 .tab-ctx-snooze { color: var(--purple); }
-.tab-ctx-snooze:active { background: rgba(191, 90, 242, 0.12); }
+.tab-ctx-snooze:active { background: rgba(182, 156, 242, 0.12); }
 
 /* Reorder mode — click-to-place */
 .reorder-source {
@@ -1060,7 +1064,6 @@
     0%, 100% { color: var(--text-dim); }
     12% {
         color: var(--amber);
-        text-shadow: 0 0 6px rgba(255, 149, 0, 0.5);
     }
 }
 
@@ -1079,7 +1082,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(180deg, #0a1210 0%, #060e0a 100%);
+    background: linear-gradient(180deg, #0f1214 0%, #0f1214 100%);
     -webkit-tap-highlight-color: transparent;
     cursor: pointer;
     z-index: 2;
@@ -1122,8 +1125,10 @@
     /* Taller than the old idle-only sheet: this lists every tab, so a long
        session list is the normal case rather than the exception. */
     max-height: 70vh;
-    background: var(--bg);
-    border-top: 1px solid rgba(0, 212, 255, 0.2);
+    background: var(--bg-panel);
+    border-top: 1px solid var(--border);
+    border-radius: 10px 10px 0 0;
+    box-shadow: 0 -18px 48px rgba(0, 0, 0, 0.55);
     transform: translateY(100%);
     transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
     z-index: 60;
@@ -1139,23 +1144,23 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    height: 36px;
-    padding: 0 12px;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    height: 48px;
+    padding: 0 12px 0 16px;
+    border-bottom: 1px solid var(--line);
     flex-shrink: 0;
 }
 .stale-sheet-title {
     font-family: var(--font);
     font-size: 10px;
     font-weight: 700;
-    letter-spacing: 1.2px;
+    letter-spacing: 1.5px;
     text-transform: uppercase;
-    color: var(--cyan);
+    color: var(--text-dim);
 }
 .stale-sheet-count {
     margin-left: 6px;
-    background: rgba(0, 212, 255, 0.15);
-    color: var(--cyan);
+    background: var(--bg-selected);
+    color: var(--text);
     border-radius: 8px;
     padding: 1px 6px;
     font-size: 9px;
@@ -1169,19 +1174,20 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    height: 44px;
-    padding: 0 12px;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
+    position: relative;
+    height: 52px;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--line);
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
 }
-.stale-sheet-row:active { background: rgba(0, 255, 65, 0.06); }
+.stale-sheet-row:active { background: var(--bg-selected); }
 .stale-sheet-row .row-name {
     flex: 1;
     font-family: var(--font);
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--green);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-strong);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1214,9 +1220,9 @@
 
 /* The sheet lists every tab, so each row has to say where that tab is:
    currently viewed, or tucked out of the strip into zZ. */
-.stale-sheet-row.is-active { background: rgba(0, 212, 255, 0.08); }
-.stale-sheet-row.is-active .row-name { color: var(--cyan); }
-.stale-sheet-row.is-tucked .row-name { color: rgba(0, 255, 65, 0.45); }
+.stale-sheet-row.is-active { background: var(--bg-selected); box-shadow: inset 2px 0 0 var(--coral); }
+.stale-sheet-row.is-active .row-name { color: var(--text-strong); }
+.stale-sheet-row.is-tucked .row-name { color: var(--text-muted); }
 /* Auto-tuck switch — lives in the sheet header because that is where you
    notice tabs have gone missing from the strip. */
 .stale-sheet-tuck {
@@ -1224,7 +1230,7 @@
     margin-right: 10px;
     padding: 4px 8px;
     background: transparent;
-    border: 1px solid rgba(0, 212, 255, 0.3);
+    border: 1px solid rgba(112, 174, 249, 0.3);
     border-radius: 4px;
     color: var(--cyan);
     font-family: var(--font);
@@ -1237,10 +1243,10 @@
     -webkit-tap-highlight-color: transparent;
 }
 .stale-sheet-tuck.is-off {
-    border-color: rgba(191, 90, 242, 0.45);
+    border-color: rgba(182, 156, 242, 0.45);
     color: var(--purple);
 }
-.stale-sheet-tuck:active { background: rgba(0, 212, 255, 0.10); }
+.stale-sheet-tuck:active { background: rgba(112, 174, 249, 0.10); }
 
 .stale-sheet-sub {
     margin-left: 8px;
@@ -1258,7 +1264,7 @@
     background: transparent;
     color: var(--purple);
     border: 1px solid var(--purple);
-    border-radius: 3px;
+    border-radius: 6px;
     width: 40px;
     min-width: 40px;
     height: 40px;
@@ -1273,15 +1279,14 @@
 }
 .term-tui-chip.std {
     color: var(--text-dim);
-    border-color: var(--text-dim);
+    border-color: var(--border);
 }
 .term-tui-chip.pinned {
     color: var(--amber);
     border-color: var(--amber);
 }
 .term-tui-chip:active {
-    background: rgba(255, 149, 0, 0.18);
-    box-shadow: 0 0 10px rgba(255, 149, 0, 0.35);
+    background: rgba(225, 181, 106, 0.18);
 }
 .term-tui-chip.hidden { display: none; }
 
@@ -1308,6 +1313,6 @@
     cursor: pointer;
 }
 .tui-nav-btn:active {
-    background: rgba(191, 90, 242, 0.18);
-    box-shadow: 0 0 10px rgba(191, 90, 242, 0.35);
+    background: rgba(182, 156, 242, 0.18);
+    box-shadow: 0 0 10px rgba(182, 156, 242, 0.35);
 }

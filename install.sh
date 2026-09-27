@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# install.sh — Install Claude Assist (venv, deps, config, CLI command).
+# install.sh — Install Drift Assist (venv, deps, config, CLI command).
 #
 # Run from inside the repo:
 #
-#     git clone <repo-url> ~/.local/share/claude-assist
-#     cd ~/.local/share/claude-assist
+#     git clone <repo-url> ~/.local/share/drift-assist
+#     cd ~/.local/share/drift-assist
 #     ./install.sh
 #
 # Idempotent — safe to re-run. Never overwrites an existing .env.
@@ -21,7 +21,7 @@ ok()   { printf '    \033[32m✓\033[0m %s\n' "$*"; }
 warn() { printf '    \033[33m!\033[0m %s\n' "$*"; }
 err()  { printf '\033[31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
-CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-assist"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/drift-assist"
 CONFIG_FILE="$CONFIG_DIR/config.env"
 BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
 BIN_TARGET="$BIN_DIR/assist"
@@ -132,7 +132,7 @@ say "[4/7] Recording install location"
 
 mkdir -p "$CONFIG_DIR"
 cat > "$CONFIG_FILE" <<EOF
-# Claude Assist — user config (written by install.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ))
+# Drift Assist — user config (written by install.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ))
 # Tells the 'assist' CLI where this repo lives. Safe to edit if you move the repo.
 ASSIST_HOME="$SCRIPT_DIR"
 EOF

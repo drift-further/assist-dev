@@ -80,6 +80,7 @@ _classify("fixed:observe", "routes/commands.py:check_split_pane")
 _classify("fixed:observe", "routes/completion.py:_session_cwd")
 
 _classify("fixed:observe", "routes/container.py:container_status")
+_classify("fixed:observe", "routes/container.py:_docker_image_exists")
 _classify(
     "intent:configured_image_build",
     "routes/container.py:_container_build_effect",

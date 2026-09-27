@@ -3,25 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Assist // Claude Code</title>
+    <title>Drift Assist</title>
     <link rel="icon" type="image/svg+xml" href="/icons/assist-live-threads.svg?v=2">
     <link rel="apple-touch-icon" sizes="180x180" href="/icons/assist-live-threads-180.png?v=2">
     <link rel="stylesheet" href="/css/fonts.css">
-    <link rel="stylesheet" href="/css/base.css?v=1">
-    <link rel="stylesheet" href="/css/status-bar.css?v=4">
-    <link rel="stylesheet" href="/css/input.css?v=8">
-    <link rel="stylesheet" href="/css/terminal.css?v=12">
+    <link rel="stylesheet" href="/css/base.css?v=2">
+    <link rel="stylesheet" href="/css/status-bar.css?v=5">
+    <link rel="stylesheet" href="/css/input.css?v=9">
+    <link rel="stylesheet" href="/css/terminal.css?v=13">
     <link rel="stylesheet" href="/css/opencode.css?v=2">
-    <link rel="stylesheet" href="/css/drawers.css?v=3">
-    <link rel="stylesheet" href="/css/widgets.css?v=1">
-    <link rel="stylesheet" href="/css/commands.css?v=1">
-    <link rel="stylesheet" href="/css/autocomplete.css?v=1">
-    <link rel="stylesheet" href="/css/segments.css?v=2">
-    <link rel="stylesheet" href="/css/container.css?v=1">
-    <link rel="stylesheet" href="/css/studio.css?v=4">
-    <link rel="stylesheet" href="/css/access.css?v=2">
-    <link rel="stylesheet" href="/css/chrome.css?v=5">
-    <link rel="stylesheet" href="/css/notifications.css?v=3">
+    <link rel="stylesheet" href="/css/drawers.css?v=4">
+    <link rel="stylesheet" href="/css/widgets.css?v=2">
+    <link rel="stylesheet" href="/css/commands.css?v=2">
+    <link rel="stylesheet" href="/css/autocomplete.css?v=2">
+    <link rel="stylesheet" href="/css/segments.css?v=3">
+    <link rel="stylesheet" href="/css/container.css?v=2">
+    <link rel="stylesheet" href="/css/studio.css?v=5">
+    <link rel="stylesheet" href="/css/access.css?v=3">
+    <link rel="stylesheet" href="/css/chrome.css?v=6">
+    <link rel="stylesheet" href="/css/notifications.css?v=4">
 </head>
 <body>
     <script>
@@ -55,8 +55,12 @@
                  centre line, and it stops a tab that cannot fit beside it from
                  opening a third row of its own. -->
             <div class="chrome-identity">
+                <span class="brand-lockup" aria-label="Drift Assist">
+                    <svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true"><path d="M24 8H48Q56 8 56 16V48Q56 56 48 56H24M8 18H39M8 32H39M8 46H39" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="39" cy="18" r="5" fill="currentColor"/><circle cx="39" cy="32" r="5" fill="currentColor"/><circle cx="39" cy="46" r="5" fill="currentColor"/></svg>
+                    <span class="brand-word">driftassist<span>.dev</span></span>
+                </span>
                 <div id="status-dot" class="status-dot"></div>
-                <div class="status-title">Assist <span>// Claude Code</span></div>
+                <div class="status-title"></div>
                 <span class="conn-indicator" id="conn-indicator"></span>
                 <div id="status-time" class="status-time"></div>
                 <div id="tmux-ind" class="tmux-indicator"></div>
@@ -661,7 +665,7 @@
     <script src="/js/prompt-popup.js?v=2"></script>
     <script src="/js/tabs.js?v=7"></script>
     <script src="/js/settings.js?v=9"></script>
-    <script src="/js/app.js?v=19"></script>
+    <script src="/js/app.js?v=20"></script>
     <script src="/js/selection.js?v=2"></script>
     <script>
     if ('serviceWorker' in navigator) {

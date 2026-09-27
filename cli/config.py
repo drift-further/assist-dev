@@ -1,7 +1,8 @@
-"""Resolve Claude Assist paths and environment configuration."""
+"""Resolve Drift Assist paths and environment configuration."""
 
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,6 +11,12 @@ _ASSIGNMENT_RE = re.compile(
     r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$"
 )
 _PARAMETER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+CONFIG_DIR_NAME = "drift-assist"
+# Read for one release when the new directory is absent, so an install made
+# before the rename keeps working until install.sh is re-run.
+LEGACY_CONFIG_DIR_NAME = "claude-assist"
+_legacy_notice_shown = False
 
 
 class ConfigError(Exception):
@@ -169,6 +176,29 @@ def _load_assignments(path: Path) -> None:
             ) from exc
 
 
+def user_config_file(xdg_config_home: Path) -> Path:
+    """Return the user config file, falling back to the pre-rename directory.
+
+    The new path wins whenever its directory exists. The legacy path is used
+    only when the new directory is absent and the legacy file is present, and
+    that is reported once per process on stderr.
+    """
+
+    global _legacy_notice_shown
+    current = xdg_config_home / CONFIG_DIR_NAME / "config.env"
+    legacy = xdg_config_home / LEGACY_CONFIG_DIR_NAME / "config.env"
+    if current.parent.exists() or not legacy.is_file():
+        return current
+    if not _legacy_notice_shown:
+        _legacy_notice_shown = True
+        print(
+            f"assist: reading legacy config {legacy}; "
+            f"move it to {current.parent}/ (re-run ./install.sh)",
+            file=sys.stderr,
+        )
+    return legacy
+
+
 def resolve(
     script_path: Path | None = None,
     activation_expected_home: Path | None = None,
@@ -182,7 +212,7 @@ def resolve(
     xdg_config_home = os.environ.get("XDG_CONFIG_HOME") or str(
         Path(user_home) / ".config"
     )
-    config_file = Path(xdg_config_home) / "claude-assist" / "config.env"
+    config_file = user_config_file(Path(xdg_config_home))
     if config_file.is_file():
         _load_assignments(config_file)
 

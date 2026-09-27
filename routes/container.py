@@ -17,6 +17,36 @@ container_bp = Blueprint("container_bp", __name__)
 DOCKER_DIR = Path(__file__).resolve().parent.parent / "docker"
 EXTENSION_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
+
+def _docker_image_exists(name):
+    try:
+        proc = subprocess.run(
+            ["docker", "image", "inspect", name],
+            capture_output=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0
+
+
+def resolve_image_name(cfg):
+    """The image status reports, falling back to the pre-rename default.
+
+    Only the default name falls back, and only while the new image has not
+    been built and the legacy one has. An explicitly configured name is used
+    as given.
+    """
+    name = cfg["image"]["name"]
+    if (
+        name == state.CONTAINER_IMAGE_NAME
+        and not _docker_image_exists(name)
+        and _docker_image_exists(state.LEGACY_CONTAINER_IMAGE_NAME)
+    ):
+        return state.LEGACY_CONTAINER_IMAGE_NAME
+    return name
+
+
 # ---------------------------------------------------------------------------
 # Build state — shared across threads
 # ---------------------------------------------------------------------------
@@ -30,7 +60,7 @@ _build_lock = threading.Lock()
 @container_bp.route("/api/container/status")
 def container_status():
     cfg = state.get_container_config()
-    image_name = cfg["image"]["name"]
+    image_name = resolve_image_name(cfg)
 
     # Image info via docker images
     image_info = None

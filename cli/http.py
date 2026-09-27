@@ -1,4 +1,4 @@
-"""Authenticated HTTP helpers for the Claude Assist API."""
+"""Authenticated HTTP helpers for the Drift Assist API."""
 
 import json
 import sys

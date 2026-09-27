@@ -71,8 +71,8 @@ class StudioClient:
             req = urllib.request.Request(base + path, method=method)
             tok = self.token()
             if tok:
-                # Forward-compatible with bearer enforcement; harmless against a
-                # loopback Studio that ignores the header.
+                # Hosted Studio enforces bearer auth; a loopback Studio that
+                # does not is unaffected by the header.
                 req.add_header("Authorization", "Bearer " + tok)
             body = None
             if payload is not None:

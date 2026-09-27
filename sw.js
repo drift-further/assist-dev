@@ -1,23 +1,23 @@
 // sw.js — Service worker for Assist (network-first for static assets, cache fallback when offline)
 // Browsers register this only in a secure context (with a loopback exception),
 // so it is inert on the current plain-HTTP phone origin until TLS lands.
-const VERSION = 'assist-v3-043';
+const VERSION = 'assist-v3-045';
 const STATIC_CACHE = 'assist-static-' + VERSION;
 const STATIC_URLS = [
     '/',
     '/icons/assist-live-threads.svg?v=2',
     '/icons/assist-live-threads-180.png?v=2',
     '/css/fonts.css',
-    '/css/base.css?v=1',
-    '/css/status-bar.css?v=4',
-    '/css/input.css?v=8',
-    '/css/terminal.css?v=12',
+    '/css/base.css?v=2',
+    '/css/status-bar.css?v=5',
+    '/css/input.css?v=9',
+    '/css/terminal.css?v=13',
     '/css/opencode.css?v=2',
-    '/css/chrome.css?v=5',
-    '/css/studio.css?v=4',
-    '/css/drawers.css?v=3',
-    '/css/widgets.css?v=1',
-    '/css/commands.css?v=1',
+    '/css/chrome.css?v=6',
+    '/css/studio.css?v=5',
+    '/css/drawers.css?v=4',
+    '/css/widgets.css?v=2',
+    '/css/commands.css?v=2',
     '/js/state.js?v=4',
     '/js/ui.js?v=6',
     '/js/vault.js?v=3',
@@ -29,7 +29,7 @@ const STATIC_URLS = [
     '/js/commands.js?v=4',
     '/js/monitor.js?v=6',
     '/js/chrome.js?v=3',
-    '/js/app.js?v=19',
+    '/js/app.js?v=20',
 ];
 
 self.addEventListener('install', event => {

@@ -1,4 +1,4 @@
-# Claude Assist
+# Drift Assist
 
 A web terminal interface for [Claude Code](https://claude.com/claude-code) tmux sessions — designed for phones and tablets. Serves a mobile-first UI on port 8089, routes typing into a chosen tmux target, streams terminal output over WebSocket, and exposes a container build/spawn system for ephemeral dev environments.
 
@@ -77,7 +77,7 @@ cd ~/.local/share/assist-dev
 ./install.sh
 ```
 
-The installer creates a venv, installs Python deps, seeds `.env` from `env.example`, records the install path in `~/.config/claude-assist/config.env`, and symlinks `~/.local/bin/assist` → `bin/assist` so you get a global `assist` command. That command re-execs itself under the project venv, so it works from any shell whatever virtualenv happens to be active.
+The installer creates a venv, installs Python deps, seeds `.env` from `env.example`, records the install path in `~/.config/drift-assist/config.env`, and symlinks `~/.local/bin/assist` → `bin/assist` so you get a global `assist` command. An install made before the rename to Drift Assist still works: for one release the CLI reads `~/.config/claude-assist/config.env` when `~/.config/drift-assist/` does not exist, and says so on stderr; re-run `./install.sh` to move to the new path. That command re-execs itself under the project venv, so it works from any shell whatever virtualenv happens to be active.
 
 Then:
 
@@ -155,7 +155,7 @@ Once installed, `assist` manages everything:
 | `assist kill <session> [--pane P]` | Kill a tmux session |
 | `assist autoyes <session> (--on\|--off\|--status) [--delay N]` | Persistently set or inspect auto-yes; enabled delays are clamped to 0.1–30 seconds |
 | `assist autoyes --global (--on\|--off\|--status) [--delay N]` | Set or inspect the all-sessions switch |
-| `assist studio [args]` | Execute a separate `studio` CLI found on `PATH`, or fail if none is installed |
+| `assist studio [args]` | Execute the Studio CLI found on `PATH` — `sto` first, then `studio` — or fail if neither is installed |
 | `assist help` | Full command reference |
 
 The process commands delegate to `./assist-ctl`. The container commands hit the running server's HTTP API (`/api/container/*`), so the server must be running for them to work.
@@ -318,7 +318,7 @@ just an extra field, and existing favorites gain one lazily the first time they 
 
 [Studio](https://driftstudio.dev) is the design hub agents report into — specs, plans, blocking questions, tasks and QA gates. Assist works standalone; connecting it to a Studio adds an attention inbox you can answer from your phone, a badge on the ◇ button, and a project/effort chip on the active session.
 
-> **Loopback only for now.** Point `api_base` at a Studio on this machine (`http://127.0.0.1:8090`). **Do not expose Studio to a network and point Assist at it yet:** Studio does not enforce its API token, so a remote Studio would answer anyone who can reach it, and the `api_token` below would give you no protection you could rely on. Remote/hosted Studio is supported once Studio ships bearer enforcement.
+Point `api_base` at your Studio and paste your personal token into `api_token`. Hosted Studio enforces bearer auth, and Assist sends the token as `Authorization: Bearer` on every server-side call.
 
 Connect from the phone: tap **◇ Studio** while disconnected and fill the sheet. Or set it directly in `settings.json`:
 
@@ -332,7 +332,7 @@ Connect from the phone: tap **◇ Studio** while disconnected and fill the sheet
 }
 ```
 
-(`web_base` is what your browser opens — an nginx name, a LAN address, or empty to derive it from `api_base`. `api_base` is server-to-server and stays on loopback.)
+(`web_base` is what your browser opens — an nginx name, a LAN address, or empty to derive it from `api_base`. `api_base` is server-to-server: loopback for a Studio on this machine, or your hosted Studio's URL.)
 
 | Key | Purpose | Default |
 |-----|---------|---------|
@@ -403,7 +403,8 @@ A `--timeout N` in the forwarded args sets how long the host waits, plus 30s of 
 ```bash
 assist stop                             # stop the server first
 rm ~/.local/bin/assist
-rm -rf ~/.config/claude-assist
+rm -rf ~/.config/drift-assist
+rm -rf ~/.config/claude-assist          # pre-rename config dir, if present
 rm -rf ~/.local/share/assist-dev        # or wherever you cloned
 ```
 

@@ -74,9 +74,9 @@ class PublicPortabilityTests(unittest.TestCase):
                 patch.object(proc.os, "execvp") as execute, \
                 contextlib.redirect_stderr(stderr):
             self.assertEqual(proc.studio(["status"]), 1)
-        which.assert_called_once_with("studio")
+        self.assertEqual([c.args for c in which.call_args_list], [("sto",), ("studio",)])
         execute.assert_not_called()
-        self.assertIn("no studio CLI on PATH", stderr.getvalue())
+        self.assertIn("no Studio CLI on PATH", stderr.getvalue())
 
     def test_installer_prompts_before_adding_a_missing_statusline(self):
         source = (ROOT / "install.sh").read_text(encoding="utf-8")

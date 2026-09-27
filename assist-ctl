@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# assist-ctl — Process control for the Claude Assist server.
+# assist-ctl — Process control for the Drift Assist server.
 #
 set -euo pipefail
 umask 077

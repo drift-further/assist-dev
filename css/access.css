@@ -28,7 +28,7 @@
 /* Sheet geometry mirrors .studio-sheet so the two read as one system. */
 .access-sheet {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
-    background: var(--bg); border-top: 1px solid rgba(255, 0, 64, 0.35);
+    background: var(--bg); border-top: 1px solid rgba(242, 87, 103, 0.35);
     box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.6);
     transform: translateY(100%); transition: transform 0.22s ease-out;
     max-height: 85vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
@@ -38,7 +38,7 @@
 
 .access-sheet-header {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 12px; border-bottom: 1px solid rgba(255, 0, 64, 0.2);
+    padding: 10px 12px; border-bottom: 1px solid rgba(242, 87, 103, 0.2);
 }
 
 .access-sheet-title {
@@ -66,7 +66,7 @@
     padding: 13px 4px; font: inherit; font-size: 13px; font-weight: 600;
 }
 
-.access-preset:active { background: rgba(255, 149, 0, 0.16); }
+.access-preset:active { background: rgba(225, 181, 106, 0.16); }
 
 /* --- Device approval modal -------------------------------------------------
    Sits above the access sheet: a pending request must be answered or left to
@@ -75,7 +75,7 @@
 .approve-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(8, 12, 16, 0.82);
+    background: rgba(14, 17, 19, 0.82);
     z-index: 998;
     display: none;
 }
@@ -86,41 +86,44 @@
     left: 50%;
     top: 50%;
     transform: translate(-50%, -50%);
-    width: min(92vw, 340px);
-    background: var(--bg);
-    border: 1px solid var(--amber);
-    border-radius: 6px;
+    width: min(92vw, 360px);
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-top: 2px solid var(--amber);
+    border-radius: 8px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
     z-index: 999;
     display: none;
 }
 .approve-sheet.visible { display: block; }
 
 .approve-sheet-header {
-    padding: 12px 14px;
-    border-bottom: 1px solid #1d2b36;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--line);
 }
 .approve-sheet-title {
-    color: var(--amber);
-    font-size: 13px;
-    letter-spacing: 0.5px;
+    color: var(--text-strong);
+    font-family: var(--sans);
+    font-size: 16px;
+    font-weight: 700;
 }
 .approve-sheet-body { padding: 14px; }
 
 .approve-card + .approve-card {
     margin-top: 14px;
     padding-top: 14px;
-    border-top: 1px solid #1d2b36;
+    border-top: 1px solid #242b32;
 }
 .approve-code {
     font-size: 34px;
     letter-spacing: 10px;
     text-indent: 10px;
-    color: var(--cyan);
+    color: var(--text-strong);
     text-align: center;
     margin-bottom: 8px;
 }
 .approve-meta {
-    color: #5a6b7a;
+    color: #8d959b;
     font-size: 12px;
     text-align: center;
     line-height: 1.6;
@@ -132,11 +135,12 @@
 }
 .approve-actions button {
     flex: 1;
-    background: transparent;
-    border-radius: 4px;
+    background: var(--bg-card);
+    border-radius: 6px;
     padding: 13px;
     font: inherit;
     font-size: 13px;
+    font-weight: 600;
 }
 .approve-deny { color: var(--red); border: 1px solid var(--red); }
 .approve-ok { color: var(--green); border: 1px solid var(--green); }

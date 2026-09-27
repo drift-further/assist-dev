@@ -1,4 +1,4 @@
-"""Container commands for the Claude Assist CLI."""
+"""Container commands for the Drift Assist CLI."""
 
 import json
 import sys

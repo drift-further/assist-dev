@@ -1,1 +1,1 @@
-"""Command-line support for Claude Assist."""
+"""Command-line support for Drift Assist."""

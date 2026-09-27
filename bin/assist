@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Command-line dispatcher for Claude Assist."""
+"""Command-line dispatcher for Drift Assist."""
 
 import argparse
 import os
@@ -72,7 +72,7 @@ except ModuleNotFoundError as exc:  # a legible failure beats a 12-line tracebac
     raise SystemExit(1)
 
 
-HELP_TEXT = """assist — control the Claude Assist web terminal
+HELP_TEXT = """assist — control the Drift Assist web terminal
 
 Usage: assist <command> [args]
 

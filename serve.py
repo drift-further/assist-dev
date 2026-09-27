@@ -1,4 +1,4 @@
-"""Claude Assist — phone-first web terminal for Claude Code sessions.
+"""Drift Assist — phone-first web terminal for Claude Code sessions.
 
 App factory: imports all blueprints, registers them, starts background threads.
 """
@@ -218,7 +218,7 @@ if __name__ == "__main__":
     import argparse
     from werkzeug.serving import make_server
 
-    parser = argparse.ArgumentParser(description="Claude Assist server")
+    parser = argparse.ArgumentParser(description="Drift Assist server")
     parser.add_argument(
         "--port",
         type=int,

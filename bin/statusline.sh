@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Claude Assist — minimal Claude Code statusline.
+# Drift Assist — minimal Claude Code statusline.
 # Writes context-usage.json to .claude/state/ so the Assist 'i' button works.
 # Install: add to ~/.claude/settings.json:
 #   "statusLine": {"type": "command", "command": "/path/to/assist/bin/statusline.sh"}

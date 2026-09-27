@@ -1,14 +1,14 @@
 /* studio.css — Studio attention panel, connect sheet, ◇ badge, effort chip */
 
 /* Plus-menu entry */
-.plus-studio { color: var(--purple); border-color: rgba(191, 90, 242, 0.3); }
-.plus-studio:active { background: rgba(191, 90, 242, 0.15); }
+.plus-studio { color: var(--purple); border-color: rgba(182, 156, 242, 0.3); }
+.plus-studio:active { background: rgba(182, 156, 242, 0.15); }
 
 /* Panel frame — mirrors .container-panel, purple instead of amber */
 .studio-panel {
     display: none; flex-shrink: 0; padding: 8px;
-    background: linear-gradient(180deg, rgba(191, 90, 242, 0.06) 0%, rgba(191, 90, 242, 0.02) 100%);
-    border: 1px solid rgba(191, 90, 242, 0.2); animation: fadeSlide 0.2s ease-out;
+    background: linear-gradient(180deg, rgba(182, 156, 242, 0.06) 0%, rgba(182, 156, 242, 0.02) 100%);
+    border: 1px solid rgba(182, 156, 242, 0.2); animation: fadeSlide 0.2s ease-out;
     max-height: 70vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
 }
 .studio-panel.visible { display: block; }
@@ -24,17 +24,17 @@
 .studio-state.unreachable, .studio-state.unconfigured { color: var(--text-muted); }
 .studio-state.unauthorized { color: var(--amber); }
 .studio-panel-close {
-    background: transparent; border: 1px solid rgba(255, 55, 95, 0.3);
+    background: transparent; border: 1px solid rgba(242, 87, 103, 0.3);
     color: var(--red); font-size: 12px; width: 24px; height: 24px;
     cursor: pointer; display: flex; align-items: center; justify-content: center;
     -webkit-tap-highlight-color: transparent; transition: all 0.12s; font-family: var(--font);
 }
-.studio-panel-close:active { background: rgba(255, 55, 95, 0.15); transform: scale(0.9); }
+.studio-panel-close:active { background: rgba(242, 87, 103, 0.15); transform: scale(0.9); }
 
 .studio-empty { font-size: 10px; color: var(--text-muted); padding: 8px 2px; font-style: italic; }
 
 /* Inbox item */
-.studio-item { padding: 8px 2px; border-top: 1px solid rgba(191, 90, 242, 0.12); }
+.studio-item { padding: 8px 2px; border-top: 1px solid rgba(182, 156, 242, 0.12); }
 .studio-item.rec { border-left: 2px solid var(--purple); padding-left: 8px; }
 /* Studio text is arbitrary: prompts and option labels routinely carry commit
    SHAs, paths and slugs with no break opportunity. Without this a single long
@@ -51,7 +51,7 @@
 }
 .studio-evidence { font-size: 9.5px; color: var(--amber); margin-bottom: 6px; }
 .studio-rec-text {
-    font-size: 10.5px; color: var(--text); background: rgba(191, 90, 242, 0.07);
+    font-size: 10.5px; color: var(--text); background: rgba(182, 156, 242, 0.07);
     border-radius: 6px; padding: 6px 8px; margin-bottom: 6px; line-height: 1.4;
 }
 .studio-opts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -64,16 +64,16 @@
        flex item; overflow-wrap gives the text somewhere to break. */
     max-width: 100%; overflow-wrap: anywhere; text-align: left;
 }
-.studio-opt:active { background: rgba(0, 212, 255, 0.15); transform: scale(0.97); }
+.studio-opt:active { background: rgba(112, 174, 249, 0.15); transform: scale(0.97); }
 .studio-accept {
-    background: var(--purple); border: none; color: #080c10; font-weight: 700;
+    background: var(--purple); border: none; color: #0e1113; font-weight: 700;
     border-radius: 6px; padding: 8px 14px; font-size: 10.5px; min-height: 36px;
     font-family: var(--font); cursor: pointer; -webkit-tap-highlight-color: transparent;
     max-width: 100%; overflow-wrap: anywhere;
 }
 .studio-accept:active { transform: scale(0.97); }
 .studio-freetext {
-    flex: 1; min-width: 110px; background: #060a0e; border: 1px solid var(--border);
+    flex: 1; min-width: 110px; background: #0e1113; border: 1px solid var(--border);
     border-radius: 6px; color: var(--text); padding: 8px; font-size: 10.5px;
     min-height: 36px; font-family: var(--font);
 }
@@ -86,15 +86,15 @@
 /* Scrollbar — matches the container panel */
 .studio-panel::-webkit-scrollbar { width: 4px; }
 .studio-panel::-webkit-scrollbar-track { background: transparent; }
-.studio-panel::-webkit-scrollbar-thumb { background: rgba(191, 90, 242, 0.25); border-radius: 2px; }
+.studio-panel::-webkit-scrollbar-thumb { background: rgba(182, 156, 242, 0.25); border-radius: 2px; }
 
 /* ◇ button states + badge */
 .status-studio { position: relative; }
 .status-studio.grey { color: var(--text-muted); border-color: rgba(122, 138, 153, 0.4); background: transparent; }
-.status-studio.locked { color: var(--amber); border-color: rgba(255, 149, 0, 0.5); }
+.status-studio.locked { color: var(--amber); border-color: rgba(225, 181, 106, 0.5); }
 .studio-badge {
     position: absolute; top: 1px; right: 1px; background: var(--amber);
-    color: #080c10; font-size: 9px; font-weight: 700; border-radius: 8px;
+    color: #0e1113; font-size: 9px; font-weight: 700; border-radius: 8px;
     padding: 0 5px; line-height: 14px; min-width: 6px; text-align: center;
 }
 .studio-badge.hidden { display: none; }
@@ -103,7 +103,7 @@
 
 /* Effort chip in the claude-info-bar */
 .ci-effort {
-    color: var(--purple); border: 1px solid rgba(191, 90, 242, 0.4);
+    color: var(--purple); border: 1px solid rgba(182, 156, 242, 0.4);
     border-radius: 4px; padding: 5px; cursor: pointer;
     -webkit-tap-highlight-color: transparent; white-space: nowrap;
     display: inline-flex; align-items: center; min-height: 36px;
@@ -113,7 +113,7 @@
 /* Connect sheet — bottom sheet, same slide-in shape as .stale-sheet */
 .studio-sheet {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
-    background: var(--bg); border-top: 1px solid rgba(191, 90, 242, 0.35);
+    background: var(--bg); border-top: 1px solid rgba(182, 156, 242, 0.35);
     box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.6);
     transform: translateY(100%); transition: transform 0.22s ease-out;
     max-height: 85vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
@@ -121,7 +121,7 @@
 .studio-sheet.visible { transform: translateY(0); }
 .studio-sheet-header {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 12px; border-bottom: 1px solid rgba(191, 90, 242, 0.2);
+    padding: 10px 12px; border-bottom: 1px solid rgba(182, 156, 242, 0.2);
 }
 .studio-sheet-title { color: var(--purple); font-size: 12px; font-weight: 700; letter-spacing: 0.5px; }
 .studio-sheet-body { padding: 14px; }
@@ -132,12 +132,12 @@
     text-transform: uppercase; letter-spacing: 0.5px;
 }
 .studio-field input {
-    width: 100%; box-sizing: border-box; background: #060a0e;
-    border: 1px solid rgba(191, 90, 242, 0.25); border-radius: 6px;
+    width: 100%; box-sizing: border-box; background: #0e1113;
+    border: 1px solid rgba(182, 156, 242, 0.25); border-radius: 6px;
     color: var(--green); padding: 10px; font-size: 12px; font-family: var(--font);
 }
 .studio-cta {
-    width: 100%; background: var(--purple); border: none; color: #080c10;
+    width: 100%; background: var(--purple); border: none; color: #0e1113;
     font-weight: 700; border-radius: 8px; padding: 12px; font-size: 12px;
     font-family: var(--font); cursor: pointer; margin-top: 6px;
     -webkit-tap-highlight-color: transparent;

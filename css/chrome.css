@@ -10,7 +10,7 @@
     width: 44px;
     min-width: 44px;
     height: 48px;
-    background: linear-gradient(180deg, #0a1210 0%, #060e0a 100%);
+    background: linear-gradient(180deg, #0f1214 0%, #0f1214 100%);
     border-bottom: 0;
     flex-shrink: 0;
     cursor: pointer;
@@ -75,8 +75,8 @@ body.chrome-collapsed .session-rail {
 .term-chrome-btn:active { background: rgba(255, 255, 255, 0.07); }
 .term-chrome-btn.is-on {
     color: var(--cyan);
-    border-color: rgba(0, 212, 255, 0.5);
-    background: rgba(0, 212, 255, 0.08);
+    border-color: rgba(112, 174, 249, 0.5);
+    background: rgba(112, 174, 249, 0.08);
 }
 
 /* ==========================================================================
@@ -135,7 +135,7 @@ body.tabs-wrap .top-chrome {
     font-size: 0;
     padding: 8px 8px 0;
     padding-top: calc(env(safe-area-inset-top, 0px) + 8px);
-    background: linear-gradient(180deg, #0a1210 0%, #060e0a 100%);
+    background: linear-gradient(180deg, #0f1214 0%, #0f1214 100%);
     box-shadow: inset 0 -1px 0 var(--border);
     /* The cap. Rows past the second are clipped, not scrolled — the ≡ pill is
        floated onto row 1 below, and it lists every tab including the clipped

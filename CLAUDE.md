@@ -1,4 +1,4 @@
-# Claude Assist
+# Drift Assist
 
 > **This repo is PUBLIC on GitHub.** Stage your work and ask before committing — commits
 > here are visible to anyone and use the configured Git author. Never `git push`. Never mention Claude,
@@ -91,18 +91,31 @@ Use focused module invocations while iterating, then run the discover command be
 
 ## Design Constraints
 
-Dark terminal aesthetic. Mobile-first with touch-friendly buttons.
+Drift Studio family: flat charcoal surfaces, hairline borders, compact 6–8px radii, the coral
+Live threads mark and the lowercase `driftassist.dev` lockup. Terminal-first and mobile-first
+with touch-friendly buttons. Tokens live in `css/base.css`; the names are historical, the values
+are the Studio set (source: the accepted `mock-assist-brand/NOTES.md`).
 
 | Token | Value | Usage |
 |-------|-------|-------|
-| `--bg` | `#080c10` | Background |
-| `--green` | `#00ff41` | Terminal text |
-| `--cyan` | `#00d4ff` | UI accents |
-| `--amber` | `#ff9500` | Interactive elements |
-| `--red` | `#ff0040` | Destructive actions |
-| `--purple` | `#bf5af2` | Secondary accent |
+| `--bg` | `#0e1113` | App background |
+| `--bg-bar` / `--bg-raised` / `--bg-selected` | `#0f1214` / `#111518` / `#151b21` | Top bar, raised controls, selected rows and the active tab |
+| `--bg-term` | `#090c0e` | Inset terminal |
+| `--line` / `--border` | `#1c2126` / `#242b32` | Region and control borders |
+| `--coral` | `#eb4328` | Brand. Only the mark, the active-session rule, and the primary Send/Continue action |
+| `--green` | `#83d7a2` | Live, running, success |
+| `--cyan` | `#70aef9` | Codex/tool paths, info accents |
+| `--amber` | `#e1b56a` | Caution, shells, Auto-Yes |
+| `--red` | `#f25767` | Destructive actions (kept distinct from coral) |
+| `--purple` | `#b69cf2` | Secondary accent |
+| `--text-strong` / `--text` / `--text-dim` / `--text-muted` | `#e7e9ea` / `#c8cfd4` / `#8d959b` / `#5f686e` | Text ramp |
 
-Font stack: JetBrains Mono, Fira Code, SF Mono (monospace).
+The neon grid, text glows and green chrome hairline are gone; keep new glow for live state
+(running dots, the health dot) rather than decoration. ANSI colours
+from programs in the pane are rendered by `js/terminal.js` and are not themed.
+
+Font stack: JetBrains Mono, Fira Code, SF Mono (monospace) for the terminal, controls and the
+lockup; `--sans` (Helvetica/system) for prose on the sign-in card and modal titles.
 
 ## Configuration
 
