@@ -505,6 +505,12 @@ function _initTabDesktopDrag() {
     container.addEventListener('dragstart', function(e) {
         const tab = e.target.closest('.session-tab');
         if (!tab) return;
+        // On an overflowing strip a quick press-and-move is a drag-scroll, as a
+        // swipe is on the phone; only a press held still first reorders.
+        if (_stripDrag && Date.now() - _stripDrag.at < _DESKTOP_REORDER_HOLD_MS) {
+            e.preventDefault();
+            return;
+        }
         _dndSession = _sessionOf(tab.dataset.target);
         tab.classList.add('dnd-source');
         e.dataTransfer.effectAllowed = 'move';
@@ -564,7 +570,7 @@ let _reorderCleanup = null;  // function to tear down listeners + visuals
 // True while a tab drag or reorder placement is in progress — the 5s poll
 // checks this and skips its tab-strip rebuild (app.js _applySessionsData).
 function _tabsInteractionActive() {
-    return !!(_dragTab || _reorderModeTab || _dndSession);
+    return !!(_dragTab || _reorderModeTab || _dndSession || (_stripDrag && _stripDrag.moved));
 }
 
 function _enterReorderMode(tab) {
@@ -852,6 +858,11 @@ function _applyStaleGroup() {
         setTimeout(() => pill.classList.remove('flash'), 260);
     }
     _lastStaleCount = staleTabs.length;
+
+    // Tucking changes the strip's width, and a tab selected from the sheet
+    // only becomes visible here, once it is un-tucked.
+    _revealActiveTab(false);
+    _syncTabScrollButtons();
 }
 
 // One row of the tab pull-out. `isTucked` means the tab is hidden from the
@@ -900,6 +911,7 @@ function _buildTabRow(tab, isTucked) {
 // Hook into tab rendering — called after each poll updates tabs
 function _postTabRender() {
     _applyPinMarkers();
+    _syncTabScrollButtons();
     // The wrapping rail's height depends on how many rows the tabs need, so
     // the offset the left drawer and the notification stack sit at has to be
     // re-taken whenever the strip is rebuilt. One offsetHeight read per poll;
@@ -924,6 +936,137 @@ function _postTabRender() {
             _reorderCleanup = null;
         }
     }
+}
+
+// --- Desktop strip scrolling: wheel, drag-to-scroll, arrow buttons ---
+// A phone scrolls the strip by swiping it. A mouse had no way to: the
+// scrollbar is hidden and a vertical wheel does nothing to a horizontal
+// scroller, so a session past the right edge was reachable only through the
+// pull-out sheet. Touch input is left entirely to the handlers above.
+
+const _DESKTOP_REORDER_HOLD_MS = 300;  // press held this still before a drag reorders
+const _STRIP_DRAG_SLOP_PX = 5;
+const _finePointer = window.matchMedia('(hover: hover) and (pointer: fine)');
+
+let _stripDrag = null;       // {id, x, left, at, moved} while a mouse press is on the strip
+let _revealedTarget = null;  // the active tab last scrolled into view
+let _scrollSyncQueued = false;
+
+function _stripScrolls(container) {
+    return !document.body.classList.contains('tabs-wrap') &&
+        container.scrollWidth - container.clientWidth > 1;
+}
+
+// The arrows float over the rail rather than taking flex space, so showing one
+// cannot change the strip's width and flip the overflow that decided to show it.
+function _syncTabScrollButtons() {
+    const container = document.getElementById('session-tabs');
+    const leftBtn = document.getElementById('tabs-scroll-left');
+    const rightBtn = document.getElementById('tabs-scroll-right');
+    if (!container || !leftBtn || !rightBtn) return;
+    const on = _finePointer.matches && _stripScrolls(container);
+    const max = container.scrollWidth - container.clientWidth;
+    leftBtn.hidden = !(on && container.scrollLeft > 1);
+    rightBtn.hidden = !(on && container.scrollLeft < max - 1);
+    if (!on) return;
+    const pill = container.querySelector('.stale-pill-wrap');
+    const rail = container.parentElement;
+    leftBtn.style.left = container.offsetLeft + 'px';
+    rightBtn.style.right = (rail.clientWidth - container.offsetLeft - container.clientWidth +
+        (pill ? pill.offsetWidth : 0)) + 'px';
+}
+
+function _queueTabScrollSync() {
+    if (_scrollSyncQueued) return;
+    _scrollSyncQueued = true;
+    requestAnimationFrame(() => { _scrollSyncQueued = false; _syncTabScrollButtons(); });
+}
+
+function scrollTabStrip(dir) {
+    const container = document.getElementById('session-tabs');
+    if (!container) return;
+    container.scrollBy({left: dir * Math.max(120, container.clientWidth * 0.7), behavior: 'smooth'});
+}
+
+// Scroll the active tab clear of the arrows and the sticky pill. Once per
+// target unless forced, so a poll re-marking the same tab never drags the strip
+// back while someone is scrolling it to look at others.
+function _revealActiveTab(force) {
+    const container = document.getElementById('session-tabs');
+    if (!container || !_stripScrolls(container)) return;
+    const tab = container.querySelector('.session-tab.active');
+    if (!tab || !tab.offsetWidth) return;  // tucked; _applyStaleGroup retries
+    if (!force && tab.dataset.target === _revealedTarget) return;
+    _revealedTarget = tab.dataset.target;
+    const pill = container.querySelector('.stale-pill-wrap');
+    const arrow = _finePointer.matches ? 32 : 0;
+    const box = container.getBoundingClientRect();
+    const t = tab.getBoundingClientRect();
+    const minX = box.left + arrow;
+    const maxX = box.right - (pill ? pill.offsetWidth : 0) - arrow;
+    let delta = 0;
+    if (t.left < minX || t.width > maxX - minX) delta = t.left - minX;
+    else if (t.right > maxX) delta = t.right - maxX;
+    if (delta) container.scrollBy({left: delta, behavior: 'smooth'});
+}
+
+function _endStripDrag() {
+    const container = document.getElementById('session-tabs');
+    const drag = _stripDrag;
+    _stripDrag = null;
+    if (!drag || !drag.moved) return;
+    if (container) container.classList.remove('drag-scrolling');
+    // A drag that ends over a tab must not also select it.
+    const swallow = e => { e.stopPropagation(); e.preventDefault(); };
+    document.addEventListener('click', swallow, {capture: true, once: true});
+    setTimeout(() => document.removeEventListener('click', swallow, {capture: true}), 0);
+}
+
+function _initTabStripScroll() {
+    const container = document.getElementById('session-tabs');
+    if (!container) return;
+
+    // Vertical wheel over the strip scrolls it sideways. A horizontal trackpad
+    // swipe already scrolls it natively, so only the vertical axis is mapped.
+    container.addEventListener('wheel', function(e) {
+        if (e.ctrlKey || !_stripScrolls(container)) return;
+        if (Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return;
+        const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? container.clientWidth : 1;
+        const max = container.scrollWidth - container.clientWidth;
+        const next = Math.max(0, Math.min(max, container.scrollLeft + e.deltaY * unit));
+        if (next === container.scrollLeft) return;
+        e.preventDefault();
+        container.scrollLeft = next;
+    }, {passive: false});
+
+    container.addEventListener('pointerdown', function(e) {
+        if (e.pointerType !== 'mouse' || e.button !== 0) return;
+        if (_reorderModeTab || !_stripScrolls(container)) return;
+        if (e.target.closest('.stale-pill-wrap, .reorder-banner, .reorder-drop-zone')) return;
+        _stripDrag = {id: e.pointerId, x: e.clientX, left: container.scrollLeft,
+                      at: Date.now(), moved: false};
+    });
+
+    document.addEventListener('pointermove', function(e) {
+        if (!_stripDrag || e.pointerId !== _stripDrag.id) return;
+        if (!(e.buttons & 1)) { _endStripDrag(); return; }
+        const dx = e.clientX - _stripDrag.x;
+        if (!_stripDrag.moved) {
+            if (Math.abs(dx) < _STRIP_DRAG_SLOP_PX) return;
+            // Held long enough that the browser began a reorder drag instead.
+            if (_dndSession) { _stripDrag = null; return; }
+            _stripDrag.moved = true;
+            container.classList.add('drag-scrolling');
+        }
+        container.scrollLeft = _stripDrag.left - dx;
+    });
+    document.addEventListener('pointerup', _endStripDrag);
+    // Also fires when the browser hands the press to an HTML5 reorder drag.
+    document.addEventListener('pointercancel', _endStripDrag);
+
+    container.addEventListener('scroll', _queueTabScrollSync, {passive: true});
+    window.addEventListener('resize', _queueTabScrollSync);
+    if (_finePointer.addEventListener) _finePointer.addEventListener('change', _queueTabScrollSync);
 }
 
 // --- One-time migration off localStorage ---
@@ -970,4 +1113,5 @@ function _migrateLegacyTabState() {
 _initTabLongPress();
 _initTabDragReorder();
 _initTabDesktopDrag();
+_initTabStripScroll();
 _migrateLegacyTabState();

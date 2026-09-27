@@ -101,6 +101,56 @@
     mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
 }
 .session-tabs::-webkit-scrollbar { display: none; }
+
+/* Desktop scroll arrows (js/tabs.js _syncTabScrollButtons). Absolutely placed
+   over the rail, above the strip, so appearing never resizes the strip; JS
+   sets the horizontal offsets so they sit inside it and clear of the pill.
+   bottom: 1px leaves the rail's hairline showing under them. */
+.tabs-scroll-btn {
+    position: absolute;
+    top: 0;
+    bottom: 1px;
+    z-index: 3;
+    width: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 0 0;
+    border: 0;
+    background: linear-gradient(to right, var(--bg-bar) 60%, transparent);
+    color: var(--text-dim);
+    cursor: pointer;
+}
+.tabs-scroll-right { background: linear-gradient(to left, var(--bg-bar) 60%, transparent); }
+.tabs-scroll-btn[hidden] { display: none; }
+.tabs-scroll-btn svg {
+    box-sizing: border-box;
+    width: 22px;
+    height: 22px;
+    padding: 3px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-raised);
+    transition: color 0.15s, border-color 0.15s;
+}
+.tabs-scroll-btn:hover { color: var(--text-strong); }
+.tabs-scroll-btn:hover svg { border-color: var(--text-muted); }
+.tabs-scroll-btn:focus { outline: none; }
+.tabs-scroll-btn:focus-visible svg { border-color: var(--cyan); color: var(--text-strong); }
+body.tabs-wrap .tabs-scroll-btn { display: none; }
+
+/* Mouse and trackpad only; touch keeps the swipe and the snap exactly as they
+   were. Snap is off here because it pulls every wheel step and every drag frame
+   back to a tab edge. */
+@media (hover: hover) and (pointer: fine) {
+    .session-tabs { scroll-snap-type: none; }
+    .session-tabs.drag-scrolling { cursor: grabbing; user-select: none; }
+    .session-tabs.drag-scrolling .session-tab { cursor: grabbing; }
+    .session-tabs.drag-scrolling .session-tab:active { transform: none; }
+}
+@media not all and (hover: hover) and (pointer: fine) {
+    .tabs-scroll-btn { display: none; }
+}
 .session-tab {
     position: relative;
     box-sizing: border-box;

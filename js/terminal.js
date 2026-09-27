@@ -576,6 +576,9 @@ function markActiveTab(target) {
         const tab = document.querySelector(`.session-tab[data-target="${CSS.escape(target)}"]`);
         if (tab) tab.classList.remove('has-prompt');
     }
+    // Every path that changes the active pane lands here, the poll's rebuild
+    // included; unforced, it scrolls only when the target actually changed.
+    if (typeof _revealActiveTab === 'function') _revealActiveTab(false);
 }
 
 let _tabSwitchScrollLock = false;  // briefly suppress scroll-freeze after tab switch
@@ -647,9 +650,8 @@ function selectTab(target, auto) {
     // size they were launched/last fit at, so switching between devices never tugs a
     // shared tmux session. Fit deliberately via the tab's "Fit to screen" menu item
     // or the Fit button.
-    // Scroll the active tab into view
-    const activeTab = document.querySelector('.session-tab.active');
-    if (activeTab) activeTab.scrollIntoView({behavior: 'smooth', inline: 'nearest', block: 'nearest'});
+    // Scroll the active tab into view, clear of the pill and the desktop arrows.
+    if (typeof _revealActiveTab === 'function') _revealActiveTab(true);
 
     // Show/hide command output overlay for this session
     onTabSwitchCommands(target.split(':')[0]);
