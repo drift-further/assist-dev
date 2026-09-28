@@ -30,6 +30,8 @@ from shared.tmux import (
     tmux_send_text,
     tmux_target_exists,
 )
+from routes.autoyes import rename_autoyes_session
+from routes.commands import rename_command_pane
 
 terminal_bp = Blueprint("terminal_bp", __name__)
 KILL_AUDIT_FILE = state.DATA_DIR / "kill-audit.log"
@@ -621,6 +623,27 @@ def terminal_clear():
     return jsonify({"ok": True, "target": target})
 
 
+def on_session_renamed(old, new):
+    """Carry everything keyed by a session's name across a rename.
+
+    Server-side, so every connected device sees the fix-up, not just the one
+    that issued the rename. Covers the active target, pin/order/snooze, composer
+    drafts, the saved-command split, and Auto-Yes (runtime maps and persisted
+    project settings). Auto-Yes was the one left behind: an opted-out session
+    renamed under the all-sessions switch was auto-answered again. A rename done
+    in a shell (`prefix $`) does not pass through here.
+    """
+    if not old or not new or old == new:
+        return
+    if state.tmux_target and state.tmux_target.startswith(f"{old}:"):
+        state.tmux_target = new + state.tmux_target[len(old) :]
+    tab_state.rename_session(old, new)
+    drafts.rename_session(old, new)
+    rename_command_pane(old, new)
+    state.rename_project_settings(old, new)
+    rename_autoyes_session(old, new)
+
+
 @terminal_bp.route("/terminal/rename", methods=["POST"])
 def terminal_rename():
     """Rename a tmux session."""
@@ -646,16 +669,7 @@ def terminal_rename():
             500,
         )
 
-    # Update active target if it pointed to the old session
-    if state.tmux_target and state.tmux_target.startswith(f"{old_name}:"):
-        suffix = state.tmux_target[len(old_name) :]
-        state.tmux_target = new_name + suffix
-
-    # Carry pin/order/snooze and any composer drafts across the rename.
-    # Server-side, so every connected device sees the fix-up, not just the one
-    # that issued the rename.
-    tab_state.rename_session(old_name, new_name)
-    drafts.rename_session(old_name, new_name)
+    on_session_renamed(old_name, new_name)
 
     return jsonify(
         {"ok": True, "old": old_name, "new": new_name, "target": state.tmux_target}
