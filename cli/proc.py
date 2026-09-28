@@ -1,6 +1,7 @@
 """Process-oriented commands for the Drift Assist CLI."""
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -8,6 +9,7 @@ from pathlib import Path
 
 from cli import http
 from cli.config import Config
+from shared.execution_park import FEATURES_PARKED
 
 
 GREEN = "\033[32m"
@@ -36,16 +38,47 @@ def _control(resolved: Config, verb: str, arguments: list[str] | None = None, en
     return completed.returncode
 
 
+def _service_or_control(resolved: Config, verb: str) -> int:
+    """Go through the installed service unit when there is one for this checkout.
+
+    A manual assist-ctl start beside a running unit would fight it for the port.
+    """
+    from cli import service
+
+    if service.installed_for(resolved.home):
+        return service.control(verb)
+    return _control(resolved, verb)
+
+
+def _print_reach(resolved: Config) -> None:
+    from cli.pair import phone_url
+
+    print(f"  On this host: http://localhost:{resolved.port}/")
+    url = phone_url(resolved.port)
+    if url:
+        print(f"  Phone:        {url}  (sign it in with: assist pair)")
+    else:
+        print("  Phone:        run `assist expose`, then `assist pair`")
+
+
 def start(resolved: Config) -> int:
-    return _control(resolved, "start")
+    code = _service_or_control(resolved, "start")
+    if code == 0:
+        _print_reach(resolved)
+    return code
 
 
 def stop(resolved: Config) -> int:
+    return _service_or_control(resolved, "stop")
+
+
+def stop_manual(resolved: Config) -> int:
+    """Stop a server started with assist-ctl, bypassing any service unit."""
     return _control(resolved, "stop")
 
 
 def restart(resolved: Config) -> int:
-    return _control(resolved, "restart")
+    return _service_or_control(resolved, "restart")
 
 
 def activate_park(resolved: Config, invoked_home: Path, resume: bool = False) -> int:
@@ -96,7 +129,7 @@ def activate_park(resolved: Config, invoked_home: Path, resume: bool = False) ->
 
 
 def status(resolved: Config) -> int:
-    return _control(resolved, "status")
+    return _service_or_control(resolved, "status")
 
 
 def logs(resolved: Config, lines: str = "100", follow: bool = False) -> int:
@@ -137,6 +170,18 @@ def config(resolved: Config) -> int:
     return 0
 
 
+def _tmux_version() -> tuple[int, int] | None:
+    """(major, minor) from `tmux -V` ("tmux 3.7c", "tmux next-3.4"), or None."""
+    try:
+        output = subprocess.run(
+            ["tmux", "-V"], capture_output=True, text=True, timeout=5
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = re.search(r"(\d+)\.(\d+)", output)
+    return (int(match[1]), int(match[2])) if match else None
+
+
 def _check_command(name: str, command: str, required: bool = False) -> bool:
     path = shutil.which(command)
     if path:
@@ -155,11 +200,19 @@ def doctor(resolved: Config) -> int:
     print("Environment:")
     ok_all = _check_command("python3", "python3", required=True) and ok_all
     ok_all = _check_command("tmux", "tmux", required=True) and ok_all
+    tmux_version = _tmux_version()
+    if tmux_version is not None and tmux_version < (3, 2):
+        print(
+            f"  {MARK_FAIL} tmux {tmux_version[0]}.{tmux_version[1]} is too old "
+            "(3.2+ required: the control client needs `-f no-output`)"
+        )
+        ok_all = False
     _check_command("xclip", "xclip")
     _check_command("xdotool", "xdotool")
-    _check_command("docker", "docker")
+    if not FEATURES_PARKED:
+        _check_command("docker", "docker")
     _check_command("curl", "curl")
-    _check_command("nginx", "nginx")
+    _check_command("nginx", "nginx (only for the proxy setup)")
 
     npx = shutil.which("npx")
     claude = shutil.which("claude")
@@ -173,7 +226,7 @@ def doctor(resolved: Config) -> int:
             "(neither found — Claude Code launch will fail)"
         )
 
-    docker = shutil.which("docker")
+    docker = None if FEATURES_PARKED else shutil.which("docker")
     if docker:
         try:
             docker_result = subprocess.run(
@@ -217,6 +270,18 @@ def doctor(resolved: Config) -> int:
         print(f"  {MARK_WARN} not running on :{resolved.port}")
     else:
         print(f"  {MARK_OK} responding on :{resolved.port}")
+    from cli import service
+    from cli.pair import phone_url
+
+    if service.installed_for(resolved.home):
+        print(f"  {MARK_OK} service unit installed ({service.unit_path()})")
+    else:
+        print(f"  {MARK_WARN} no service unit (optional: assist service install)")
+    url = phone_url(resolved.port)
+    if url:
+        print(f"  {MARK_OK} phone URL: {url}")
+    else:
+        print(f"  {MARK_WARN} loopback only — reach it from a phone with: assist expose")
 
     print()
     if ok_all:
