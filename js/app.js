@@ -91,9 +91,15 @@ async function consolidatedPoll() {
     // Taken before the request: a list the server built before a pane this
     // browser just created existed must not move us off it (js/target-hold.js).
     const requestedAt = Date.now();
+    const req = pollBegin();
     try {
-        const resp = await fetch('/poll', {signal: AbortSignal.timeout(8000)});
+        const url = req.since ? '/poll?since=' + encodeURIComponent(req.since) : '/poll';
+        const resp = await fetch(url, {signal: AbortSignal.timeout(8000)});
         const data = await resp.json();
+        // Overlapping polls (js/poll-sync.js): an older response is dropped,
+        // and tails the server left out are filled from the ones held here.
+        if (!pollAccept(req.seq)) return;
+        if (data.scan) pollMergeScan(data.gen, data.scan);
 
         // Health
         dot.className = 'status-dot ' + (data.status === 'ok' ? 'ok' : 'err');
@@ -520,7 +526,7 @@ function _applyScanData(scanPanes) {
         }
 
         const raw = detectSmartActions(
-            stripAnsi(pane.tail),
+            detectionTail(pane.tail),
             pane.target,
             pane.agent_kind
         );
@@ -608,14 +614,26 @@ requestNotifPermission();
 // A setTimeout loop (not setInterval) so connection.poll_interval_ms is
 // re-read on every tick — the async settings fetch hasn't resolved yet
 // when this first runs.
+//
+// A hidden page skips its polls, unless it is how system notifications for
+// prompts reach a background desktop tab (sendPromptNotification). It polls
+// once the moment it is shown again.
+function _pollWhileHidden() {
+    return _notifPermission === 'granted';
+}
+
 function _schedulePoll() {
     const interval = SETTINGS?.connection?.poll_interval_ms || 5000;
     setTimeout(async () => {
-        await consolidatedPoll();
+        if (!document.hidden || _pollWhileHidden()) await consolidatedPoll();
         _schedulePoll();
     }, interval);
 }
 _schedulePoll();
+
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) consolidatedPoll();
+});
 
 // Restore tmux target from localStorage
 try {

@@ -8,6 +8,7 @@ import shared.state as state
 from shared.security import origin_allowed
 from shared.tmux import (
     capture_pane,
+    capture_pane_if_changed,
     set_ws_send_timeout,
 )
 
@@ -19,6 +20,14 @@ _sock = None  # Set by register_streaming()
 # Default scrollback lines for a stream when the client doesn't specify.
 # Used both before the first message arrives and as the parse fallback.
 _DEFAULT_LINES = 2000
+
+# A pane whose change marker (activity, history size, cursor, size) has not
+# moved is not re-captured, except once per this many seconds, which catches a
+# redraw that moves none of them. See shared/tmux.py:capture_reusable.
+STREAM_FORCED_REFRESH_SEC = 2.0
+# A busy pane's marker moves every second, which alone would re-capture it on
+# every 0.1 s tick. Within a second whose marker has not moved, wait this long.
+STREAM_MIN_RECAPTURE_SEC = 0.3
 
 def _tui_flag(msg):
     """Normalize a subscribe message's per-pane TUI override.
@@ -160,6 +169,9 @@ def register_streaming(sock_instance):
 def _terminal_streamer():
     """Background thread: polls tmux, pushes changes to WebSocket clients."""
     _empty_count = 0
+    # cache_key -> the last capture's (marker, captured_at), for skipping a
+    # capture of a pane that has not changed since.
+    last_capture = {}
     try:
         while True:
             try:
@@ -204,14 +216,21 @@ def _terminal_streamer():
                     targets[key].append(client)
 
                 for (target, lines, tui), group in targets.items():
+                    cache_key = f"{target}:{lines}:{tui}"
                     try:
-                        content, info = capture_pane(target, lines, tui=tui)
+                        content, info, prev = capture_pane_if_changed(
+                            target, lines, tui=tui,
+                            prev=last_capture.get(cache_key),
+                            max_age=STREAM_FORCED_REFRESH_SEC,
+                            min_interval=STREAM_MIN_RECAPTURE_SEC,
+                        )
                     except Exception:
                         continue
+                    if prev:
+                        last_capture[cache_key] = prev
                     if content is None:
                         continue
 
-                    cache_key = f"{target}:{lines}:{tui}"
                     with state.ws_lock:
                         prev_content = state.ws_last_content.get(cache_key)
 
@@ -260,6 +279,8 @@ def _terminal_streamer():
                     stale = [k for k in state.ws_last_content if k not in active_keys]
                     for k in stale:
                         del state.ws_last_content[k]
+                for k in [k for k in last_capture if k not in active_keys]:
+                    del last_capture[k]
 
             except Exception:
                 time.sleep(0.5)

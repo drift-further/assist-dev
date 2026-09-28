@@ -110,6 +110,12 @@ def create_app():
         response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
         return response
 
+    from shared.utils import gzip_json_response
+
+    @app.after_request
+    def _gzip_json(response):
+        return gzip_json_response(response, request.headers.get("Accept-Encoding", ""))
+
     # Register blueprints
     from routes.static import static_bp
     from routes.access import access_bp

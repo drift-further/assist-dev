@@ -280,6 +280,21 @@ def _get_process_snapshot(force=False):
         return snapshot
 
 
+def child_pids(pid):
+    """Direct children of `pid` from the shared /proc snapshot.
+
+    None where there is no /proc to read (macOS), so the caller can fall back
+    to asking pgrep. One snapshot walk serves every pane; a `pgrep -P` per
+    shell pane scanned the whole process table each time.
+    """
+    if _IS_MAC or not os.path.isdir("/proc"):
+        return None
+    try:
+        return list(_get_process_snapshot()["children"].get(int(pid), ()))
+    except (OSError, ValueError):
+        return None
+
+
 def _snapshot_process_info(snapshot, pid):
     cached = snapshot["process_info"].get(pid)
     if cached is not None:

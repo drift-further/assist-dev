@@ -296,7 +296,7 @@ function connectSplitWs(session) {
                 container.scrollTop = container.scrollHeight;
                 // Detect smart actions on split pane content
                 const detected = detectSmartActions(
-                    stripAnsi(state.lastContent),
+                    detectionTail(state.lastContent),
                     state.target,
                     state.agentKind
                 );

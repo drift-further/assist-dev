@@ -10,7 +10,7 @@ function startPolling() {
         captureTerminal();
         // Only start HTTP polling timer if WS fails to connect within 2s
         setTimeout(function() {
-            if (!_termWsConnected && _termOpen && _termTarget && !_termPollTimer) {
+            if (!_termWsConnected && _termOpen && _termTarget && !_termPollTimer && !document.hidden) {
                 _termPollTimer = setInterval(captureTerminal, SETTINGS ? SETTINGS.connection.http_fallback_poll_ms : 3000);
                 updateConnIndicator();
             }
