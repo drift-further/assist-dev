@@ -341,3 +341,32 @@
     cursor: pointer; transition: all 0.2s; flex-shrink: 0; -webkit-tap-highlight-color: transparent;
 }
 .clear-btn:active { color: var(--red); border-color: var(--red); background: rgba(242, 87, 103, 0.1); }
+
+/* "Any key" composer (js/keycombo.js). It takes the drawer over rather than
+   adding rows to it, so End and Access stay where Question 1846 put them. */
+.drawer-header-actions { display: flex; align-items: center; gap: 6px; }
+.combo-toggle {
+    min-height: 44px; padding: 0 12px;
+    border: 1px solid var(--border); border-radius: 6px; background: transparent;
+    color: var(--text-dim); font-family: var(--font); font-size: 10px; font-weight: 600;
+    letter-spacing: 1px; text-transform: uppercase; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.combo-toggle[aria-pressed="true"] { color: var(--text-strong); background: var(--bg-selected); border-color: #3a4650; }
+.combo-panel { display: none; }
+.drawer-left.combo-mode { max-height: 85vh; }
+.drawer-left.combo-mode > :not(.drawer-header):not(.combo-panel) { display: none; }
+.drawer-left.combo-mode .combo-panel { display: block; }
+.combo-panel .hk-btn { min-height: 44px; }
+.combo-panel .hk-btn .hk-label { font-size: 11px; }
+.combo-mods { grid-template-columns: repeat(3, 1fr); }
+.combo-mod[aria-pressed="true"] { color: var(--amber); border-color: var(--amber); background: rgba(225, 181, 106, 0.15); }
+.combo-char {
+    display: block; width: 100%; min-height: 44px; box-sizing: border-box; padding: 0 10px;
+    background: var(--bg-term); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text-strong); font-family: var(--font); font-size: 16px;  /* 16px: no iOS focus zoom */
+}
+.combo-char:focus { outline: none; border-color: #3a4650; }
+.combo-char::placeholder { color: var(--text-muted); font-size: 11px; }
+.combo-status { min-height: 14px; padding: 4px 0 2px; font-size: 10px; color: var(--text-dim); }
+.combo-status.armed { color: var(--amber); }
