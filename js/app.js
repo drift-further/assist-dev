@@ -150,6 +150,7 @@ async function consolidatedPoll() {
 
         // The server's detection depth, before the scan is detected against it
         if (Number.isInteger(data.detection_depth)) _detectionDepth = data.detection_depth;
+        if (Number.isInteger(data.detection_window)) _detectionWindow = data.detection_window;
 
         // Scan — prompt detection + activity on background tabs
         _applyScanData(data.scan || []);

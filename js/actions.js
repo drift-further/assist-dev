@@ -375,6 +375,13 @@ const _OPT_LOOKBACK = 60;
 // Every detection window in this file derives from it, as its server mirror does.
 let _detectionDepth = (typeof SETTINGS !== 'undefined' && SETTINGS && SETTINGS.autoyes
     && SETTINGS.autoyes.detection_depth) || 8;
+// The input window both detectors read: the option lookback above a footer plus
+// the depth*4 rows a footer may sit above the bottom. Same formula as
+// routes/autoyes.py:detection_window_lines; /poll ships the server's value.
+function _detectionWindowFor(depth) {
+    return Math.max(depth * 4, _OPT_LOOKBACK) + depth * 4 + 1;
+}
+let _detectionWindow = _detectionWindowFor(_detectionDepth);
 const _OPT_RE = /^\s*(?:[^\d\s]\s*)?(\d+)[\.\)]\s+\S/;
 const _OPT_TEXT_RE = /^\s*(?:[^\d\s]\s*)?(\d+)[\.\)]\s+(.+)/;
 const _OPT_SEP_RE = /^[\s]*─{10,}/;
@@ -753,8 +760,9 @@ function detectSmartActions(content, target, agentKind) {
     // Reset dismiss if content changed
     if (st.dismissedContent && content !== st.dismissedContent) st.dismissedContent = null;
 
+    // Callers pass detectionTail() output; the slice only restates the window.
     const lines = content.split('\n');
-    const tail = lines.slice(-60).join('\n');
+    const tail = lines.slice(-_detectionWindow).join('\n');
 
     for (const pattern of SMART_PATTERNS) {
         if (pattern.agents && !pattern.agents.includes(agentKind)) continue;

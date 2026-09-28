@@ -128,19 +128,96 @@ CORPUS = [
      _dialog(_RULE, "  1. Yes", "  2. No", "Enter to select · Esc to cancel",
              *[f"  todo {i}" for i in range(40 - len(_STATUS))]),
      {8: None, 12: "numbered-yes"}),
+    # Judge #6: a long wrapped option 2 and a task panel below the footer. The
+    # server saw option 1 in its -60 capture plus the screen; the browser, cut to
+    # 60 rows, did not, so Auto-Yes answered what the action bar did not offer.
+    ("wrapped option 2 over a task panel", "claude",
+     "\n".join([_RULE, "  1. Yes", "  2. Yes, and don't ask again for commands like `deploy",
+                 *[f"     --flag-{i:02d} /srv/common/path/{i:02d}" for i in range(30)],
+                 "  3. No", "Enter to select · Esc to cancel",
+                 *[f"  ☐ task {i}" for i in range(30)]]),
+     "numbered-yes"),
 ]
 
 DEPTHS = (8, 12)
+# Settings allows 2..30. The generated boundary fixtures run across all of it.
+RANGE_DEPTHS = (2, 8, 15, 16, 30)
+
+_FOOTER = "Enter to select · Esc to cancel"
+
+
+def _boundary_corpus(depth):
+    """Fixtures on the edges of the window, for one depth.
+
+    The window is the option lookback above the footer plus the rows the footer
+    may sit above the bottom (depth*4). Each fixture fills it exactly, or misses
+    by one row, so an input window cut any shorter or any longer shows up.
+    """
+    below = [f"  ☐ task {i}" for i in range(depth * 4)]
+    wrap = lambda n: [f"     --flag-{i:03d} /srv/common/{i:03d}" for i in range(n)]
+    lookback = max(depth * 4, 60)
+    return [
+        # No rule (codex style): option 1 exactly 60 rows above the footer.
+        (f"d{depth} unanchored, option 1 at the lookback edge", "claude",
+         "\n".join(["  1. Yes", "  2. Yes, and don't ask again for `deploy", *wrap(57),
+                    "  3. No", _FOOTER, *below]), "numbered-yes"),
+        (f"d{depth} unanchored, option 1 one row past it", "claude",
+         "\n".join(["  1. Yes", "  2. Yes, and don't ask again for `deploy", *wrap(58),
+                    "  3. No", _FOOTER, *below]), None),
+        # A top rule at the anchor search floor, max(depth*4, 60) above the footer.
+        (f"d{depth} anchored at the search floor", "claude",
+         "\n".join([_RULE, "  1. Yes", "  2. Yes, and don't ask again for `deploy",
+                    *wrap(lookback - 4), "  3. No", _FOOTER, *below]),
+         "numbered-yes"),
+        (f"d{depth} footer one row past its bound", "claude",
+         "\n".join([_RULE, "  1. Yes", "  2. No", _FOOTER, *below, "  ☐ one more"]), None),
+    ]
 
 
 def _expected(expected, depth):
     return expected.get(depth) if isinstance(expected, dict) else expected
 
 
+def _cases():
+    """(depth, name, kind, tail, want) over the static and generated corpora."""
+    for depth in DEPTHS:
+        for name, kind, tail, expected in CORPUS:
+            yield depth, name, kind, tail, _expected(expected, depth)
+    for depth in RANGE_DEPTHS:
+        for name, kind, tail, want in _boundary_corpus(depth):
+            yield depth, name, kind, tail, want
+
+
+# What a pane capture looks like around a fixture: scrollback the window must
+# drop, colour escapes, and blank rows under the last line of output.
+_SCROLLBACK = [f"  earlier output {i}" for i in range(300)]
+
+
+def _capture(tail, ansi):
+    lines = tail.split("\n")
+    if ansi:
+        lines = [f"\x1b[38;5;{i % 200}m{ln}\x1b[0m" if ln else ln for i, ln in enumerate(lines)]
+    return "\n".join([*_SCROLLBACK, *lines, "", "", "\x1b[0m" if ansi else "", ""])
+
+
+def _depth_patch(depth):
+    return patch("shared.state.get_setting", side_effect=lambda *keys: depth)
+
+
 def _server(tail, agent_kind, depth):
-    with patch("shared.state.get_setting", side_effect=lambda *keys: depth):
+    with _depth_patch(depth):
         got = _detect_autoyes_prompt(tail, agent_kind)
     return got[0] if got else None
+
+
+def _wire_tail(raw, depth):
+    """The tail /poll serializes for this capture (routes/poll.py)."""
+    from routes import poll
+    target = "parity-wire:0.0"
+    with _depth_patch(depth):
+        poll._store_scan_capture(target, raw, (None, 0.0))
+    with poll._SCAN_LOCK:
+        return poll._SCAN_CACHE.pop(target)["tail"]
 
 
 _HARNESS = r"""
@@ -150,23 +227,34 @@ const depth = Number(process.argv[1]);
 globalThis.SETTINGS = {autoyes: {default_delay: 5, detection_depth: depth}};
 globalThis.CLAUDE_CMD = 'claude';
 globalThis._getSmartState = () => ({});
+const term = fs.readFileSync('js/terminal.js', 'utf8');
+vm.runInThisContext(term.slice(term.indexOf('function _stripOsc'), term.indexOf('// Match http(s)')));
 vm.runInThisContext(fs.readFileSync('js/actions.js', 'utf8'), {filename: 'js/actions.js'});
-const corpus = JSON.parse(fs.readFileSync(0, 'utf8'));
-const out = corpus.map(([tail, kind]) => {
+vm.runInThisContext(fs.readFileSync('js/poll-sync.js', 'utf8'), {filename: 'js/poll-sync.js'});
+const answers = tail => {
     const r = detectSmartActions(tail, 'parity:0.0', kind);
     // What Auto-Yes would answer from the browser's point of view: a detection
     // that offers the Auto-Yes toggle and is not a notify-only question.
     return r && !r.notifyOnly && _isAutoYesCandidate(r) ? r.id : null;
-});
-console.log(JSON.stringify(out));
+};
+let kind;
+const corpus = JSON.parse(fs.readFileSync(0, 'utf8'));
+console.log(JSON.stringify({
+    window: vm.runInThisContext('_detectionWindow'),
+    out: corpus.map(([k, wire, stream]) => {
+        kind = k;
+        // Both ways a tail reaches detectSmartActions: a /poll scan entry and
+        // a WebSocket frame, each through detectionTail (js/app.js, terminal.js).
+        return [answers(detectionTail(wire)), answers(detectionTail(stream))];
+    }),
+}));
 """
 
 
-def _client(depth):
-    payload = json.dumps([[tail, kind] for _name, kind, tail, _exp in CORPUS])
+def _client(depth, entries):
     result = subprocess.run(
         ["node", "-e", _HARNESS, str(depth)],
-        cwd=ROOT, input=payload, text=True, capture_output=True, check=False,
+        cwd=ROOT, input=json.dumps(entries), text=True, capture_output=True, check=False,
     )
     if result.returncode:
         raise AssertionError(result.stdout + result.stderr)
@@ -174,23 +262,60 @@ def _client(depth):
 
 
 class DetectorParityTests(unittest.TestCase):
+    """Every fixture, as the scanner, the /poll wire and the stream each see it."""
+
     def test_server_decides_every_fixture_as_labelled(self):
-        for depth in DEPTHS:
-            for name, kind, tail, expected in CORPUS:
-                with self.subTest(depth=depth, fixture=name):
-                    self.assertEqual(_server(tail, kind, depth), _expected(expected, depth))
+        for depth, name, kind, tail, want in _cases():
+            with self.subTest(depth=depth, fixture=name):
+                # The scanner's capture: scrollback above, blank rows below.
+                self.assertEqual(_server(_capture(tail, ansi=False), kind, depth), want)
 
     def test_browser_decides_every_fixture_as_labelled(self):
-        for depth in DEPTHS:
-            got = _client(depth)
-            for (name, _kind, _tail, expected), client in zip(CORPUS, got):
-                want = _expected(expected, depth)
+        by_depth = {}
+        for depth, name, kind, tail, want in _cases():
+            raw = _capture(tail, ansi=True)
+            by_depth.setdefault(depth, []).append((name, want, [kind, _wire_tail(raw, depth), raw]))
+        for depth, rows in by_depth.items():
+            got = _client(depth, [entry for _n, _w, entry in rows])["out"]
+            for (name, want, _entry), (wire, stream) in zip(rows, got):
                 with self.subTest(depth=depth, fixture=name):
-                    self.assertEqual(client, _CLIENT_TYPE.get(want, want))
+                    self.assertEqual(wire, _CLIENT_TYPE.get(want, want), "via /poll")
+                    self.assertEqual(stream, _CLIENT_TYPE.get(want, want), "via the stream")
 
     def test_the_corpus_covers_both_directions(self):
-        outcomes = {_expected(exp, depth) is None for depth in DEPTHS for *_x, exp in CORPUS}
-        self.assertEqual(outcomes, {True, False})
+        self.assertEqual({want is None for *_x, want in _cases()}, {True, False})
+
+
+class InputWindowContractTests(unittest.TestCase):
+    """One window: the rows both detectors read, and the rows every capture and
+    the /poll wire carry. Judge #6."""
+
+    def test_the_window_holds_the_lookback_and_the_rows_below_the_footer(self):
+        from routes import autoyes
+        for depth in range(2, 31):
+            with self.subTest(depth=depth):
+                self.assertEqual(
+                    autoyes.detection_window_lines(depth),
+                    max(depth * 4, autoyes._OPTION_REGION_LOOKBACK) + depth * 4 + 1,
+                )
+
+    def test_the_browser_computes_the_same_window_before_its_first_poll(self):
+        from routes import autoyes
+        for depth in (2, 8, 16, 30):
+            with self.subTest(depth=depth):
+                self.assertEqual(_client(depth, [])["window"], autoyes.detection_window_lines(depth))
+
+    def test_poll_ships_the_window_and_the_browser_adopts_it(self):
+        self.assertIn('result["detection_window"] = detection_window_lines()',
+                      (ROOT / "routes/poll.py").read_text())
+        self.assertIn("_detectionWindow = data.detection_window", (ROOT / "js/app.js").read_text())
+
+    def test_every_capture_reaches_back_the_whole_window(self):
+        for path in ("routes/autoyes.py", "routes/poll.py"):
+            with self.subTest(path=path):
+                source = (ROOT / path).read_text()
+                self.assertNotIn('"-S", "-60"', source)
+                self.assertIn('f"-{detection_window_lines()}"', source)
 
 
 class DepthIsOneNumberTests(unittest.TestCase):

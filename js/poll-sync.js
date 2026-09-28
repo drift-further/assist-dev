@@ -12,9 +12,8 @@
 // server's rev, and a lower rev never replaces a higher one, so a slow
 // response cannot put an old tail back.
 
-// Lines of a capture the smart-action detector reads (js/actions.js keeps
-// `lines.slice(-60)`); routes/poll.py:SCAN_TAIL_LINES trims to the same number.
-const DETECTION_TAIL_LINES = 60;
+// How many rows detection reads is _detectionWindow (js/actions.js), the
+// server's routes/autoyes.py:detection_window_lines shipped in every /poll.
 
 let _pollSeqIssued = 0;
 let _pollSeqApplied = 0;
@@ -63,15 +62,18 @@ function pollMergeScan(gen, scan) {
     else if (rev > _pollRev) _pollRev = rev;
 }
 
-// The last DETECTION_TAIL_LINES lines of a capture, ANSI-stripped: all
-// detectSmartActions reads. Cutting before stripping keeps a 2,000-line
-// capture from being stripped and split in full on every frame.
+// A capture as detection reads it, the same rows as the server's
+// routes/autoyes.py:detection_window: blank rows under the last output dropped
+// (escape-only ones too), then the last _detectionWindow rows, ANSI-stripped.
+// Used for /poll tails and stream frames alike. Cutting before stripping keeps
+// a 2,000-line capture from being stripped and split in full on every frame.
 function detectionTail(content) {
     if (!content) return '';
+    content = content.replace(/(?:\n|\x1b\[[0-9;]*[A-Za-z])+$/, '');
     let i = content.length;
-    for (let k = 0; k < DETECTION_TAIL_LINES; k++) {
+    for (let k = 0; k < _detectionWindow; k++) {
         i = content.lastIndexOf('\n', i - 1);
-        if (i <= 0) return stripAnsi(content);
+        if (i <= 0) return stripAnsi(content).replace(/\n+$/, '');
     }
-    return stripAnsi(content.slice(i + 1));
+    return stripAnsi(content.slice(i + 1)).replace(/\n+$/, '');
 }
