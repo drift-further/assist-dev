@@ -2,6 +2,7 @@
 
 import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,10 @@ CONFIG_DIR_NAME = "drift-assist"
 # before the rename keeps working until install.sh is re-run.
 LEGACY_CONFIG_DIR_NAME = "claude-assist"
 _legacy_notice_shown = False
+# Pre-XDG defaults, read only to find a server started before the move.
+# ASSIST_LEGACY_PID_FILE exists for tests; nothing else should set it.
+LEGACY_PID_FILE = Path(os.environ.get("ASSIST_LEGACY_PID_FILE", "/tmp/assist-server.pid"))
+LEGACY_LOG_FILE = Path("/tmp/assist-server.log")
 
 
 class ConfigError(Exception):
@@ -199,6 +204,29 @@ def user_config_file(xdg_config_home: Path) -> Path:
     return legacy
 
 
+def state_dir_for(user_home: str) -> Path:
+    """Per-user runtime state: PID file and log. assist-ctl uses the same path."""
+    xdg_state_home = os.environ.get("XDG_STATE_HOME") or str(
+        Path(user_home) / ".local" / "state"
+    )
+    return Path(xdg_state_home) / CONFIG_DIR_NAME
+
+
+def _legacy_server_pid(home: Path) -> int | None:
+    """PID in the pre-XDG /tmp PID file, only if it runs THIS checkout's serve.py."""
+    try:
+        pid = int(LEGACY_PID_FILE.read_text(encoding="utf-8").strip())
+        command = subprocess.run(
+            ["ps", "-o", "command=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    return pid if str(home / "serve.py") in command else None
+
+
 def resolve(
     script_path: Path | None = None,
     activation_expected_home: Path | None = None,
@@ -257,8 +285,18 @@ def resolve(
     venv_python = home / ".venv" / "bin" / "python"
     python = str(venv_python) if os.access(venv_python, os.X_OK) else "python3"
 
-    pid_file = Path(os.environ.get("ASSIST_PID_FILE", "/tmp/assist-server.pid"))
-    log_file = Path(os.environ.get("ASSIST_LOG_FILE", "/tmp/assist-server.log"))
+    state_dir = state_dir_for(user_home)
+    pid_file = Path(os.environ.get("ASSIST_PID_FILE") or state_dir / "assist.pid")
+    log_file = Path(os.environ.get("ASSIST_LOG_FILE") or state_dir / "assist.log")
+    if "ASSIST_PID_FILE" not in os.environ and not pid_file.exists():
+        legacy_pid = _legacy_server_pid(home)
+        if legacy_pid is not None:
+            # A server started before the XDG move is still running from this
+            # checkout: report on it where it actually is. assist-ctl migrates
+            # the PID file on its next start/stop/status.
+            pid_file = LEGACY_PID_FILE
+            if "ASSIST_LOG_FILE" not in os.environ:
+                log_file = LEGACY_LOG_FILE
     control_dir = Path(os.environ.get("ASSIST_CONTROL_DIR", "/tmp/assist-park-v16"))
     auth_token_path = Path(
         os.environ.get("ASSIST_AUTH_TOKEN_PATH", str(home / "auth_token"))

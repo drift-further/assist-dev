@@ -6,9 +6,6 @@ set -euo pipefail
 umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PORT="${ASSIST_PORT:-8089}"
-PID_FILE="${ASSIST_PID_FILE:-/tmp/assist-server.pid}"
-LOG_FILE="${ASSIST_LOG_FILE:-/tmp/assist-server.log}"
 SERVE_SCRIPT="$SCRIPT_DIR/serve.py"
 
 # Use project-local venv if it exists, otherwise system python3
@@ -31,15 +28,69 @@ if [[ "${1:-}" == "activate-park-v16" ]]; then
     exec "$PYTHON" -m shared.park_activation controller
 fi
 
-# Load .env if present
+# Load .env if present -- BEFORE any path or port is computed, so a port or
+# log path set only in .env is honoured when this script is run directly.
 if [[ -f "$SCRIPT_DIR/.env" ]]; then
     set -a
     source "$SCRIPT_DIR/.env"
     set +a
 fi
 
+# Per-user state, not a shared /tmp name: a second checkout, or a second user,
+# must not read or kill this server through the same PID file. cli/config.py
+# computes the same defaults; tests/test_install_paths.py keeps them in step.
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/drift-assist"
+PORT="${ASSIST_PORT:-8089}"
+PID_FILE="${ASSIST_PID_FILE:-$STATE_DIR/assist.pid}"
+LOG_FILE="${ASSIST_LOG_FILE:-$STATE_DIR/assist.log}"
+LOG_MAX_BYTES="${ASSIST_LOG_MAX_BYTES:-10485760}"
+# The pre-XDG default. A server started before the move is adopted only when
+# its command line runs THIS checkout's serve.py, so another checkout's server
+# is never stopped from here.
+LEGACY_PID_FILE="${ASSIST_LEGACY_PID_FILE:-/tmp/assist-server.pid}"
+
+ensure_state_dirs() {
+    mkdir -p "$(dirname "$PID_FILE")" "$(dirname "$LOG_FILE")"
+    if [[ "$PID_FILE" == "$STATE_DIR/"* || "$LOG_FILE" == "$STATE_DIR/"* ]]; then
+        chmod 700 "$STATE_DIR"
+    fi
+}
+
+# Size rotation at start: one previous generation kept as <log>.1.
+rotate_log() {
+    local size
+    [[ -f "$LOG_FILE" ]] || return 0
+    size="$(wc -c < "$LOG_FILE" 2>/dev/null || echo 0)"
+    if [[ "${size// /}" -gt "$LOG_MAX_BYTES" ]]; then
+        mv -f "$LOG_FILE" "$LOG_FILE.1"
+    fi
+}
+
+runs_this_checkout() {
+    local cmd
+    cmd="$(ps -o command= -p "$1" 2>/dev/null || true)"
+    [[ "$cmd" == *"$SERVE_SCRIPT"* ]]
+}
+
 read_pid() {
-    [[ -f "$PID_FILE" ]] && cat "$PID_FILE" 2>/dev/null || echo ""
+    if [[ -f "$PID_FILE" ]]; then
+        cat "$PID_FILE" 2>/dev/null || echo ""
+        return
+    fi
+    if [[ -z "${ASSIST_PID_FILE:-}" && -f "$LEGACY_PID_FILE" ]]; then
+        local legacy
+        legacy="$(cat "$LEGACY_PID_FILE" 2>/dev/null || true)"
+        if [[ -n "$legacy" ]] && kill -0 "$legacy" 2>/dev/null \
+                && runs_this_checkout "$legacy"; then
+            # Migrate: from here on the per-user path is the only record.
+            ensure_state_dirs
+            echo "$legacy" > "$PID_FILE"
+            rm -f "$LEGACY_PID_FILE"
+            echo "$legacy"
+            return
+        fi
+    fi
+    echo ""
 }
 
 is_alive() {
@@ -59,6 +110,8 @@ do_start() {
         return 0
     fi
 
+    ensure_state_dirs
+    rotate_log
     echo "Starting Assist server..."
     nohup "$PYTHON" "$SERVE_SCRIPT" --port "$PORT" >> "$LOG_FILE" 2>&1 &
     local new_pid=$!
@@ -131,16 +184,31 @@ do_status() {
     fi
 }
 
+# Foreground run for a service manager (systemd --user, launchd): the manager
+# owns the process, so no PID file; output still goes to the rotated log that
+# `assist logs` reads.
+do_run() {
+    ensure_state_dirs
+    rotate_log
+    exec >> "$LOG_FILE" 2>&1
+    exec "$PYTHON" "$SERVE_SCRIPT" --port "$PORT"
+}
+
 case "${1:-help}" in
     start)   do_start ;;
+    run)     do_run ;;
+    paths)   printf 'port=%s\npid_file=%s\nlog_file=%s\n' "$PORT" "$PID_FILE" "$LOG_FILE" ;;
     stop)    do_stop ;;
     restart) do_restart ;;
     status)  do_status ;;
     *)
-        echo "Usage: assist-ctl {start|stop|restart|status|activate-park-v16}"
+        echo "Usage: assist-ctl {start|stop|restart|status|run|paths}"
         echo ""
         echo "Environment variables (or set in .env):"
         echo "  ASSIST_PORT           Port (default: 8089)"
+        echo "  ASSIST_BIND           Extra LAN address to listen on (see: assist expose)"
+        echo "  ASSIST_PID_FILE       PID file (default: \$XDG_STATE_HOME/drift-assist/assist.pid)"
+        echo "  ASSIST_LOG_FILE       Log file (default: \$XDG_STATE_HOME/drift-assist/assist.log)"
         echo "  ASSIST_PROJECTS_DIR   Projects root directory"
         echo "  ASSIST_CLI_BIN        Path to CLI binary for proxy"
         echo "  ASSIST_CLI_DIR        CLI working directory"
