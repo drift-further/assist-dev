@@ -30,7 +30,8 @@ ROOT = Path(__file__).resolve().parent.parent
 class _IsolatedState(unittest.TestCase):
     def setUp(self):
         maps = ("autoyes_sessions", "autoyes_delays", "autoyes_countdowns",
-                "autoyes_answered", "autoyes_effective", "autoyes_sources")
+                "autoyes_answered", "autoyes_cancelled", "autoyes_effective",
+                "autoyes_sources")
         for name in maps:
             patcher = patch.object(state, name, {})
             patcher.start()
@@ -88,6 +89,8 @@ class RenameHookTests(_IsolatedState):
         state.autoyes_sources.update({"work": "explicit", "work2": "explicit"})
         state.autoyes_countdowns.update({"work:1.1": cancelled, "work2:1.1": sibling})
         state.autoyes_answered.update({"work:1.2": ("h", 5), "work2:1.1": ("s", 5)})
+        state.autoyes_cancelled.update(
+            {"work:1.1": {("h", "yes_no")}, "work2:1.1": {("s", "yes_no")}})
         state.patch_project_settings("work2", {"autoyes": {"enabled_default": True}})
 
         terminal.on_session_renamed("work", "work-api")
@@ -101,6 +104,11 @@ class RenameHookTests(_IsolatedState):
                          {"work-api:1.1": cancelled, "work2:1.1": sibling})
         self.assertEqual(state.autoyes_answered,
                          {"work-api:1.2": ("h", 5), "work2:1.1": ("s", 5)})
+        # The cancel record moves too, or the scanner prunes it as a dead
+        # target and the renamed pane's prompt counts down again.
+        self.assertEqual(state.autoyes_cancelled,
+                         {"work-api:1.1": {("h", "yes_no")},
+                          "work2:1.1": {("s", "yes_no")}})
         self.assertTrue(state.get_project_settings("work2")["autoyes"]["enabled_default"])
         self.assertNotIn("work-api", state._project_settings)
 

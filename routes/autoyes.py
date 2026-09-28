@@ -1077,8 +1077,9 @@ def autoyes_status():
 def rename_autoyes_session(old, new):
     """Re-key the runtime Auto-Yes maps after a session rename.
 
-    Per-session maps move by name; countdowns and answered prompts move by
-    target prefix, so a cancelled countdown stays cancelled under the new name.
+    Per-session maps move by name; countdowns, answered prompts and cancelled
+    prompts move by target prefix, so a cancelled countdown stays cancelled
+    under the new name.
     The persisted side is state.rename_project_settings. Both are called from
     routes/terminal.py:on_session_renamed.
     """
@@ -1093,7 +1094,11 @@ def rename_autoyes_session(old, new):
         ):
             if old in by_session:
                 by_session[new] = by_session.pop(old)
-        for by_target in (state.autoyes_countdowns, state.autoyes_answered):
+        for by_target in (
+            state.autoyes_countdowns,
+            state.autoyes_answered,
+            state.autoyes_cancelled,
+        ):
             for target in [t for t in by_target if t.startswith(old_prefix)]:
                 by_target[new_prefix + target[len(old_prefix):]] = by_target.pop(target)
 
