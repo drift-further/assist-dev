@@ -421,7 +421,7 @@ class AutoYesCountdownIdentityTests(unittest.TestCase):
 
     def setUp(self):
         for name in ("autoyes_sessions", "autoyes_countdowns", "autoyes_answered", "autoyes_delays",
-                     "autoyes_cancelled"):
+                     "autoyes_cancelled", "autoyes_cancel_quiet"):
             p = patch.dict(getattr(state, name), clear=True)
             p.start()
             self.addCleanup(p.stop)

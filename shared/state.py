@@ -743,9 +743,11 @@ autoyes_countdowns = (
 )  # target -> { "prompt_hash", "deadline", "delay", "prompt_type", ... }
 # target -> {(prompt identity, prompt_type), ...}: a pane whose countdown the
 # human cancelled. Any entry holds the WHOLE pane unanswered. Kept
-# apart from the countdown, which a tick can drop, and cleared only when the
-# scanner sees no prompt on that pane.
+# apart from the countdown, which a tick can drop, and released only after
+# two consecutive scans see no prompt on that pane (vetoes ignored).
 autoyes_cancelled = {}
+# target -> consecutive scans with no prompt since a cancel; two release it.
+autoyes_cancel_quiet = {}
 autoyes_answered = {}  # target -> (prompt_hash, answered_at_timestamp)
 autoyes_delays = {}  # session_name -> seconds (per-session override)
 AUTOYES_DELAY = DEFAULT_SETTINGS["autoyes"]["default_delay"]

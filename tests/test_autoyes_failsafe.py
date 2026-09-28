@@ -87,6 +87,16 @@ def _long_codex(env):
     ])
 
 
+# Judge3's real isolated-tmux captures (tests/fixtures/autoyes): the ordinary
+# codex approval under 200 rows of history, before, during and after a resize
+# that brings a history row mentioning luna into the capture; and the same
+# approval reflowed into a 40-column pane, header wrapped mid-word.
+_FIXTURES = ROOT / "tests/fixtures/autoyes"
+VETO_BEFORE, VETO_DURING, VETO_AFTER, NARROW = (
+    (_FIXTURES / f"judge3-{name}.txt").read_text()
+    for name in ("veto-before", "veto-during", "veto-after", "narrow")
+)
+
 LONG_STAGING = _long_codex("staging")
 LONG_PRODUCTION = _long_codex("production")
 
@@ -111,7 +121,7 @@ class _ScannerCase(unittest.TestCase):
             "autoyes_countdowns",
             "autoyes_answered",
             "autoyes_delays",
-            "autoyes_cancelled",
+            "autoyes_cancelled", "autoyes_cancel_quiet",
         ):
             p = patch.dict(getattr(state, name), clear=True)
             p.start()
@@ -184,8 +194,11 @@ class CancelStaysCancelledTests(_ScannerCase):
         self.assertIsNone(self.countdown())
 
     def test_the_cancel_ends_when_the_prompt_goes_away(self):
+        # Two consecutive scans with no prompt at all release it (judge3 #1).
         self.tick(CLAUDE_YNA, now=100.0)
         autoyes.cancel_countdown(self.TARGET)
+        self.tick(IDLE, now=100.5)
+        self.assertIn(self.TARGET, state.autoyes_cancelled)
         self.tick(IDLE, now=101.0)
         self.assertNotIn(self.TARGET, state.autoyes_cancelled)
         # The same text again, after the pane moved on, is a new prompt.
@@ -202,10 +215,47 @@ class CancelStaysCancelledTests(_ScannerCase):
         self.assertIsNone(self.countdown())
         self.tick(OTHER_YNA, now=200.0).assert_not_called()
         # Once the pane has shown no prompt, the next one is armed as usual.
+        self.tick(IDLE, now=200.5)
         self.tick(IDLE, now=201.0)
         self.tick(OTHER_YNA, now=202.0)
         self.assertEqual(self.countdown()["deadline"], 207.0)
         self.tick(OTHER_YNA, now=207.0).assert_called_once()
+
+    def test_a_single_quiet_scan_does_not_release_it(self):
+        self.tick(CLAUDE_YNA, now=100.0)
+        autoyes.cancel_countdown(self.TARGET)
+        for now, tail in ((101.0, IDLE), (102.0, CLAUDE_YNA), (103.0, IDLE), (104.0, CLAUDE_YNA)):
+            self.tick(tail, now=now)
+        self.assertIn(self.TARGET, state.autoyes_cancelled)
+        self.assertIsNone(self.countdown())
+        self.tick(CLAUDE_YNA, now=200.0).assert_not_called()
+
+    def test_a_veto_does_not_release_a_cancel(self):
+        """Judge3 #1, the reviewer's real captures: a resize brings an old
+        history row mentioning luna into view, which vetoes the approval but
+        leaves it on screen. That used to read as "prompt gone"."""
+        for tail in (VETO_BEFORE, VETO_DURING, VETO_AFTER):
+            self.assertEqual(autoyes._detect_autoyes_prompt(tail, "codex")[0], "numbered-yes")
+        self.assertIsNone(autoyes.detect_answerable_prompt(VETO_DURING, "codex"))
+        self.tick(VETO_BEFORE, now=100.0, kind="codex")
+        self.assertTrue(autoyes.cancel_countdown(self.TARGET))
+        self.tick(VETO_DURING, now=101.0, kind="codex")
+        self.tick(VETO_DURING, now=101.5, kind="codex")
+        self.assertIn(self.TARGET, state.autoyes_cancelled)
+        self.tick(VETO_AFTER, now=102.0, kind="codex")
+        self.assertIsNone(self.countdown())
+        self.tick(VETO_AFTER, now=107.0, kind="codex").assert_not_called()
+        self.tick(VETO_AFTER, now=200.0, kind="codex").assert_not_called()
+
+    def test_a_veto_only_clears_the_pending_countdown(self):
+        self.tick(VETO_BEFORE, now=100.0, kind="codex")
+        self.assertEqual(self.countdown()["deadline"], 105.0)
+        self.tick(VETO_DURING, now=101.0, kind="codex").assert_not_called()
+        self.assertIsNone(self.countdown())
+        self.tick(VETO_AFTER, now=102.0, kind="codex")
+        self.assertEqual(self.countdown()["deadline"], 107.0)
+        self.tick(VETO_AFTER, now=105.0, kind="codex").assert_not_called()
+        self.tick(VETO_AFTER, now=107.0, kind="codex").assert_called_once()
 
     def test_a_failed_probe_skips_the_tick_and_keeps_the_countdown(self):
         self.tick(CLAUDE_YNA, now=100.0)
@@ -247,7 +297,7 @@ class RealCaptureIdentityTests(unittest.TestCase):
 
     def setUp(self):
         for name in ("autoyes_sessions", "autoyes_countdowns", "autoyes_answered",
-                     "autoyes_delays", "autoyes_cancelled", "autoyes_effective"):
+                     "autoyes_delays", "autoyes_cancelled", "autoyes_cancel_quiet", "autoyes_effective"):
             p = patch.dict(getattr(state, name), clear=True)
             p.start()
             self.addCleanup(p.stop)
@@ -368,7 +418,7 @@ class RealCaptureIdentityTests(unittest.TestCase):
         """A fresh pane and fresh Auto-Yes state for the next subtest."""
         subprocess.run(["tmux", "-S", self.socket, "kill-session", "-t", self.SESSION],
                        capture_output=True, timeout=5)
-        for name in ("autoyes_countdowns", "autoyes_answered", "autoyes_cancelled"):
+        for name in ("autoyes_countdowns", "autoyes_answered", "autoyes_cancelled", "autoyes_cancel_quiet"):
             getattr(state, name).clear()
 
     def test_an_unchanged_approval_fires_on_its_original_deadline(self):
@@ -464,6 +514,39 @@ class RecheckBeforeSendTests(_ScannerCase):
                                      + "\n  Working (9s)\n  Working (10s)", "numbered-yes", "codex"),
         )
 
+    def test_a_wrapped_codex_header_still_places_the_request(self):
+        """Judge3 #2: the fixture reflowed into 40 columns splits the header
+        mid-word ("…comm" / "and?"). The request is all there."""
+        self.assertEqual(autoyes._detect_autoyes_prompt(NARROW, "codex")[0], "numbered-yes")
+        self.assertIsNotNone(autoyes._prompt_identity(NARROW, "numbered-yes", "codex"))
+        self.tick(NARROW, now=100.0, kind="codex")
+        self.assertEqual(self.countdown()["deadline"], 105.0)
+        self.tick(NARROW, now=105.0, kind="codex").assert_called_once()
+
+    def test_a_different_wrapped_request_gets_a_fresh_countdown(self):
+        other = NARROW.replace("$ git status", "$ git push --force")
+        self.assertNotEqual(other, NARROW)
+        self.tick(NARROW, now=100.0, kind="codex")
+        self.tick(other, now=102.0, kind="codex").assert_not_called()
+        self.assertEqual(self.countdown()["deadline"], 107.0)
+        self.tick(other, now=105.0, kind="codex").assert_not_called()
+        self.tick(other, now=107.0, kind="codex").assert_called_once()
+
+    def test_a_word_wrapped_header_is_placed_too(self):
+        word_wrapped = CODEX.replace("run the following command?", "run the following\n  command?")
+        self.assertIsNotNone(autoyes._prompt_identity(word_wrapped, "numbered-yes", "codex"))
+        self.assertNotEqual(
+            autoyes._prompt_identity(word_wrapped, "numbered-yes", "codex"),
+            autoyes._prompt_identity(word_wrapped.replace("git status", "git push"), "numbered-yes", "codex"),
+        )
+
+    def test_a_wrapped_header_whose_top_row_scrolled_away_is_withheld(self):
+        headless = NARROW.split("\n", 1)[1]
+        self.assertTrue(headless.startswith("and?"))
+        self.assertIsNone(autoyes._prompt_identity(headless, "numbered-yes", "codex"))
+        self.tick(headless, now=100.0, kind="codex")
+        self.tick(headless, now=200.0, kind="codex").assert_not_called()
+
     def test_a_request_whose_top_is_out_of_view_is_withheld(self):
         # The header scrolled out of the window: the command cannot be read.
         headless = LONG_STAGING.split("\n", 1)[1]
@@ -541,7 +624,7 @@ class AbsoluteSetTests(unittest.TestCase):
 
     def setUp(self):
         for name in ("autoyes_sessions", "autoyes_effective", "autoyes_countdowns",
-                     "autoyes_answered", "autoyes_delays", "autoyes_cancelled"):
+                     "autoyes_answered", "autoyes_delays", "autoyes_cancelled", "autoyes_cancel_quiet"):
             p = patch.dict(getattr(state, name), clear=True)
             p.start()
             self.addCleanup(p.stop)
