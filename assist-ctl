@@ -102,29 +102,36 @@ owner_from_argv() {
     fi
 }
 
-# The same rule over `ps` text: "<interpreter> <script>[ <args>]", where either
-# path may contain spaces. Every space is a candidate boundary.
+# Without /proc (macOS), `ps` flattens argv into one space-joined string, so
+# nothing is inferred from it. The EXPECTED invocations are built from known
+# paths instead -- this checkout's interpreter (the venv python, its resolved
+# path, or the python3 fallback this script uses without a venv) followed by
+# exactly this checkout's serve.py (as given or physical) -- and the text must
+# EQUAL one of them or continue with a known server flag. Anything else that
+# runs some serve.py with --port is another checkout's; the rest is stale.
+real_path() {
+    realpath "$1" 2>/dev/null || readlink -f "$1" 2>/dev/null || echo "$1"
+}
+
 owner_from_command() {
-    local cmd="$1" i interp tail script
-    for (( i = 1; i < ${#cmd}; i++ )); do
-        [[ "${cmd:i:1}" == " " ]] || continue
-        interp="${cmd:0:i}"
-        is_python "$interp" || continue
-        tail="${cmd:i+1}"
+    local cmd="$1" interp script expected
+    local venv_python="$SCRIPT_DIR/.venv/bin/python"
+    for interp in "$venv_python" "$(real_path "$venv_python")" \
+            "$(cd -P "$SCRIPT_DIR" && pwd)/.venv/bin/python" "python3"; do
         for script in "$SERVE_SCRIPT" "$SERVE_SCRIPT_REAL"; do
-            if [[ "$tail" == "$script" || "$tail" == "$script "* ]]; then
+            expected="$interp $script"
+            if [[ "$cmd" == "$expected" || "$cmd" == "$expected --port "* \
+                    || "$cmd" == "$expected --park-handoff-fd "* ]]; then
                 echo "ours"
                 return
             fi
         done
-        # The script position holds an absolute path (assist-ctl always passes
-        # one); `python -c ... /x/serve.py` carries the path as data instead.
-        if [[ "$tail" =~ ^(/.*/serve\.py)( |$) ]]; then
-            echo "foreign"
-            return
-        fi
     done
-    echo "stale"
+    if [[ "$cmd" == *"/serve.py --port "* ]]; then
+        echo "foreign"
+    else
+        echo "stale"
+    fi
 }
 
 # Who a recorded PID belongs to, checked on EVERY read and again just before a
