@@ -164,5 +164,51 @@ class ExposeCommandTests(unittest.TestCase):
             self.assertIn("ASSIST_BIND=192.168.1.50", (resolved.home / ".env").read_text())
 
 
+
+class ExposedOriginPassesTheRequestFences(unittest.TestCase):
+    """What `assist expose` writes must satisfy the Host and Origin fences.
+
+    With ASSIST_BIND set the phone reaches Flask directly, so its Host header
+    is `<lan-ip>:<port>` and its Origin is the one expose added. The Host
+    fence (shared/security.py) derives its allowlist from
+    ASSIST_ALLOWED_ORIGINS; if the two stopped agreeing, every page from the
+    phone would be a 421 right after a successful expose.
+    """
+
+    def _configure_from(self, env_file):
+        from shared import security
+
+        values = dict(
+            line.split("=", 1) for line in env_file.read_text().splitlines() if "=" in line
+        )
+        with mock.patch.dict(os.environ, values):
+            security.configure(8120)
+        self.addCleanup(security.configure)
+        return security
+
+    def test_the_exposed_address_is_let_in_and_a_rebound_name_is_not(self):
+        for address, host in (("10.0.0.101", "10.0.0.101:8120"),
+                              ("fd00::1", "[fd00::1]:8120")):
+            with self.subTest(address=address), tempfile.TemporaryDirectory() as raw:
+                env_file = Path(raw) / ".env"
+                env_file.write_text("ASSIST_ALLOWED_ORIGINS=http://assist.lan\n")
+                origin = expose.write_exposure(env_file, address, 8120)
+                security = self._configure_from(env_file)
+                self.assertTrue(security.host_allowed(host))
+                self.assertTrue(security.origin_allowed(origin))
+                # What was there before survives, and nothing else gets in.
+                self.assertTrue(security.host_allowed("assist.lan"))
+                self.assertFalse(security.host_allowed("rebound.evil:8120"))
+                self.assertFalse(security.origin_allowed("http://10.0.0.102:8120"))
+
+    def test_off_keeps_the_origin_so_a_proxy_in_front_still_works(self):
+        with tempfile.TemporaryDirectory() as raw:
+            env_file = Path(raw) / ".env"
+            expose.write_exposure(env_file, "10.0.0.101", 8120)
+            expose.remove_exposure(env_file)
+            security = self._configure_from(env_file)
+            self.assertTrue(security.host_allowed("10.0.0.101"))
+
+
 if __name__ == "__main__":
     unittest.main()

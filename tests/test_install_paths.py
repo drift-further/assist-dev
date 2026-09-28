@@ -73,6 +73,8 @@ class _Checkout:
         }
 
     def ctl(self, *args, timeout=30):
+        if args and args[0] in {"start", "stop", "restart", "run"}:
+            self._refuse_unless_contained()
         return subprocess.run(
             [str(self.home / "assist-ctl"), *args],
             env=self.env,
@@ -80,6 +82,21 @@ class _Checkout:
             text=True,
             timeout=timeout,
         )
+
+    def _refuse_unless_contained(self):
+        # A verb that can kill or start a server runs only when every file it
+        # reads or writes is inside this throwaway root and the port is not
+        # the live one. Checked through the script's own `paths` verb, which
+        # starts and stops nothing.
+        root = self.home.parent.resolve()
+        paths = self.paths()
+        for key in ("pid_file", "log_file"):
+            if not Path(paths[key]).resolve().is_relative_to(root):
+                raise RuntimeError(f"refusing assist-ctl: {key} {paths[key]} is outside {root}")
+        if not Path(self.env["ASSIST_LEGACY_PID_FILE"]).resolve().is_relative_to(root):
+            raise RuntimeError("refusing assist-ctl: the legacy PID file is outside the scratch root")
+        if paths["port"] == "8089":
+            raise RuntimeError("refusing assist-ctl: port 8089 is the live server's")
 
     def paths(self):
         out = self.ctl("paths")
@@ -168,6 +185,26 @@ class ControlScriptPathTests(unittest.TestCase):
                 checkout.ctl("stop")
             self.assertFalse((state_dir / "assist.log.1").exists())
             self.assertTrue((state_dir / "assist.log").read_text().startswith("kept\n"))
+
+
+class HarnessContainmentTests(unittest.TestCase):
+    """The helper itself refuses to start or stop anything it cannot contain."""
+
+    def test_the_live_port_is_refused_before_the_script_runs(self):
+        with tempfile.TemporaryDirectory() as raw:
+            checkout = _Checkout(Path(raw), ["ASSIST_PORT=8089"])
+            with mock.patch.object(subprocess, "run", wraps=subprocess.run) as run:
+                with self.assertRaisesRegex(RuntimeError, "8089"):
+                    checkout.ctl("stop")
+            self.assertEqual([c.args[0][-1] for c in run.call_args_list], ["paths"])
+
+    def test_a_pid_file_outside_the_scratch_root_is_refused(self):
+        with tempfile.TemporaryDirectory() as raw, tempfile.TemporaryDirectory() as elsewhere:
+            checkout = _Checkout(
+                Path(raw), [f"ASSIST_PORT={_free_port()}", f"ASSIST_PID_FILE={elsewhere}/a.pid"]
+            )
+            with self.assertRaisesRegex(RuntimeError, "pid_file"):
+                checkout.ctl("start")
 
 
 class LegacyPidAdoptionTests(unittest.TestCase):

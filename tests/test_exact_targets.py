@@ -69,8 +69,10 @@ class ExactFormTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 _SCANNED = ["serve.py", "routes", "shared", "cli"]
-# `-t` means something else to these programs (docker tag, ps terminal).
-_NOT_TMUX = {"docker", "ps"}
+# `-t` means something else to these programs (docker tag, ps terminal,
+# qrencode output type). cli/pair.py holds qrencode's resolved path in a
+# variable named after it, so a bare name matches as well as a literal.
+_NOT_TMUX = {"docker", "ps", "qrencode"}
 _ID_SUFFIXES = ("pane_id", "session_id", "window_id")
 
 
@@ -106,8 +108,8 @@ def _raw_t_arguments():
                     continue
                 elts = node.elts
                 first = elts[0] if elts else None
-                if (isinstance(first, ast.Constant)
-                        and first.value in _NOT_TMUX):
+                if ((isinstance(first, ast.Constant) and first.value in _NOT_TMUX)
+                        or (isinstance(first, ast.Name) and first.id in _NOT_TMUX)):
                     continue
                 for index, elt in enumerate(elts[:-1]):
                     if isinstance(elt, ast.Constant) and elt.value == "-t":
