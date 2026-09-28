@@ -108,6 +108,7 @@ def git_preview():
             "remote": remote,
             "remote_url": remote_url,
             "changed": changed,
+            "dir": project_dir,
         }
     )
 
@@ -178,6 +179,23 @@ def _git_run_effect():
         project_dir = proc.stdout.strip()
     except Exception as e:
         return jsonify({"ok": False, "error": f"tmux error: {e}"}), 500
+
+    # A confirmed Commit & push names the directory its preview described. If
+    # the pane has moved since (cd, or a different pane now holds the id),
+    # what was confirmed is not what would be committed and pushed.
+    expect_dir = data.get("expect_dir")
+    if isinstance(expect_dir, str) and expect_dir and expect_dir != project_dir:
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": "target_changed",
+                    "reason": "The pane's directory changed after the preview; "
+                    "nothing was run. Tap Commit & push again.",
+                }
+            ),
+            409,
+        )
 
     session_id = f"_git_{uuid.uuid4().hex[:8]}"
 
