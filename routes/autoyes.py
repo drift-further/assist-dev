@@ -16,7 +16,11 @@ from shared.agent_identity import (
     refine_with_content,
     resolve_process,
 )
-from shared.tmux import expected_target_identity, generation_bound_delivery
+from shared.tmux import (
+    expected_target_identity,
+    generation_bound_delivery,
+    tmux_exact_target,
+)
 from routes.streaming import broadcast_autoyes_event
 
 log = logging.getLogger(__name__)
@@ -772,7 +776,7 @@ def _autoyes_scan_tick():
             continue
 
         cap = subprocess.run(
-            ["tmux", "capture-pane", "-p", "-t", target, "-S", "-60"],
+            ["tmux", "capture-pane", "-p", "-t", tmux_exact_target(target), "-S", "-60"],
             capture_output=True,
             text=True,
             timeout=5,

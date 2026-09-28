@@ -23,7 +23,7 @@ from shared.agent_identity import (
     resolve_process,
 )
 from shared.agent_model import observe as observe_model
-from shared.tmux import prettify_command, sudo_prompt_waiting
+from shared.tmux import prettify_command, sudo_prompt_waiting, tmux_exact_target
 from routes.autoyes import autoyes_will_consider, prompt_popup_info
 from routes.terminal import enrich_panes_with_agents
 
@@ -111,7 +111,7 @@ def get_claude_meta(target):
 
         # Get pane's current working directory
         proc = subprocess.run(
-            ["tmux", "display-message", "-t", target, "-p", "#{pane_current_path}"],
+            ["tmux", "display-message", "-t", tmux_exact_target(target), "-p", "#{pane_current_path}"],
             capture_output=True,
             text=True,
             timeout=3,
@@ -318,7 +318,7 @@ def consolidated_poll():
         target = pane["target"]
         live_targets.add(target)
         cap = subprocess.run(
-            ["tmux", "capture-pane", "-e", "-p", "-t", target, "-S", "-60"],
+            ["tmux", "capture-pane", "-e", "-p", "-t", tmux_exact_target(target), "-S", "-60"],
             capture_output=True,
             text=True,
             timeout=5,

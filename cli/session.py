@@ -70,9 +70,9 @@ def reply_address() -> str | None:
     if not os.environ.get("TMUX"):
         return None
     command = ["tmux", "display-message", "-p"]
-    pane = os.environ.get("TMUX_PANE")
-    if pane:
-        command += ["-t", pane]
+    pane_id = os.environ.get("TMUX_PANE")
+    if pane_id:
+        command += ["-t", pane_id]
     command.append("#S")
     try:
         result = subprocess.run(

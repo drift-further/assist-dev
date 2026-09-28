@@ -39,6 +39,7 @@ def _refusal_body(intent):
 
 class _FakeIdentity:
     pane_id = "%510"
+    session_id = "$510"
 
     def as_dict(self):
         return {"pane_id": self.pane_id}
@@ -296,9 +297,9 @@ class ExecutionParkPolicyTests(unittest.TestCase):
                     )
                     create.assert_called_once()
                     send_text.assert_called_once_with(
-                        "project:0.0", "server-owned-launcher --configured"
+                        "%510", "server-owned-launcher --configured"
                     )
-                    send_keys.assert_called_once_with("project:0.0", "Enter")
+                    send_keys.assert_called_once_with("%510", "Enter")
                     sleep.assert_called_once_with(0.3)
 
                 with self.subTest(phase=phase.value, surface="duplicate-init"), patch.object(
@@ -329,9 +330,9 @@ class ExecutionParkPolicyTests(unittest.TestCase):
                     )
                     create.assert_called_once()
                     send_text.assert_called_once_with(
-                        "project-copy:0.0", "server-owned-launcher --configured"
+                        "%510", "server-owned-launcher --configured"
                     )
-                    send_keys.assert_called_once_with("project-copy:0.0", "Enter")
+                    send_keys.assert_called_once_with("%510", "Enter")
                     sleep.assert_called_once_with(0.3)
 
                 with self.subTest(phase=phase.value, surface="run-init"), patch.object(
@@ -352,9 +353,9 @@ class ExecutionParkPolicyTests(unittest.TestCase):
                     self.assertTrue(response.get_json()["ok"])
                     spawn.assert_called_once()
                     send_text.assert_called_once_with(
-                        "=project:0.0", "server-owned-launcher --configured"
+                        "=project:", "server-owned-launcher --configured"
                     )
-                    send_keys.assert_called_once_with("=project:0.0", "Enter")
+                    send_keys.assert_called_once_with("=project:", "Enter")
 
                 with self.subTest(phase=phase.value, surface="restart"), patch.object(
                     park, "_PROCESS_PARK", park.ExecutionPark(phase)

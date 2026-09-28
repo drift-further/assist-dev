@@ -19,6 +19,7 @@ from shared.agent_identity import declare_agent_command
 from shared.tmux import (
     create_tmux_session,
     record_tmux_adoption,
+    tmux_exact_target,
     tmux_send_keys,
     tmux_send_text,
 )
@@ -263,7 +264,7 @@ def _automate_start_inner(data, prompt):
     container_name = f"claude-session-{session_id}"
 
     subprocess.run(
-        ["tmux", "kill-session", "-t", session_name],
+        ["tmux", "kill-session", "-t", tmux_exact_target(session_name)],
         capture_output=True,
         timeout=5,
     )
@@ -285,7 +286,7 @@ def _automate_start_inner(data, prompt):
         return jsonify({"ok": False, "error": created.status}), 500
 
     subprocess.run(
-        ["tmux", "set-option", "-t", session_name, "history-limit", "20000"],
+        ["tmux", "set-option", "-t", tmux_exact_target(session_name), "history-limit", "20000"],
         capture_output=True,
         timeout=5,
     )
@@ -560,7 +561,9 @@ def _automate_cleanup(container, session):
     if session:
         try:
             subprocess.run(
-                ["tmux", "kill-session", "-t", session], capture_output=True, timeout=5
+                ["tmux", "kill-session", "-t", tmux_exact_target(session)],
+                capture_output=True,
+                timeout=5,
             )
         except Exception as e:
             print(f"[automate] tmux kill-session {session} failed: {e}")
@@ -684,7 +687,7 @@ def _automate_relaunch_effect(run_id):
         return False
 
     subprocess.run(
-        ["tmux", "set-option", "-t", session_name, "history-limit", "20000"],
+        ["tmux", "set-option", "-t", tmux_exact_target(session_name), "history-limit", "20000"],
         capture_output=True,
         timeout=5,
     )
@@ -831,7 +834,7 @@ def _automate_monitor_iteration(run_id):
                 "capture-pane",
                 "-p",
                 "-t",
-                f"{session}:0.0",
+                tmux_exact_target(f"{session}:0.0"),
                 "-S",
                 "-50",
             ],
