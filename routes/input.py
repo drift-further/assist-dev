@@ -26,6 +26,7 @@ import shared.state as state
 import shared.utils as utils
 from shared import execution_park as park
 from shared.agent_identity import declare_agent_command
+from shared.key_combo import ComboError, combo_to_tmux
 from shared.tmux import (
     TMUX_KEY_MAP,
     ExpectedTargetIdentity,
@@ -185,6 +186,8 @@ def send_key():
 def _send_key_effect():
     """Complete one explicit operator key action under the decision lock."""
     data = request.get_json(silent=True) or {}
+    if "combo" in data:
+        return _send_combo(data)
     keys = (data.get("keys") or "").strip()
     if not keys:
         return jsonify({"ok": False, "error": "No keys provided"}), 400
@@ -227,6 +230,26 @@ def _send_key_effect():
         return jsonify({"ok": False, "error": result.status}), status
     state.touch_activity(target)
     return jsonify({"ok": True, "via": "tmux"})
+
+
+def _send_combo(data):
+    """Send one structured Ctrl/Alt/Shift combo; shared/key_combo.py is the grammar."""
+    if data.get("keys"):
+        return jsonify({"ok": False, "error": "Send keys or combo, not both"}), 400
+    try:
+        tmux_key = combo_to_tmux(data["combo"])
+    except ComboError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    target = resolve_target(data)
+    expected = expected_target_identity(target) if target else None
+    if expected is None:
+        return jsonify({"ok": False, "error": "target_absent"}), 409
+    result = generation_bound_delivery(expected, keys=(tmux_key,))
+    if not result.ok:
+        status = 409 if result.status == "target_absent" else 502
+        return jsonify({"ok": False, "error": result.status}), status
+    state.touch_activity(target)
+    return jsonify({"ok": True, "via": "tmux", "sent": tmux_key})
 
 
 def _prompt_answer_is_stale(data, expected):

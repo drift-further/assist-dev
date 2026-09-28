@@ -335,6 +335,9 @@ class _TmuxControlConnection:
                 escaped.append('\\"')
             elif character == "$":
                 escaped.append("\\$")
+            elif character == "~":
+                # tmux expands a word-leading ~ to $HOME even inside quotes.
+                escaped.append("\\~")
             elif character == "\n":
                 escaped.append("\\n")
             elif character == "\r":
