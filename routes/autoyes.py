@@ -595,31 +595,101 @@ def _prompt_region(tail, size=500):
     return tail[-size:] if size else tail
 
 
-def _prompt_identity(tail):
-    """Which request is on screen: a digest of the whole capture up to the end
-    of the prompt's terminator line, or None when there is no terminator.
+# Where a request's dialog begins, for _prompt_identity. codex heads every
+# approval with one question (the four "Would you like to …?" forms in the
+# 0.156 binary: run a command, make edits, grant permissions, send input to a
+# terminal) and its directory-trust dialog with its own.
+_CODEX_HEADER_RE = re.compile(
+    r"^\s*(?:Would you like to .+\?|Do you trust the contents of this directory\?)\s*$"
+)
+# A Claude transcript entry: the tool call a y/n/a permission row is for.
+_TRANSCRIPT_ENTRY_RE = re.compile(r"^\s*[●○◉]\s*\S")
+_OPTION_ONE_RE = re.compile(r"^\s*(?:[^\d\s]\s*)?1[\.\)]\s*Yes\b", re.IGNORECASE)
+_SELECTED_YES_LINE_RE = re.compile(r"^\s*❯\s*Yes\b", re.IGNORECASE)
 
-    The countdown, the cancel and the send-time check all compare this. It used
-    to be the last 500 characters before the terminator, so two long codex
-    approvals whose commands differed above their common wrapped tail were the
-    "same prompt", and the replacement was answered with the first one's
-    countdown (judge #3). Raising the cutoff only moves that line. Instead it
-    covers everything captured above the terminator: a TUI draws its live
-    dialog on the visible screen, which the capture always holds whole, and the
-    scrollback above it cannot change while the agent is blocked on the dialog.
-    What sits below the terminator, the animated status area, is left out.
-    Escapes and trailing spaces are dropped so a redraw with different colours
-    is still the same request. No terminator means the request cannot be
-    placed, and the caller withholds the answer.
+
+def _request_start(lines, term, prompt_type, agent_kind):
+    """Index of the first row of the request's dialog, or None if not in view.
+
+    Each prompt shape has a real top edge, found by content and never by a row
+    or character count:
+      * a numbered menu: codex's question header, or the ──── rule Claude and
+        Gemini draw across the top of their dialogs (a live Claude dialog is a
+        rule directly under the transcript);
+      * Claude's y/n/a row: the ● tool call it asks about;
+      * opencode: its "Permission required" header;
+      * cursor: the `$ <command>` row above "Run this command?", or its trust
+        dialog's header;
+      * ssh: "The authenticity of host …", which names the host and key;
+      * apt/dnf: the contiguous block of output that ends in the question;
+      * a bare (y/n): the question line itself, which is all it says.
     """
-    text = _ANSI_ESCAPE_RE.sub("", tail or "")
-    matches = list(_PROMPT_TERMINATOR_RE.finditer(text))
-    if not matches:
+    def up(pred, frm):
+        for i in range(frm, -1, -1):
+            if pred(lines[i]):
+                return i
         return None
-    end = text.find("\n", matches[-1].end())
-    region = text if end < 0 else text[:end]
-    normalized = "\n".join(ln.rstrip() for ln in region.split("\n")).strip("\n")
-    return hashlib.sha256(normalized.encode("utf-8", "replace")).hexdigest()
+
+    if prompt_type in ("numbered-yes", "selected-yes"):
+        first = up((_OPTION_ONE_RE if prompt_type == "numbered-yes" else _SELECTED_YES_LINE_RE).match, term)
+        if first is None:
+            return None
+        if agent_kind == "codex":
+            return up(_CODEX_HEADER_RE.match, first)
+        return up(_OPTION_SEP_RE.match, first)
+    if prompt_type == "permission-yna":
+        return up(_TRANSCRIPT_ENTRY_RE.match, term)
+    if prompt_type == "opencode-permission":
+        return up(lambda ln: "Permission required" in ln, term)
+    if prompt_type == "cursor-permission":
+        header = up(_CURSOR_PERMISSION_HDR_RE.search, term)
+        return None if header is None else up(lambda ln: re.match(r"\s*\$\s", ln), header)
+    if prompt_type == "cursor-trust":
+        return up(lambda ln: "Workspace Trust Required" in ln, term)
+    if prompt_type == "ssh-host-key":
+        return up(lambda ln: "The authenticity of host" in ln, term)
+    if prompt_type == "package-confirm":
+        start = term
+        while start > 0 and lines[start - 1].strip():
+            start -= 1
+        # A block running into the top of the window may have lost its head.
+        return start if start > 0 else None
+    if prompt_type == "confirm-yn":
+        return term
+    return None
+
+
+def _prompt_identity(tail, prompt_type, agent_kind):
+    """Which request is on screen: a digest of its dialog, from the dialog's
+    real top edge (_request_start) through the prompt's terminator line, or None
+    when that span cannot be established.
+
+    The countdown, its reuse and the send-time check compare this. The last
+    500 characters before the terminator let a different long codex approval
+    with the same wrapped tail through (judge #3). The whole capture above the
+    terminator then pulled in a moving slice of history: a row appended below
+    the footer, or a resize, slid it and changed the identity of an unchanged
+    approval (judge2 #1). The dialog's own span has neither problem: it holds
+    the question, command and options in full, and nothing above or below it.
+    Escapes and trailing spaces are dropped so a colour-only redraw is the same
+    request. None, and the caller withholds, when the terminator or the top
+    edge is not within the detection window.
+    """
+    lines = detection_window(tail).split("\n")
+    term = None
+    for i in range(len(lines) - 1, -1, -1):
+        if _PROMPT_TERMINATOR_RE.search(lines[i]):
+            term = i
+            break
+    if term is None:
+        return None
+    start = _request_start(lines, term, prompt_type, agent_kind)
+    if start is None:
+        return None
+    normalized = "\n".join(ln.rstrip() for ln in lines[start : term + 1])
+    return hashlib.sha256(
+        f"{prompt_type}\n{normalized}".encode("utf-8", "replace")
+    ).hexdigest()
 
 
 def prompt_fingerprint(tail):
@@ -796,7 +866,7 @@ def _prompt_still_on_screen(expected, agent_kind, prompt_type, ident):
         bool(detected)
         and detected[0] == prompt_type
         and ident is not None
-        and _prompt_identity(tail) == ident
+        and _prompt_identity(tail, prompt_type, agent_kind) == ident
     )
 
 
@@ -945,12 +1015,12 @@ def _autoyes_scan_tick():
         if agent_kind not in AGENT_KINDS and not _shell_ok(session_name, source):
             continue
         qualified.add(session_name)
-        pident = _prompt_identity(tail)
         # Detection plus the codex vetoes (see _LUNA_RE, _CODEX_DOWNGRADE_RE).
         # The vetoes are applied AFTER detection rather than instead of it, so a
         # countdown already ticking when the vetoed text appears is cancelled by
         # the `if not detected` branch below rather than being left to fire.
         detected = detect_answerable_prompt(tail, agent_kind, target)
+        pident = _prompt_identity(tail, detected[0], agent_kind) if detected else None
 
         # Collect broadcast event to fire AFTER releasing the lock
         # (broadcast_autoyes_event also acquires autoyes_lock — avoid deadlock).
@@ -965,15 +1035,13 @@ def _autoyes_scan_tick():
                 # No prompt on screen: whatever the human cancelled has gone,
                 # and this is the ONLY place a cancellation ends.
                 state.autoyes_cancelled.pop(target, None)
-                # Clear answered cache when content changes (no prompt visible).
-                # This ensures a NEW prompt with the same hash as a previous one
-                # (e.g., consecutive edits to the same file) is not skipped.
-                if target in state.autoyes_answered:
-                    if state.autoyes_answered[target][0] != pident:
-                        del state.autoyes_answered[target]
+                # No prompt visible: forget what was answered, so a NEW prompt
+                # with the same request as a previous one (consecutive edits to
+                # the same file, say) is not skipped.
+                state.autoyes_answered.pop(target, None)
             continue
 
-        # A prompt is detected but the request it belongs to cannot be placed
+        # A prompt is detected but its request's dialog cannot be placed
         # (see _prompt_identity): withhold. Any countdown goes, since it cannot
         # be shown to be for this request; a cancellation stays.
         if pident is None:
@@ -990,7 +1058,11 @@ def _autoyes_scan_tick():
             continue
 
         with state.autoyes_lock:
-            if (pident, detected[0]) in state.autoyes_cancelled.get(target, ()):
+            # A cancel holds for the whole pane until a tick sees no prompt,
+            # whatever the identity does meanwhile. Keyed by identity, a resize
+            # or a row below the footer revived it (judge2 #1); leaving a prompt
+            # to the human is the safe way to be wrong.
+            if state.autoyes_cancelled.get(target):
                 continue
 
             log.info("autoyes: detected %s on %s", detected[0], target)
@@ -1238,9 +1310,9 @@ def autoyes_toggle():
 def cancel_countdown(target):
     """Cancel the countdown running on `target`. False if none was running.
 
-    The cancellation is recorded by (prompt hash, type) apart from the countdown
-    and outlives it: the scanner leaves that prompt alone until it sees no
-    prompt on the pane (review rel #2).
+    The cancellation is recorded apart from the countdown and outlives it: the
+    scanner answers nothing on that pane until it sees no prompt there (review
+    rel #2, judge2 #1). The (identity, type) pairs are kept for the log only.
     """
     with state.autoyes_lock:
         cd = state.autoyes_countdowns.pop(target, None)
