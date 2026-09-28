@@ -489,7 +489,7 @@ function _projStepper(section, key, val, min, max, unit) {
         <button class="proj-step-btn" data-proj-action="step"
                 data-section="${escHtml(section)}" data-key="${escHtml(key)}"
                 data-delta="-1" data-min="${min}" data-max="${max}">-</button>
-        <span class="proj-step-val" id="proj-${section}-${key}">${val}</span>
+        <span class="proj-step-val" id="proj-${section}-${key}">${escHtml(String(val))}</span>
         <span class="proj-step-unit">${unit}</span>
         <button class="proj-step-btn" data-proj-action="step"
                 data-section="${escHtml(section)}" data-key="${escHtml(key)}"

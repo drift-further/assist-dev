@@ -76,7 +76,9 @@ class TerminalKillAuditTests(unittest.TestCase):
         self.assertEqual(record["session"], "missing")
         self.assertEqual(record["outcome"], "failure")
         self.assertEqual(record["stderr"], "no such session\n")
-        self.assertEqual(record["source_ip"], "10.0.0.44")
+        # The head of X-Forwarded-For is client-written; the loopback peer is
+        # what is known (tests/test_request_trust.py pins the trust rule).
+        self.assertEqual(record["source_ip"], "127.0.0.1")
 
     @patch.object(terminal.subprocess, "run")
     def test_kill_exception_is_audited_before_original_500(self, run):

@@ -11,6 +11,7 @@ from flask import Flask, g, jsonify, redirect, request
 from flask_sock import Sock
 
 import shared.auth as auth
+from shared import security
 from shared.security import origin_allowed
 
 os.environ.setdefault("DISPLAY", ":0")
@@ -27,14 +28,9 @@ def create_app():
     app = Flask(__name__)
     sock = Sock(app)
 
-    # Origin allowlist — reject cross-origin state-changing requests.
-    # GET/HEAD/OPTIONS pass through (OPTIONS must work for same-origin
-    # preflights; GETs gain nothing for an attacker without a readable ACAO).
-    @app.before_request
-    def _check_origin():
-        if request.method in ("POST", "DELETE", "PATCH", "PUT"):
-            if not origin_allowed(request.headers.get("Origin")):
-                return jsonify({"ok": False, "error": "Origin not allowed"}), 403
+    # Host and Origin allowlists (shared/security.py) run before the auth gate:
+    # a rebound or cross-origin request is refused without consulting a cookie.
+    security.register_request_guards(app)
 
     # Shared-secret gate. The Origin allowlist above only stops a hostile *page*
     # in the user's browser; it does nothing about a direct request from any
@@ -256,6 +252,8 @@ if __name__ == "__main__":
         initialize_for_startup()
 
     configure_logging()
+    # Loopback origins follow the port actually bound, not only ASSIST_PORT.
+    security.configure(args.port)
     app = create_app()
     server = make_server(args.host, args.port, app, threaded=True)
     # Binding is the activation milestone.  Publish it before recovery/scanner

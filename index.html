@@ -412,8 +412,8 @@
                     <button class="git-btn git-close" onclick="toggleGitPanel()">&#x2715;</button>
                 </div>
                 <div class="git-row">
-                    <input type="text" class="git-commit-input" id="git-commit-msg" placeholder="Commit message..." enterkeyhint="send">
-                    <button class="git-btn git-commit" onclick="gitCommitPush()">C&amp;P</button>
+                    <input type="text" class="git-commit-input" id="git-commit-msg" placeholder="Commit message..." enterkeyhint="done">
+                    <button class="git-btn git-commit" onclick="gitCommitPushConfirm()">Commit &amp; push</button>
                 </div>
             </div>
 
@@ -698,7 +698,7 @@
         </div>
     </div>
 
-    <script src="/js/state.js?v=4"></script>
+    <script src="/js/state.js?v=5"></script>
     <script src="/js/target-hold.js?v=1"></script>
     <script src="/js/ui.js?v=6"></script>
     <script src="/js/vault.js?v=3"></script>
@@ -708,7 +708,7 @@
     <script src="/js/drafts.js?v=5"></script>
     <script src="/js/keylabels.js?v=4"></script>
     <script src="/js/keycombo.js?v=1"></script>
-    <script src="/js/terminal.js?v=29"></script>
+    <script src="/js/terminal.js?v=30"></script>
     <script src="/js/opencode.js?v=2"></script>
     <script src="/js/actions.js?v=16"></script>
     <script src="/js/commands.js?v=4"></script>
@@ -716,12 +716,12 @@
     <script src="/js/studio.js?v=2"></script>
     <script src="/js/access.js?v=3"></script>
     <script src="/js/chrome.js?v=3"></script>
-    <script src="/js/monitor.js?v=6"></script>
+    <script src="/js/monitor.js?v=7"></script>
     <script src="/js/notifications.js?v=1"></script>
     <script src="/js/prompt-popup.js?v=2"></script>
     <script src="/js/tabs.js?v=10"></script>
     <script src="/js/settings.js?v=9"></script>
-    <script src="/js/app.js?v=21"></script>
+    <script src="/js/app.js?v=22"></script>
     <script src="/js/selection.js?v=2"></script>
     <script>
     if ('serviceWorker' in navigator) {

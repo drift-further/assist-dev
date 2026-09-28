@@ -122,3 +122,16 @@ let _projSettingsOpen = false;
 
 // Idle fade: suppress for first few poll cycles so content detection can establish baseline
 const _pageLoadedAt = Date.now();
+
+// A 401 means this browser's sign-in is gone: the token was rotated or the
+// cookie cleared. Without this every open tab sat on a frozen terminal with a
+// red dot and no way back. Returns true when it has sent the page to /login.
+let _authRedirecting = false;
+function authLost(resp) {
+    if (!resp || resp.status !== 401) return false;
+    if (!_authRedirecting) {
+        _authRedirecting = true;
+        location.replace('/login');
+    }
+    return true;
+}

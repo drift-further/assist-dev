@@ -112,10 +112,14 @@ server {
         allow 127.0.0.1;
         deny all;
         proxy_pass http://127.0.0.1:8089;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
     }
 
     location / {
         proxy_pass http://127.0.0.1:8089;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -126,7 +130,11 @@ server {
 
 Use the exact scheme, hostname or address, and port your phone opens in
 `ASSIST_ALLOWED_ORIGINS`. Restart after changing `.env`. The WebSocket upgrade
-headers are required for live terminal streaming.
+headers are required for live terminal streaming. `X-Real-IP` carries the
+phone's address, which device approval and open access check; Assist believes
+it only from a loopback peer. `Host` must be forwarded too: Assist answers only
+to the host names in `ASSIST_ALLOWED_ORIGINS` (plus loopback) and refuses any
+other with a 421, which is what stops a DNS-rebinding page from reading it.
 
 ## CLI
 

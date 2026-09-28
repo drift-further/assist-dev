@@ -6,10 +6,16 @@ Import with: from shared.state import <name>
 
 import copy
 import json
+import logging
+import math
 import os
 import tempfile
 import threading
+import time
 from pathlib import Path
+from urllib.parse import urlsplit
+
+log = logging.getLogger(__name__)
 
 # OpenCode export reader: bounded, short-lived snapshots shared by viewers.
 opencode_lock = threading.Lock()
@@ -178,6 +184,175 @@ DEFAULT_PROJECT_SETTINGS = {
 }
 
 
+# Bounds the settings panel already enforces (the min/max on each field in
+# js/settings.js), mirrored so the API and CLI meet the same limits. Enforced on
+# PATCH only: a hand edit outside them is deliberate, and load checks type.
+SETTING_RANGES = {
+    "terminal.font_size": (8, 24),
+    "terminal.default_cols": (40, 400),
+    "terminal.default_rows": (10, 200),
+    "terminal.capture_lines": (100, 50000),
+    "terminal.tmux_history_limit": (1000, 100000),
+    "terminal.idle_threshold_sec": (30, 3600),
+    "autoyes.default_delay": (0.1, 30),
+    "autoyes.detection_depth": (2, 30),
+    "connection.poll_interval_ms": (1000, 30000),
+    "connection.ws_heartbeat_sec": (1, 30),
+    "connection.ws_reconnect_max_ms": (5000, 120000),
+    "connection.http_fallback_poll_ms": (1000, 30000),
+    "ui.toast_duration_ms": (2000, 30000),
+    "ui.max_toasts": (1, 10),
+    "ui.stale_tab_threshold_sec": (300, 86400),
+    "ui.recent_projects_limit": (5, 100),
+    "ui.popup_seconds": (1, 60),
+    "limits.max_history": (100, 50000),
+    "limits.max_upload_mb": (1, 4096),
+    "limits.max_capture_lines": (1000, 100000),
+    "access.open_default_minutes": (1, 1440),
+    "access.open_max_minutes": (1, 1440),
+    # Per-project (DEFAULT_PROJECT_SETTINGS); same clamp as the runtime delay.
+    "autoyes.delay": (0.1, 30),
+}
+
+# Numeric settings whose integer default still admits a fraction.
+_FRACTIONAL_SETTINGS = frozenset({"autoyes.default_delay", "autoyes.delay"})
+# Opened by the browser (window.open / href), so a scheme other than http(s)
+# would be script in this origin. api_base too: an empty web_base derives from
+# it (shared/studio_client.py:web_base).
+_URL_SETTINGS = frozenset({"studio.web_base", "studio.api_base"})
+
+
+def _is_http_url(value):
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return False
+    return parts.scheme in ("http", "https") and bool(parts.netloc)
+
+
+def check_setting(path, value, default, enforce_range=True):
+    """Return (ok, value) for one settings leaf judged against its default.
+
+    The value must have the default's type: bool for bool, a finite
+    non-negative number for a number (whole unless the key is fractional; a
+    whole float is normalised to int), a string for a string, a list of strings
+    for a list. "on"/"off" toggles, claude_mode and web_base take only their
+    legal values. enforce_range adds SETTING_RANGES.
+    """
+    if isinstance(default, bool):
+        return isinstance(value, bool), value
+    if isinstance(default, (int, float)):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
+        ):
+            return False, value
+        if isinstance(default, int) and path not in _FRACTIONAL_SETTINGS:
+            if value != int(value):
+                return False, value
+            value = int(value)
+        if enforce_range and path in SETTING_RANGES:
+            low, high = SETTING_RANGES[path]
+            if not low <= value <= high:
+                return False, value
+        return True, value
+    if isinstance(default, str):
+        if not isinstance(value, str):
+            return False, value
+        if default in ("on", "off"):
+            return value in ("on", "off"), value
+        if path == "server.claude_mode":
+            return value in CLAUDE_COMMANDS, value
+        if path in _URL_SETTINGS:
+            return (value == "" or _is_http_url(value)), value
+        return True, value
+    if isinstance(default, list):
+        return isinstance(value, list) and all(isinstance(v, str) for v in value), value
+    return True, value
+
+
+def _sanitize(values, defaults, prefix="", drop=False):
+    """Reset (or, with drop, remove) each saved leaf check_setting refuses.
+
+    Works in place, key by key, so one bad value costs only itself. Returns the
+    dotted paths that were replaced.
+    """
+    bad = []
+    for key, default in defaults.items():
+        if key not in values:
+            continue
+        path = prefix + key
+        value = values[key]
+        if isinstance(default, dict):
+            if isinstance(value, dict):
+                bad.extend(_sanitize(value, default, path + ".", drop))
+                continue
+            ok = False
+        else:
+            ok, value = check_setting(path, value, default, enforce_range=False)
+        if ok:
+            values[key] = value
+            continue
+        bad.append(path)
+        if drop:
+            del values[key]
+        else:
+            values[key] = copy.deepcopy(default)
+    return bad
+
+
+def read_json_state(path, default, expect=None):
+    """Load a JSON state file; a file that does not parse is moved aside.
+
+    Missing: `default`. Unparseable, or not of type `expect`: renamed to
+    `<name>.corrupt-<timestamp>`, logged at ERROR, and `default` returned — so
+    the next save writes a fresh file instead of destroying the only copy of
+    what was there (a truncated settings.json used to lose the Studio token on
+    the first PATCH).
+    """
+    path = Path(path)
+    try:
+        data = json.loads(path.read_text())
+        if expect is not None and not isinstance(data, expect):
+            raise ValueError(
+                f"top level is {type(data).__name__}, expected {expect.__name__}"
+            )
+    except FileNotFoundError:
+        return default
+    except ValueError as exc:  # JSONDecodeError and UnicodeDecodeError included
+        _quarantine(path, exc)
+        return default
+    except OSError as exc:
+        log.error("state: cannot read %s (%s); using defaults", path, exc)
+        return default
+    return data
+
+
+def _quarantine(path, reason):
+    stamp = time.strftime("%Y%m%dT%H%M%S")
+    dest = path.with_name(f"{path.name}.corrupt-{stamp}")
+    n = 1
+    while dest.exists():
+        n += 1
+        dest = path.with_name(f"{path.name}.corrupt-{stamp}-{n}")
+    try:
+        path.rename(dest)
+    except OSError as exc:
+        log.error(
+            "state: %s is unreadable (%s) and could NOT be moved aside (%s); "
+            "the next save will overwrite it — copy it out by hand now",
+            path, reason, exc,
+        )
+        return
+    log.error(
+        "state: %s is unreadable (%s); moved it to %s and started from "
+        "defaults. Restore or repair it by hand.",
+        path, reason, dest.name,
+    )
+
+
 def _deep_merge(base, override):
     """Merge override into base recursively. Returns new dict."""
     result = base.copy()
@@ -226,13 +401,16 @@ def atomic_write_json(path, data, indent=2):
 def load_settings():
     """Load settings from disk, merge with defaults. Call once at startup."""
     global _settings
-    saved = {}
-    try:
-        saved = json.loads(SETTINGS_FILE.read_text())
-    except (OSError, ValueError, json.JSONDecodeError):
-        pass
+    saved = read_json_state(SETTINGS_FILE, {}, expect=dict)
+    merged = _deep_merge(copy.deepcopy(DEFAULT_SETTINGS), saved)
+    bad = _sanitize(merged, DEFAULT_SETTINGS)
+    if bad:
+        log.warning(
+            "state: %s: invalid values reset to defaults: %s",
+            SETTINGS_FILE, ", ".join(bad),
+        )
     with _settings_lock:
-        _settings = _deep_merge(copy.deepcopy(DEFAULT_SETTINGS), saved)
+        _settings = merged
 
     # One-time migration: claude_mode.txt -> settings.json
     _mode_file = DATA_DIR / "claude_mode.txt"
@@ -299,10 +477,23 @@ def get_setting(*keys):
 def load_project_settings():
     """Load per-project settings from disk. Call once at startup."""
     global _project_settings
-    try:
-        _project_settings = json.loads(PROJECT_SETTINGS_FILE.read_text())
-    except (OSError, ValueError, json.JSONDecodeError):
-        _project_settings = {}
+    data = read_json_state(PROJECT_SETTINGS_FILE, {}, expect=dict)
+    bad = []
+    for project in list(data):
+        if not isinstance(data[project], dict):
+            del data[project]
+            bad.append(project)
+            continue
+        bad.extend(
+            f"{project}.{path}"
+            for path in _sanitize(data[project], DEFAULT_PROJECT_SETTINGS, drop=True)
+        )
+    if bad:
+        log.warning(
+            "state: %s: invalid values dropped (defaults apply): %s",
+            PROJECT_SETTINGS_FILE, ", ".join(bad),
+        )
+    _project_settings = data
 
 
 def _save_project_settings_locked():
@@ -417,10 +608,7 @@ DEFAULT_CONTAINER_CONFIG = {
 
 def load_container_config():
     global _container_config
-    try:
-        _container_config = json.loads(CONTAINER_CONFIG_FILE.read_text())
-    except (OSError, ValueError, json.JSONDecodeError):
-        _container_config = {}
+    _container_config = read_json_state(CONTAINER_CONFIG_FILE, {}, expect=dict)
 
 
 def _save_container_config_locked():
@@ -462,10 +650,7 @@ _extensions_lock = threading.Lock()
 
 def load_extensions():
     global _extensions
-    try:
-        _extensions = json.loads(EXTENSIONS_FILE.read_text())
-    except (OSError, ValueError, json.JSONDecodeError):
-        _extensions = []
+    _extensions = read_json_state(EXTENSIONS_FILE, [], expect=list)
     if not _extensions and BUILTIN_EXTENSIONS_DIR.is_dir():
         for f in sorted(BUILTIN_EXTENSIONS_DIR.glob("*.json")):
             try:
@@ -669,14 +854,12 @@ def save_idle_state():
 
 def load_idle_state():
     """Restore idle tracking dicts from disk on startup."""
-    import json
-
     global pane_content_hash, pane_last_activity
+    data = read_json_state(_IDLE_STATE_FILE, {}, expect=dict)
     try:
-        data = json.loads(_IDLE_STATE_FILE.read_text())
         pane_content_hash.update(data.get("content_hash", {}))
         pane_last_activity.update(data.get("last_activity", {}))
-    except (OSError, ValueError, json.JSONDecodeError):
+    except (TypeError, ValueError, AttributeError):
         pass
 
 

@@ -154,14 +154,31 @@ def set_auth_cookie(response):
 def client_ip(request):
     """The real peer address.
 
-    nginx sets X-Real-IP with $remote_addr — an unconditional overwrite, so it
-    is the actual TCP peer. X-Forwarded-For is $proxy_add_x_forwarded_for here,
-    which APPENDS to whatever the client sent; its leftmost entry is
-    attacker-controlled and must never be read. With no header the request came
-    straight to loopback, and remote_addr (127.0.0.1) is correct and out of
+    X-Real-IP is believed only when the TCP peer is loopback, i.e. a reverse
+    proxy on this host wrote it. nginx sets it with $remote_addr — an
+    unconditional overwrite, so there it is the actual peer. From any other
+    peer (Flask bound to 0.0.0.0, a port-forward) the header is whatever the
+    client typed, and trusting it let any reachable host pose as an in-scope
+    LAN address for approval requests and the open window.
+
+    X-Forwarded-For is never read: nginx's $proxy_add_x_forwarded_for APPENDS
+    to what the client sent, so its leftmost entry is attacker-controlled. With
+    no header from loopback, remote_addr (127.0.0.1) is correct and out of
     scope — a host-local process can read `auth_token` anyway.
     """
-    return (request.headers.get("X-Real-IP") or request.remote_addr or "").strip()
+    peer = (request.remote_addr or "").strip()
+    if _is_loopback(peer):
+        forwarded = (request.headers.get("X-Real-IP") or "").strip()
+        if forwarded:
+            return forwarded
+    return peer
+
+
+def _is_loopback(address):
+    try:
+        return ipaddress.ip_address(address).is_loopback
+    except ValueError:
+        return False
 
 
 def _networks_raw():

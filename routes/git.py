@@ -55,6 +55,63 @@ def _build_git_command(op, message):
     raise ValueError(f"No template for op: {op}")
 
 
+def _strip_userinfo(url):
+    """A remote URL without any user:token@ it may carry."""
+    return re.sub(r"^([a-z][a-z0-9+.-]*://)[^/@]*@", r"\1", url, flags=re.I)
+
+
+@git_bp.route("/api/git/preview")
+def git_preview():
+    """What Commit & push would act on, for its confirm step. Read-only.
+
+    Branch, the upstream the push goes to (and its remote URL), and how many
+    paths `git add -A` would stage, untracked files included.
+    """
+    from routes.poll import _run_git
+    from routes.studio import _pane_cwd
+
+    target = resolve_target(request.args)
+    project_dir = _pane_cwd(target)
+    if not project_dir:
+        return jsonify({"ok": False, "error": "Cannot determine project directory"}), 400
+    try:
+        head = _run_git(project_dir, ["rev-parse", "--abbrev-ref", "HEAD"], timeout=5)
+        if head.returncode != 0:
+            return jsonify({"ok": False, "error": "Not a git repository"}), 400
+        branch = head.stdout.strip()
+        upstream = _run_git(
+            project_dir,
+            ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+            timeout=5,
+        )
+        upstream = upstream.stdout.strip() if upstream.returncode == 0 else ""
+        remote = _run_git(project_dir, ["config", "--get", f"branch.{branch}.remote"], timeout=5)
+        remote = remote.stdout.strip() if remote.returncode == 0 else ""
+        remote_url = ""
+        if remote:
+            got = _run_git(project_dir, ["remote", "get-url", remote], timeout=5)
+            if got.returncode == 0:
+                remote_url = _strip_userinfo(got.stdout.strip())
+        status = _run_git(
+            project_dir, ["status", "--porcelain", "--untracked-files=all"], timeout=10
+        )
+        if status.returncode != 0:
+            return jsonify({"ok": False, "error": "git status failed"}), 500
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "git timed out"}), 504
+    changed = sum(1 for line in status.stdout.splitlines() if line.strip())
+    return jsonify(
+        {
+            "ok": True,
+            "branch": branch,
+            "upstream": upstream,
+            "remote": remote,
+            "remote_url": remote_url,
+            "changed": changed,
+        }
+    )
+
+
 @git_bp.route("/api/git/run", methods=["POST"])
 def git_run():
     """Run a fixed git op in a temporary tmux session, isolated from Claude Code."""

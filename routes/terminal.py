@@ -16,6 +16,7 @@ from shared import execution_park as park
 import shared.state as state
 import shared.tab_state as tab_state
 from shared.agent_identity import resolve_process
+from shared.auth import client_ip
 from shared.tmux import (
     activate_venv,
     capture_pane,
@@ -45,13 +46,9 @@ def _http_refusal(refusal):
 def _audit_terminal_kill(session, outcome, stderr=""):
     """Append one durable kill record without ever affecting the request."""
     try:
-        forwarded_for = request.headers.get("X-Forwarded-For", "")
-        source_ip = (
-            request.headers.get("X-Real-IP")
-            or forwarded_for.split(",", 1)[0].strip()
-            or request.remote_addr
-            or ""
-        )
+        # Same trust rule as onboarding: X-Real-IP only from a loopback proxy,
+        # never the client-written head of X-Forwarded-For.
+        source_ip = client_ip(request)
         record = {
             "timestamp": datetime.now().astimezone().isoformat(),
             "session": session,
