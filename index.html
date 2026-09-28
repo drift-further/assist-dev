@@ -299,12 +299,12 @@
                         <div class="actions-grid">
                             <button class="actions-item workspace plus-proj" data-glyph="&#9638;" onclick="toggleProjects(); closeActionsDeck();">Projects</button>
                             <button class="actions-item workspace plus-git" data-glyph="&#9314;" id="btn-git" onclick="toggleGitPanel(); closeActionsDeck();">Git</button>
-                            <button class="actions-item workspace plus-container" data-glyph="&#11041;" onclick="toggleContainerPanel(); closeActionsDeck();">Container</button>
+                            <button data-parked style="display:none" class="actions-item workspace plus-container" data-glyph="&#11041;" onclick="toggleContainerPanel(); closeActionsDeck();">Container</button>
                             <!-- Temporary reachability until the Attention panel
                                  is replaced with the context drawer. -->
                             <button class="actions-item workspace plus-studio" data-glyph="&#9671;" onclick="toggleStudioPanel(); closeActionsDeck();">Studio</button>
                             <button class="actions-item workspace plus-skills" data-glyph="/" onclick="toggleSkillsPanel(); closeActionsDeck();">/Skills</button>
-                            <button class="actions-item workspace plus-auto" data-glyph="&#9654;" id="btn-auto" onclick="toggleAutoPanel(); closeActionsDeck();">Automate</button>
+                            <button data-parked style="display:none" class="actions-item workspace plus-auto" data-glyph="&#9654;" id="btn-auto" onclick="toggleAutoPanel(); closeActionsDeck();">Automate</button>
                             <button class="actions-item workspace plus-settings" data-glyph="&#9881;" onclick="toggleSettingsPanel(); closeActionsDeck();">Settings</button>
                         </div>
                     </section>
@@ -648,7 +648,7 @@
         </div>
     </div>
 
-    <script src="/js/state.js?v=4"></script>
+    <script src="/js/state.js?v=5"></script>
     <script src="/js/target-hold.js?v=1"></script>
     <script src="/js/ui.js?v=6"></script>
     <script src="/js/vault.js?v=3"></script>

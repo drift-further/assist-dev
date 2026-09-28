@@ -60,8 +60,9 @@ def _reexec_in_project_venv() -> None:
 _reexec_in_project_venv()
 
 try:
-    from cli import container, http, proc, session, wait as wait_cli
+    from cli import container, expose, http, pair, proc, service, session, wait as wait_cli
     from cli.config import ConfigError, resolve
+    from shared.execution_park import FEATURES_PARKED
 except ModuleNotFoundError as exc:  # a legible failure beats a 12-line traceback
     print(
         f"assist: missing dependency '{exc.name}' — the CLI needs the project venv at\n"
@@ -77,18 +78,27 @@ HELP_TEXT = """assist — control the Drift Assist web terminal
 Usage: assist <command> [args]
 
 Server:
-  start                  Start the server (background, PID in /tmp)
+  start                  Start the server (through the service unit if installed)
   stop                   Stop the server
   restart                Restart the server
-  activate-park-v16 [--resume]
-                         New-first, receipted park activation
   status                 Show server status
   logs [N | -f | --follow]
                          Tail last N lines (default 100), or follow
+  service install | uninstall | status
+                         Keep it running across reboots (systemd --user / launchd)
+
+Reach it from your phone:
+  expose [--ip ADDR] [--off]
+                         Listen on this host's LAN address too, allow its
+                         origin in .env, and restart if running
+  pair [--minutes N] [--url URL]
+                         Open a short sign-in window; print the phone URL + QR
+  token                  Print the token file path (and the token, on a terminal)
 
 Config & diagnostics:
   config                 Print resolved paths, ports, and env
   doctor                 Check prerequisites + server health
+  --version              Print the version
 
 Sessions:
   ls [--json] [--cwd]    List sessions and panes
@@ -133,17 +143,9 @@ Wait exit codes:
   0   idle    — the pane went quiet, no prompt
   10  prompt  — quiet because it is asking something (summary printed)
   75  working — still changing at the deadline; not an error, re-run `assist wait`
-
-Container:
-  container status       Image info + running claude-session-* containers
-  container build        Build the container image (streams log)
-  container config       Print current container build config
-  container extensions   List registered extensions
-  container kill <name>  Kill a running claude-session-* container
-
+{container}
 Studio (design hub):
-  studio [args]          Delegate to the Studio operator command
-                         (requires a 'studio' executable on PATH)
+  studio [args]          Run the Studio CLI on PATH (sto, else studio)
 
 Misc:
   help                   Show this message
@@ -152,6 +154,43 @@ Install / reinstall:
   cd $ASSIST_HOME && ./install.sh
 
 """
+
+CONTAINER_HELP = """
+Container:
+  container status       Image info + running claude-session-* containers
+  container build        Build the container image (streams log)
+  container config       Print current container build config
+  container extensions   List registered extensions
+  container kill <name>  Kill a running claude-session-* container
+"""
+
+
+def help_text(parked: bool = FEATURES_PARKED) -> str:
+    """The container verbs still dispatch while parked; they are just not offered."""
+    return HELP_TEXT.replace("{container}", "" if parked else CONTAINER_HELP)
+
+
+def version_text() -> str:
+    """pyproject.toml is the one version source; a git checkout adds its commit."""
+    import re
+    import subprocess
+
+    match = re.search(
+        r'^version\s*=\s*"([^"]+)"',
+        (ASSIST_HOME / "pyproject.toml").read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    version = match.group(1) if match else "unknown"
+    try:
+        commit = subprocess.run(
+            ["git", "-C", str(ASSIST_HOME), "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        commit = ""
+    return f"drift-assist {version}" + (f" (git {commit})" if commit else "")
 
 PROCESS_HANDLERS = {
     "start": proc.start,
@@ -175,6 +214,10 @@ COMMANDS = {
     "studio",
     "help",
     "activate-park-v16",
+    "expose",
+    "pair",
+    "token",
+    "service",
 }
 
 
@@ -436,6 +479,58 @@ def build_parser() -> AssistArgumentParser:
         command_parser = subparsers.add_parser(verb, add_help=False)
         command_parser.add_argument("arguments", nargs=argparse.REMAINDER)
 
+    expose_parser = subparsers.add_parser(
+        "expose",
+        description=(
+            "Let a phone on the LAN reach Assist directly: set ASSIST_BIND to this "
+            "host's LAN address (never 0.0.0.0), add its origin to "
+            "ASSIST_ALLOWED_ORIGINS in .env, and restart the server if it is running."
+        ),
+    )
+    expose_parser.add_argument(
+        "--ip",
+        metavar="ADDR",
+        help="LAN address to listen on (default: the default route's source address)",
+    )
+    expose_parser.add_argument(
+        "--off",
+        action="store_true",
+        help="remove ASSIST_BIND, back to loopback only (origins are kept)",
+    )
+
+    pair_parser = subparsers.add_parser(
+        "pair",
+        description=(
+            "Sign a phone in without typing the token: open a short sign-in window "
+            "and print the phone URL and a QR code of it."
+        ),
+    )
+    pair_parser.add_argument(
+        "--minutes",
+        type=float,
+        default=5,
+        metavar="N",
+        help="how long the window stays open (default: 5; the server caps it)",
+    )
+    pair_parser.add_argument(
+        "--url",
+        help="the URL the phone opens, when a proxy fronts Assist under another name",
+    )
+
+    subparsers.add_parser(
+        "token",
+        description="Print the token file path, and the token itself only to a terminal.",
+    )
+
+    service_parser = subparsers.add_parser(
+        "service",
+        description=(
+            "Keep Assist running across reboots with a systemd --user unit "
+            "(Linux) or a launchd agent (macOS)."
+        ),
+    )
+    service_parser.add_argument("action", choices=("install", "uninstall", "status"))
+
     activation_parser = subparsers.add_parser(
         "activate-park-v16",
         description="Perform the receipted new-first park activation.",
@@ -464,6 +559,9 @@ def main(arguments: list[str] | None = None) -> int:
     if not argv or verb in {"-h", "--help"}:
         argv = ["help"]
         verb = "help"
+    if verb in {"--version", "-V", "version"}:
+        print(version_text())
+        return 0
 
     if verb not in COMMANDS:
         proc.print_error(f"Unknown command: {verb} (try: assist help)")
@@ -529,8 +627,18 @@ def main(arguments: list[str] | None = None) -> int:
         )
     if parsed.verb == "studio":
         return proc.studio(parsed.arguments)
+    if parsed.verb == "expose":
+        return expose.command(resolved, parsed.ip, parsed.off)
+    if parsed.verb == "pair":
+        return pair.command(resolved, parsed.minutes, parsed.url)
+    if parsed.verb == "token":
+        return pair.token(resolved)
+    if parsed.verb == "service":
+        return service.dispatch(
+            resolved, parsed.action, lambda: proc.stop_manual(resolved)
+        )
     if parsed.verb == "help":
-        print(HELP_TEXT, end="")
+        print(help_text(), end="")
         return 0
     proc.print_error(f"Unknown command: {parsed.verb} (try: assist help)")
     return 1

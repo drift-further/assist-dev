@@ -68,6 +68,14 @@ DENIED_INTENTS = frozenset(
 
 ALLOWED_INTENTS = frozenset(Intent) - DENIED_INTENTS
 
+# The one "parked" flag the surfaces read: while Automate start and image builds
+# are denied, the Automate and Container UI entries, the installer's container
+# step and the CLI help lines stay hidden rather than advertising a 409.
+FEATURES_PARKED = {
+    Intent.AUTOMATE_START,
+    Intent.CONFIGURED_IMAGE_BUILD,
+} <= DENIED_INTENTS
+
 
 @dataclass(frozen=True, slots=True)
 class Refusal:
