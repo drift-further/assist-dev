@@ -134,6 +134,8 @@ def automate_recover():
     session_name = auto_sessions[0]
     base_session = session_name.removesuffix("-auto")
     project_path = state.PROJECTS_DIR / base_session
+    # TODO(e621): ":0.0" is not a pane under base-index 1 / pane-base-index 1.
+    # Parked, so left as is; address the pane by id before un-parking.
     adoption = record_tmux_adoption(
         f"{session_name}:0.0",
         surface="automate_startup_recovery",
@@ -272,6 +274,8 @@ def _automate_start_inner(data, prompt):
         ["docker", "rm", "-f", container_name], capture_output=True, timeout=10
     )
 
+    # TODO(e621): ":0.0" is not a pane under base-index 1 / pane-base-index 1.
+    # Parked, so left as is; address the pane by id before un-parking.
     created = create_tmux_session(
         session_name=session_name,
         cwd=project_path,
@@ -310,6 +314,8 @@ def _automate_start_inner(data, prompt):
         env_prefix += f"CLAUDE_CMD={shlex.quote(claude_cmd)} "
     cmd = f"{env_prefix}bash {state.CLAUDE_MOUNT_SCRIPT} -n '{escaped_prompt}'"
 
+    # TODO(e621): ":0.0" is not a pane under base-index 1 / pane-base-index 1.
+    # Parked, so left as is; address the pane by id before un-parking.
     target = f"{session_name}:0.0"
     tmux_send_text(target, cmd)
     tmux_send_keys(target, "Enter")
@@ -351,6 +357,8 @@ def _automate_start_inner(data, prompt):
             "ok": True,
             "session": session_name,
             "container": container_name,
+            # TODO(e621): ":0.0" is not a pane under base-index 1 / pane-base-index 1.
+            # Parked, so left as is; address the pane by id before un-parking.
             "target": f"{session_name}:0.0",
         }
     )
@@ -419,6 +427,8 @@ def automate_reconnect():
     session_name = auto_sessions[0]
     base_session = session_name.removesuffix("-auto")
     project_path = state.PROJECTS_DIR / base_session
+    # TODO(e621): ":0.0" is not a pane under base-index 1 / pane-base-index 1.
+    # Parked, so left as is; address the pane by id before un-parking.
     adoption = record_tmux_adoption(
         f"{session_name}:0.0",
         surface="automate_reconnect",
@@ -486,6 +496,8 @@ def automate_reconnect():
             "session": session_name,
             "container": container_name,
             "container_running": container_running,
+            # TODO(e621): ":0.0" is not a pane under base-index 1 / pane-base-index 1.
+            # Parked, so left as is; address the pane by id before un-parking.
             "target": f"{session_name}:0.0",
         }
     )
@@ -577,6 +589,8 @@ def _automate_soft_clear():
         project_path = state.automate["project_path"]
         project_name = state.automate["project"]
 
+    # TODO(e621): ":0.0" is not a pane under base-index 1 / pane-base-index 1.
+    # Parked, so left as is; address the pane by id before un-parking.
     target = f"{session}:0.0"
 
     def effect():
@@ -672,6 +686,8 @@ def _automate_relaunch_effect(run_id):
         ["docker", "rm", "-f", container_name], capture_output=True, timeout=10
     )
 
+    # TODO(e621): ":0.0" is not a pane under base-index 1 / pane-base-index 1.
+    # Parked, so left as is; address the pane by id before un-parking.
     created = create_tmux_session(
         session_name=session_name,
         cwd=project_path,
@@ -711,6 +727,8 @@ def _automate_relaunch_effect(run_id):
     if claude_cmd:
         env_prefix += f"CLAUDE_CMD={shlex.quote(claude_cmd)} "
     cmd = f"{env_prefix}bash {state.CLAUDE_MOUNT_SCRIPT} -n '{escaped_prompt}'"
+    # TODO(e621): ":0.0" is not a pane under base-index 1 / pane-base-index 1.
+    # Parked, so left as is; address the pane by id before un-parking.
     target = f"{session_name}:0.0"
     tmux_send_text(target, cmd)
     tmux_send_keys(target, "Enter")
@@ -834,6 +852,8 @@ def _automate_monitor_iteration(run_id):
                 "capture-pane",
                 "-p",
                 "-t",
+                # TODO(e621): ":0.0" is not a pane under base-index 1 / pane-base-index 1.
+                # Parked, so left as is; address the pane by id before un-parking.
                 tmux_exact_target(f"{session}:0.0"),
                 "-S",
                 "-50",
@@ -881,6 +901,8 @@ def _automate_monitor_iteration(run_id):
                 if not already_fired:
                     answer_result = _automate_scheduled_answer(
                         park.Intent.AUTOMATE_TRUST_ANSWER,
+                        # TODO(e621): ":0.0" is not a pane under base-index 1 / pane-base-index 1.
+                        # Parked, so left as is; address the pane by id before un-parking.
                         f"{session}:0.0",
                         trust_send[0],
                     )
