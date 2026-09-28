@@ -96,6 +96,16 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("sys.version_info >= (3,10)", INSTALL)
         self.assertIn('requires-python = ">=3.10"', (ROOT / "pyproject.toml").read_text())
 
+    def test_no_test_uses_an_api_newer_than_the_floor(self):
+        # TestCase.enterContext is 3.11+. Two modules used it and the suite
+        # silently stopped passing on the 3.10 floor install.sh accepts.
+        needle = "." + "enterContext" + "("  # split, so this file does not match itself
+        offenders = [
+            path.name for path in sorted((ROOT / "tests").glob("test_*.py"))
+            if needle in path.read_text()
+        ]
+        self.assertEqual(offenders, [])
+
     def test_tmux_floor_is_checked(self):
         self.assertIn(">= (3, 2)", INSTALL)
 

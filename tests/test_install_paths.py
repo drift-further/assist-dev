@@ -41,6 +41,16 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
 """
 
 
+def _wait_for_exec(proc, marker):
+    """Popen returns after fork; until exec, /proc shows the PARENT's argv."""
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if marker in cli_config.process_argv(proc.pid):
+            return proc
+        time.sleep(0.02)
+    raise AssertionError(f"process {proc.pid} never exec'd with {marker}")
+
+
 def _free_port():
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -217,7 +227,7 @@ class LegacyPidAdoptionTests(unittest.TestCase):
         )
         self.addCleanup(proc.wait)
         self.addCleanup(proc.kill)
-        return proc
+        return _wait_for_exec(proc, str(script_path))
 
     def test_this_checkouts_legacy_server_is_adopted_and_migrated(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -289,7 +299,7 @@ class PidOwnershipTests(unittest.TestCase):
         proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", *argv])
         self.addCleanup(proc.wait)
         self.addCleanup(proc.kill)
-        return proc
+        return _wait_for_exec(proc, argv[0])
 
     def _check_trial_cannot_touch_main(self, main, trial, pid_file):
         started = main.ctl("start")
