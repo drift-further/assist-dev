@@ -100,6 +100,7 @@ def get_settings():
             "defaults": state.DEFAULT_SETTINGS,
             "pid": pid,
             "uptime": uptime,
+            "parked": park.FEATURES_PARKED,
         }
     )
 

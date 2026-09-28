@@ -9,11 +9,6 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Kill existing process
-if [ -f /tmp/assist-server.pid ]; then
-    kill "$(cat /tmp/assist-server.pid)" 2>/dev/null
-    sleep 1
-fi
-
-# Start fresh
-./assist-ctl start
+# assist-ctl finds the PID file itself (per-user state dir, or ASSIST_PID_FILE
+# in .env), so a restart needs no path here.
+./assist-ctl restart

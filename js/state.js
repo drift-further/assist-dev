@@ -24,6 +24,11 @@ async function loadSettings() {
             _serverPid = d.pid;
             _serverUptime = d.uptime;
             CLAUDE_CMD = claudeCmdForMode(SETTINGS.server.claude_mode);
+            // Automate and Container ship hidden (index.html) and appear only
+            // once the server says their execution intents are no longer parked.
+            if (d.parked === false) {
+                document.querySelectorAll('[data-parked]').forEach(el => { el.style.display = ''; });
+            }
         }
     } catch(e) {}
 }

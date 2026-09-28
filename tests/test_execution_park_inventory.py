@@ -40,6 +40,11 @@ def _classify(result: str, *functions: str) -> None:
 
 
 _classify("fixed:observe", "serve.py:start_application_backgrounds")
+# The ASSIST_BIND listener: the same WSGI app on one more address. Every
+# request it serves passes the same auth and park gates as loopback.
+_classify("fixed:observe", "serve.py:start_extra_listeners")
+# `git ls-files` on the venv path, read-only, before activation is allowed.
+_classify("fixed:observe", "shared/tmux.py:venv_is_trusted")
 _classify("fixed:observe", "shared/opencode.py:pane_context", "shared/opencode.py:run_cli")
 _classify(
     "intent:automate_trust_answer|automate_auto_answer",

@@ -926,11 +926,35 @@ def detect_venv(project_path):
     return None
 
 
+def venv_is_trusted(project_path, venv):
+    """True if `<project>/<venv>` is a venv this user built, not one a clone shipped.
+
+    Two tests, both cheap. `pyvenv.cfg` is written by `python -m venv` and
+    virtualenv alike; a bare `env/bin/activate` without it is just a script.
+    And git must not track it: a committed venv arrived with the clone, so its
+    activate script is the repo author's code. No git, or no repository, reads
+    as untracked -- nothing arrived through git in that case.
+    """
+    venv_path = Path(project_path) / venv
+    if not (venv_path / "pyvenv.cfg").is_file():
+        return False
+    try:
+        tracked = subprocess.run(
+            ["git", "-C", str(project_path), "ls-files", "-z", "--", venv],
+            capture_output=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True
+    return not (tracked.returncode == 0 and tracked.stdout)
+
+
 def activate_venv(target, project_path):
     """Source the project's virtualenv in a pane Assist just created.
 
     Returns the venv directory name actually activated, or None when nothing
-    was sent -- either no venv is present or server.venv_auto_activate is off.
+    was sent -- no venv is present, server.venv_auto_activate is off, or the
+    venv fails venv_is_trusted().
     Detection stays separate (detect_venv), so a project can still report and
     badge its venv while the switch is off.
 
@@ -950,7 +974,7 @@ def activate_venv(target, project_path):
         return None
     project_path = Path(project_path)
     venv = detect_venv(project_path)
-    if not venv:
+    if not venv or not venv_is_trusted(project_path, venv):
         return None
     activate = project_path / venv / "bin" / "activate"
     tmux_send_text(target, f"source {shlex.quote(str(activate))}")

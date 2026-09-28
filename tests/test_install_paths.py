@@ -1,0 +1,232 @@
+"""Where the process controller keeps its PID file and log, and what it reads first.
+
+The defaults used to be fixed names in the shared /tmp: a second checkout on
+the same host (a user trying a new release beside the old one) shared the PID
+file, so `assist stop` in the trial copy killed the real server. And
+assist-ctl computed the port before sourcing `.env`, so a port set only there
+was ignored when the script ran directly.
+
+The live host was started under the old defaults, so a server whose legacy
+/tmp PID file names THIS checkout's serve.py is adopted -- and one that runs
+anything else is not. Both directions are pinned here.
+"""
+
+import os
+import shutil
+import socket
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from cli import config as cli_config
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+# A stand-in for serve.py: answers /health on the port it is given, nothing else.
+_FAKE_SERVE = """
+import http.server, sys
+port = int(sys.argv[sys.argv.index("--port") + 1])
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200); self.end_headers(); self.wfile.write(b'{"status":"ok"}')
+    def log_message(self, *a): pass
+print("fake serve up", flush=True)
+http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
+"""
+
+
+def _free_port():
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+class _Checkout:
+    """A throwaway copy of assist-ctl with its own .env and fake serve.py."""
+
+    def __init__(self, root: Path, env_lines=()):
+        self.home = root / "checkout"
+        self.home.mkdir()
+        script = (ROOT / "assist-ctl").read_text()
+        # Hard stop, not a failure: a control script that still defaults to the
+        # shared /tmp PID file would read the LIVE server's PID from it, and
+        # this class's `stop` would kill that server. That happened once, when
+        # these tests were run against the pre-change script.
+        if "ASSIST_PID_FILE:-/tmp" in script:
+            raise RuntimeError("assist-ctl still defaults to /tmp; refusing to run it")
+        shutil.copy2(ROOT / "assist-ctl", self.home / "assist-ctl")
+        (self.home / "serve.py").write_text(_FAKE_SERVE)
+        (self.home / ".env").write_text("".join(f"{line}\n" for line in env_lines))
+        self.state_home = root / "state"
+        self.legacy_pid = root / "legacy-assist-server.pid"
+        self.env = {
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "HOME": str(root / "home"),
+            "XDG_STATE_HOME": str(self.state_home),
+            "ASSIST_LEGACY_PID_FILE": str(self.legacy_pid),
+        }
+
+    def ctl(self, *args, timeout=30):
+        return subprocess.run(
+            [str(self.home / "assist-ctl"), *args],
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
+    def paths(self):
+        out = self.ctl("paths")
+        assert out.returncode == 0, out.stderr
+        return dict(line.split("=", 1) for line in out.stdout.splitlines())
+
+
+class ControlScriptPathTests(unittest.TestCase):
+    def test_defaults_live_in_the_per_user_state_dir(self):
+        with tempfile.TemporaryDirectory() as raw:
+            checkout = _Checkout(Path(raw))
+            paths = checkout.paths()
+            state_dir = checkout.state_home / "drift-assist"
+            self.assertEqual(paths["pid_file"], str(state_dir / "assist.pid"))
+            self.assertEqual(paths["log_file"], str(state_dir / "assist.log"))
+            self.assertNotIn("/tmp/assist-server", "".join(paths.values()))
+
+    def test_port_set_only_in_dotenv_is_honoured(self):
+        # F10: the port used to be read before .env was sourced.
+        with tempfile.TemporaryDirectory() as raw:
+            checkout = _Checkout(Path(raw), ["ASSIST_PORT=9123"])
+            self.assertEqual(checkout.paths()["port"], "9123")
+
+    def test_explicit_paths_in_dotenv_still_win(self):
+        with tempfile.TemporaryDirectory() as raw:
+            custom = Path(raw) / "custom"
+            checkout = _Checkout(
+                Path(raw),
+                [f"ASSIST_PID_FILE={custom}/a.pid", f"ASSIST_LOG_FILE={custom}/a.log"],
+            )
+            paths = checkout.paths()
+            self.assertEqual(paths["pid_file"], f"{custom}/a.pid")
+            self.assertEqual(paths["log_file"], f"{custom}/a.log")
+
+    def test_cli_resolves_the_same_defaults_as_the_control_script(self):
+        with tempfile.TemporaryDirectory() as raw:
+            checkout = _Checkout(Path(raw))
+            env = {
+                "HOME": checkout.env["HOME"],
+                "XDG_STATE_HOME": checkout.env["XDG_STATE_HOME"],
+                "XDG_CONFIG_HOME": str(Path(raw) / "config"),
+                "ASSIST_HOME": str(checkout.home),
+            }
+            with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
+                cli_config, "LEGACY_PID_FILE", checkout.legacy_pid
+            ):
+                resolved = cli_config.resolve()
+            paths = checkout.paths()
+            self.assertEqual(str(resolved.pid_file), paths["pid_file"])
+            self.assertEqual(str(resolved.log_file), paths["log_file"])
+
+    def test_start_creates_a_private_state_dir_rotates_and_stops(self):
+        with tempfile.TemporaryDirectory() as raw:
+            port = _free_port()
+            checkout = _Checkout(
+                Path(raw), [f"ASSIST_PORT={port}", "ASSIST_LOG_MAX_BYTES=100"]
+            )
+            state_dir = checkout.state_home / "drift-assist"
+            state_dir.mkdir(parents=True)
+            log = state_dir / "assist.log"
+            log.write_text("x" * 500)
+            try:
+                started = checkout.ctl("start")
+                self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
+                self.assertIn(f"on port {port}", started.stdout)
+                self.assertEqual(stat.S_IMODE(state_dir.stat().st_mode), 0o700)
+                self.assertTrue((state_dir / "assist.pid").is_file())
+                # The oversize log moved aside; the new one is fresh.
+                self.assertEqual((state_dir / "assist.log.1").read_text(), "x" * 500)
+                self.assertNotIn("x" * 500, log.read_text())
+            finally:
+                stopped = checkout.ctl("stop")
+            self.assertIn("Stopped", stopped.stdout)
+            self.assertFalse((state_dir / "assist.pid").exists())
+
+    def test_a_small_log_is_not_rotated(self):
+        with tempfile.TemporaryDirectory() as raw:
+            port = _free_port()
+            checkout = _Checkout(Path(raw), [f"ASSIST_PORT={port}"])
+            state_dir = checkout.state_home / "drift-assist"
+            state_dir.mkdir(parents=True)
+            (state_dir / "assist.log").write_text("kept\n")
+            try:
+                self.assertEqual(checkout.ctl("start").returncode, 0)
+            finally:
+                checkout.ctl("stop")
+            self.assertFalse((state_dir / "assist.log.1").exists())
+            self.assertTrue((state_dir / "assist.log").read_text().startswith("kept\n"))
+
+
+class LegacyPidAdoptionTests(unittest.TestCase):
+    """A server started under the /tmp defaults, before this change."""
+
+    def _spawn(self, script_path):
+        # Anything whose command line names the path is enough for the check.
+        proc = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)", str(script_path)]
+        )
+        self.addCleanup(proc.wait)
+        self.addCleanup(proc.kill)
+        return proc
+
+    def test_this_checkouts_legacy_server_is_adopted_and_migrated(self):
+        with tempfile.TemporaryDirectory() as raw:
+            checkout = _Checkout(Path(raw), [f"ASSIST_PORT={_free_port()}"])
+            proc = self._spawn(checkout.home / "serve.py")
+            checkout.legacy_pid.write_text(f"{proc.pid}\n")
+
+            with mock.patch.dict(
+                os.environ,
+                {"HOME": checkout.env["HOME"], "XDG_STATE_HOME": checkout.env["XDG_STATE_HOME"],
+                 "XDG_CONFIG_HOME": str(Path(raw) / "config"), "ASSIST_HOME": str(checkout.home)},
+                clear=True,
+            ), mock.patch.object(cli_config, "LEGACY_PID_FILE", checkout.legacy_pid):
+                self.assertEqual(cli_config.resolve().pid_file, checkout.legacy_pid)
+
+            status = checkout.ctl("status")
+            self.assertIn(f"PID {proc.pid}", status.stdout)
+            new_pid = checkout.state_home / "drift-assist" / "assist.pid"
+            self.assertEqual(new_pid.read_text().strip(), str(proc.pid))
+            self.assertFalse(checkout.legacy_pid.exists())
+
+            stopped = checkout.ctl("stop")
+            self.assertIn(f"Stopped (PID {proc.pid})", stopped.stdout)
+            proc.wait(timeout=5)
+
+    def test_another_checkouts_legacy_server_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as raw:
+            checkout = _Checkout(Path(raw), [f"ASSIST_PORT={_free_port()}"])
+            other = Path(raw) / "other-checkout" / "serve.py"
+            proc = self._spawn(other)
+            checkout.legacy_pid.write_text(f"{proc.pid}\n")
+
+            with mock.patch.dict(
+                os.environ,
+                {"HOME": checkout.env["HOME"], "XDG_STATE_HOME": checkout.env["XDG_STATE_HOME"],
+                 "XDG_CONFIG_HOME": str(Path(raw) / "config"), "ASSIST_HOME": str(checkout.home)},
+                clear=True,
+            ), mock.patch.object(cli_config, "LEGACY_PID_FILE", checkout.legacy_pid):
+                self.assertNotEqual(cli_config.resolve().pid_file, checkout.legacy_pid)
+
+            stopped = checkout.ctl("stop")
+            self.assertIn("not running", stopped.stdout)
+            time.sleep(0.2)
+            self.assertIsNone(proc.poll(), "another checkout's server was killed")
+            self.assertTrue(checkout.legacy_pid.exists())
+
+
+if __name__ == "__main__":
+    unittest.main()

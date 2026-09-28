@@ -146,6 +146,7 @@ _LOGIN_PAGE = """<!DOCTYPE html>
   .req-state.waiting {{ color:#83d7a2; }}
   .req-code {{ font:500 34px 'JetBrains Mono',ui-monospace,monospace; letter-spacing:10px;
                color:#e7e9ea; margin-bottom:6px; text-indent:10px; }}
+  .first {{ margin:18px 0 0; text-align:center; font-size:12px; }}
   .foot {{ margin-top:18px; padding-top:17px; border-top:1px solid #1c2126; text-align:center;
            color:#5f686e; font:9px 'JetBrains Mono',ui-monospace,monospace; letter-spacing:.06em; }}
   @media (max-width:480px) {{
@@ -168,6 +169,7 @@ _LOGIN_PAGE = """<!DOCTYPE html>
   </div>
   <div class="err">{error}</div>
   {request_ui}
+  <p class="first">No device signed in yet? Run <code>assist pair</code> on the host.</p>
   <div class="foot">PRIVATE TERMINAL ACCESS</div>
 </form></body></html>"""
 

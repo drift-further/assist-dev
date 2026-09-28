@@ -39,9 +39,15 @@ before its inner subnet and allowlist gates can run. The posture doc is
 **Any test script hitting the API must send the token or it gets 401** — that is the most likely
 cause of a sudden "everything returns 401". Rotate by deleting `auth_token` and restarting.
 
-Flask binds **127.0.0.1 only**; nginx listens on the LAN address and forwards to loopback, so no
-client URL changed. **The nginx vhost lives in a separate infrastructure repo** — not here, so a
-fresh clone of this repo will not reproduce LAN access on its own.
+Flask always binds **127.0.0.1**, plus the one LAN address in `ASSIST_BIND` if set (`assist expose`
+writes it; `shared/listen.py` refuses a wildcard). This host leaves `ASSIST_BIND` unset: nginx
+listens on the LAN address and forwards to loopback. **The nginx vhost lives in a separate
+infrastructure repo** — a fresh clone gets LAN access through `assist expose` instead.
+
+PID and log default to `${XDG_STATE_HOME:-~/.local/state}/drift-assist/` (no longer `/tmp`). A
+server started under the old `/tmp/assist-server.pid` is adopted by `assist-ctl` only when its
+command line runs this checkout's `serve.py`. **Never run an older `assist-ctl` from a test** —
+its `/tmp` default reads the live PID file, and its `stop` kills the live server.
 
 **No build step.** Frontend is plain ES6 + CSS custom properties. No npm, no bundler, no framework. This is deliberate — zero frontend dependencies.
 
@@ -75,6 +81,10 @@ Run the full unittest regression suite from the repo root:
 | `test_client_safety` | the git commit box never submits on Enter, and Commit & push confirms with branch, upstream and changed-file count from `/api/git/preview` (run against a real repository; remote credentials stripped). A 401 from `/poll`, or a WebSocket whose handshake never opened, sends the browser to `/login`. `_projStepper` escapes its value |
 | `test_autoyes_parity` | one prompt corpus run through BOTH detectors — the server's in Python and `js/actions.js` under Node — at two detection depths, in both directions. They drifted: the server answered "1. Yes" on a question whose top rule had scrolled away while the browser showed a question, and the browser hard-coded the depth the server reads from Settings (now shipped in `/poll`) |
 | `test_autoyes_failsafe` | Auto-Yes leaves the prompt to the human whenever it cannot be sure, with real scanner ticks: a cancel survives a failed identity probe and ends only when the prompt does; the pane is re-captured as the answer goes and must show the same prompt, codex vetoes included; arming is an absolute `/autoyes/set` so a stale browser cannot toggle it the wrong way; a hand-armed session leaves shell panes alone unless `autoyes.shell_ok`; STOP is a 44px target and the browser clears the countdown only on a cancel the server confirmed (a refused one used to say "Cancelled" while the answer went out). Each with the answer that must still happen |
+| `test_install_paths` | PID and log live in `${XDG_STATE_HOME:-~/.local/state}/drift-assist/` (0700), `assist-ctl` sources `.env` before computing its port, the log rotates at start, and the CLI resolves the same paths. A server still on the old `/tmp/assist-server.pid` is adopted only if it runs THIS checkout's `serve.py` (both directions). Runs real copies of `assist-ctl` with a fake `serve.py`, and refuses to run a script that still defaults to `/tmp` — running the old one from a test once stopped the live server |
+| `test_expose` | `ASSIST_BIND` adds one LAN listener beside loopback and refuses a wildcard or hostname; `assist expose` refuses loopback/public addresses, edits only its own `.env` lines, and restarts only a running server |
+| `test_pair_and_service` | `assist pair` opens the window and prints URL + QR (golden grids, each verified with a real decoder), and refuses without opening anything when the install is loopback-only; `assist token` prints the value only to a TTY; the service unit is written for this checkout, and start/stop/restart/status defer to it — never to another checkout's unit |
+| `test_install_surface` | the one `FEATURES_PARKED` flag hides Automate/Container in the UI and CLI help (and shows them when un-parked); installer floors (Python 3.10, tmux 3.2), the hashed lock, the opt-in service step, and the start → expose → pair closing steps |
 
 One test is **not** in that command, because it needs a browser and a running server:
 `tests/playwright_vault_wire.js` proves the secret vault on the wire rather than in the source —
@@ -168,7 +178,12 @@ All three are gitignored (runtime data). Defaults live in `shared/state.py` as `
 | `assist autoyes <session> (--on\|--off\|--status) [--delay N]` | Persistently set or inspect auto-yes; enabled delays are clamped to 0.1–30 seconds |
 | `assist autoyes --global (--on\|--off\|--status) [--delay N]` | Set or inspect the all-sessions switch |
 | `assist studio [args]` | Execute a separate `studio` CLI on `PATH`; fail clearly when none is installed |
-| `assist help` | Show the full command reference |
+| `assist service install\|uninstall\|status` | systemd `--user` unit (Linux) or launchd agent (macOS) running `assist-ctl run`; start/stop/restart/status then go through it |
+| `assist expose [--ip ADDR] [--off]` | Set `ASSIST_BIND` to the LAN address (never a wildcard or public address), add its origin to `ASSIST_ALLOWED_ORIGINS`, restart if running |
+| `assist pair [--minutes N] [--url URL]` | Open the open-access window over the header token; print the phone URL and a terminal QR (`qrencode` if present, else `cli/qr.py`) |
+| `assist token` | Print the token path; the value only to a TTY |
+| `assist --version` | Version from `pyproject.toml`, plus the git commit |
+| `assist help` | Show the full command reference (container verbs hidden while `FEATURES_PARKED`) |
 
 Every session verb supports `-h`/`--help`, with descriptions for each positional argument and flag. `--autoyes` on `send` or `wait` applies only during that one wait and restores the prior setting afterward; `assist autoyes` changes the persistent per-session setting, and its `--delay` is valid only with `--on`.
 
@@ -208,7 +223,7 @@ separately via `register_streaming(sock)`.
 
 - **WebSocket terminal streaming**: flask-sock, captures tmux panes, streams to connected clients
 - **Smart actions**: JS pattern detection for permission prompts and numbered options — surfaces one-tap mobile actions. Mirrors the server matchers in `routes/autoyes.py`; keep the two in step
-- **Venv auto-activation**: a pane opened in a project directory sources that project's `venv`, `.venv` or `env` before anything else runs — so a configured init command, and anything typed after it, executes inside the venv. `shared/tmux.py:activate_venv` is the ONLY implementation; every pane-creating surface calls it rather than sending its own `source`. Gated by `server.venv_auto_activate` (Settings → Server Controls → Auto-Activate venv, default `on`). Detection is separate: the venv badge and the launch response's `venv` field stay honest with the switch off, and `venv_activated` says whether the pane is actually in it. `/api/venv/create` activates regardless — that button is the user asking directly
+- **Venv auto-activation**: a pane opened in a project directory sources that project's `venv`, `.venv` or `env` before anything else runs — so a configured init command, and anything typed after it, executes inside the venv. `shared/tmux.py:activate_venv` is the ONLY implementation; every pane-creating surface calls it rather than sending its own `source`. Gated by `server.venv_auto_activate` (Settings → Server Controls → Auto-Activate venv, default `off` for new installs; a saved `on` is kept), and even when on it sources only a venv with `pyvenv.cfg` that git does not track (`venv_is_trusted`), because a cloned repo can ship its own `env/bin/activate`. Detection is separate: the venv badge and the launch response's `venv` field stay honest with the switch off, and `venv_activated` says whether the pane is actually in it. `/api/venv/create` activates regardless — that button is the user asking directly
 - **Prompt segments**: a favorite given a handle becomes `[handle]`; `shared/segments.py` expands it server-side in `/type` (opt-in via an `expand` flag) while history keeps the token form
 - **Auto-yes**: Background scanner with per-session countdown timers for auto-approving prompts. An `autoyes.all_sessions` switch arms every agent pane at once — resolved at scan time (runtime map → project settings → switch), so new sessions are covered with no backfill — with a per-session opt-out. Codex panes are vetoed rather than answered while the luna model or one of codex's model-downgrade menus is on screen: a bare Enter there re-tiers the pane
 - **Prompt popups** (`js/prompt-popup.js`): they notify, they do not answer. "Sudo password requested" for a pane anywhere at sudo's password prompt (`/poll` `sudo_prompts`; `shared/tmux.py:sudo_prompt_waiting` needs the prompt line AND exactly one childless foreground waiter that is `sudo`, with echo off), with **Send**, which types the vault's `$sudo` as a secret and carries `expect_prompt_pid` for `/type` to check (Open tab when no `$sudo` is stored). "Question pending" for any prompt the action bar detects in a tab not in view, with **Open tab** only (each `/poll` scan entry carries `prompt`: fingerprint, summary, and whether Auto-Yes will answer it, in which case no popup). `ui.popup_autohide` and `ui.popup_seconds` (Settings → UI & Behavior) hide each popup after N seconds, or keep it until acted on, closed, or gone
