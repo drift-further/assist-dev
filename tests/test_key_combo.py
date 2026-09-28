@@ -36,6 +36,13 @@ def combo(key, *, ctrl=False, alt=False, shift=False):
     return {"ctrl": ctrl, "alt": alt, "shift": shift, "key": key}
 
 
+def _enter(case, manager):
+    """TestCase.enterContext, which only exists from Python 3.11; the floor is 3.10."""
+    value = manager.__enter__()
+    case.addCleanup(manager.__exit__, None, None, None)
+    return value
+
+
 class GrammarAcceptsTests(unittest.TestCase):
     CASES = [
         (combo("a"), "a"),
@@ -125,12 +132,12 @@ class KeyRouteComboTests(unittest.TestCase):
     def setUp(self):
         self.client = _app()
         self.expected = object()
-        self.enterContext(mock.patch.object(
+        _enter(self, mock.patch.object(
             input_routes, "expected_target_identity", return_value=self.expected))
-        self.deliver = self.enterContext(mock.patch.object(
+        self.deliver = _enter(self, mock.patch.object(
             input_routes, "generation_bound_delivery",
             return_value=tmux.DeliveryResult("delivered")))
-        self.enterContext(mock.patch.object(input_routes.state, "touch_activity"))
+        _enter(self, mock.patch.object(input_routes.state, "touch_activity"))
 
     def test_a_combo_is_delivered_as_one_tmux_key(self):
         response = self.client.post("/key", json={
@@ -184,7 +191,7 @@ class RealTmuxComboTests(unittest.TestCase):
         self.root = Path(tempfile.mkdtemp(prefix="assist-keycombo-", dir="/tmp"))
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         self.socket = self.root / "private.sock"
-        self.enterContext(mock.patch.dict(os.environ, {
+        _enter(self, mock.patch.dict(os.environ, {
             "TMUX": f"{self.socket},0,0",
             "ASSIST_HOME": str(self.root),
             "ASSIST_LAUNCH_PROVENANCE_ROOT": str(self.root / "registry"),
@@ -209,7 +216,7 @@ class RealTmuxComboTests(unittest.TestCase):
             "display-message", "-p", "-t", "=keys:", "#{pane_id}").stdout.strip()
         # setraw() flushes pending input, so nothing is sent before it says so.
         self.wait_for(b"ready")
-        self.enterContext(mock.patch.object(input_routes.state, "touch_activity"))
+        _enter(self, mock.patch.object(input_routes.state, "touch_activity"))
         self.client = _app()
 
     def run_tmux(self, *args, check=True):

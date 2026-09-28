@@ -87,7 +87,8 @@ the host.*
 
 `assist service install` writes a systemd `--user` unit on Linux or a launchd
 agent on macOS, and starts it. From then on `assist start`, `stop`, `restart`
-and `status` go through the unit. On Linux it starts at login. To keep it
+and `status` go through the unit. Stopping or restarting it stops only the web
+server: tmux sessions it started, and the agents in them, keep running. On Linux it starts at login. To keep it
 running while you are logged out, and to start it at boot, run
 `sudo loginctl enable-linger $USER` once. `assist service status` and
 `assist service uninstall` do what they say.

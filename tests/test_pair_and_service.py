@@ -175,11 +175,14 @@ class ServiceTests(unittest.TestCase):
         self.assertIn(f"ExecStart={self.home / 'assist-ctl'} run\n", unit)
         self.assertIn("Environment=PATH=/opt/agent/bin:/usr/bin\n", unit)
         self.assertIn("WantedBy=default.target", unit)
+        # tmux started under the service must outlive it (test_service_lifecycle).
+        self.assertIn("KillMode=process\n", unit)
 
     def test_launchd_plist_runs_this_checkout(self):
         data = plistlib.loads(service.launchd_plist(self.home, "/usr/bin"))
         self.assertEqual(data["ProgramArguments"], [str(self.home / "assist-ctl"), "run"])
         self.assertTrue(data["RunAtLoad"])
+        self.assertIs(data["AbandonProcessGroup"], True)
 
     def test_install_stops_a_manual_server_writes_enables_and_hints_linger(self):
         calls, patched = self._run_recorder()
