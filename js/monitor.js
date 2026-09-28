@@ -465,8 +465,8 @@ function renderProjectSettings() {
     html += '<div class="proj-section-hdr">Auto-Yes</div>';
     html += _projRow('Delay', _projStepper('autoyes', 'delay', s.autoyes.delay, 1, 30, 's'));
     html += _projRow('Auto-enable', _projToggle('autoyes', 'enabled_default', s.autoyes.enabled_default));
-    // Off: a session armed by hand answers agent panes only (routes/autoyes.py:_shell_ok).
-    html += _projRow('Shell panes', _projToggle('autoyes', 'shell_ok', !!s.autoyes.shell_ok));
+    // "Shell panes" (autoyes.shell_ok) is in the Auto-Yes delay picker
+    // (js/actions.js), which stays reachable while this panel is parked.
 
     // Triggers section
     html += '<div class="proj-section-hdr">Triggers</div>';

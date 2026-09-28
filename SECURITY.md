@@ -145,8 +145,8 @@ a restart.
 **A session armed by hand follows the same shell rule.** Whatever runs in a
 shell pane decides what it prints, so `curl … | sh` or `cat` of a hostile file
 can draw a `(y/n)` line. Shell panes are answered only in a session armed by
-hand whose project settings say `autoyes.shell_ok: true` (Automate panel →
-Auto-Yes → Shell panes); it ships off, and the all-sessions switch ignores it.
+hand whose project settings say `autoyes.shell_ok: true` (Shell panes, in the
+Auto-Yes delay picker); it ships off, and the all-sessions switch ignores it.
 
 Shipped defaults, which a fresh clone gets because `settings.json` is gitignored:
 

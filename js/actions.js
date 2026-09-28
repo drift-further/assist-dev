@@ -36,6 +36,61 @@ function showAutoYesPicker() {
     if (labelEl) labelEl.textContent = on ? 'Change delay' : 'Auto-Yes delay';
     picker.classList.add('visible');
     _autoyesPickerVisible = true;
+    _renderAyShell(session);
+    _loadAyShellOk(session);
+}
+
+// "Shell panes" (autoyes.shell_ok, per session). It lives here rather than in
+// the Automate panel, which is hidden while Automate is parked.
+let _ayShellOk = {};  // session -> bool, from that session's project settings
+
+async function _loadAyShellOk(session) {
+    try {
+        const resp = await fetch(`/api/project-settings/${encodeURIComponent(session)}`);
+        const data = await resp.json();
+        if (data.ok && data.settings && data.settings.autoyes) {
+            _ayShellOk[session] = data.settings.autoyes.shell_ok === true;
+        }
+    } catch (e) { /* keep what is shown */ }
+    _renderAyShell(session);
+}
+
+function _renderAyShell(session) {
+    const el = document.getElementById('ay-pick-shell');
+    if (!el) return;
+    const on = !!_ayShellOk[session];
+    el.classList.toggle('active', on);
+    el.textContent = on ? 'ON' : 'OFF';
+    el.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+
+async function ayPickShellToggle() {
+    const target = _smartActionTarget || _termTarget;
+    const session = target ? target.split(':')[0] : '';
+    const el = document.getElementById('ay-pick-shell');
+    if (!session || !el) return;
+    const next = !_ayShellOk[session];
+    el.disabled = true;
+    try {
+        const resp = await fetch(`/api/project-settings/${encodeURIComponent(session)}`, {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({autoyes: {shell_ok: next}}),
+        });
+        const data = await resp.json();
+        // Shown only as the server saved it, so a refused PATCH never reads as on.
+        if (data.ok && data.settings && data.settings.autoyes) {
+            _ayShellOk[session] = data.settings.autoyes.shell_ok === true;
+            showFlash('ok', _ayShellOk[session] ? 'Shell panes on' : 'Shell panes off');
+        } else {
+            showFlash('err', data.error || 'Save failed');
+        }
+    } catch (e) {
+        showFlash('err', 'Save failed');
+    } finally {
+        el.disabled = false;
+        _renderAyShell(session);
+    }
 }
 
 // Step by 1s at/above 1s, by 100ms below it (min 100ms, max 30s).

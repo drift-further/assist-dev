@@ -621,6 +621,11 @@
                 <button class="ay-pick-off" id="ay-pick-off" onclick="ayPickTurnOff()" style="display:none">Off</button>
                 <button class="ay-pick-x" onclick="ayPickCancel()">&times;</button>
                 <span class="ay-pick-hint" id="ay-pick-hint"></span>
+                <div class="ay-pick-shell">
+                    <span class="ay-pick-shell-label">Shell panes</span>
+                    <button class="ay-pick-shell-tog" id="ay-pick-shell" onclick="ayPickShellToggle()" aria-pressed="false">OFF</button>
+                    <span class="ay-pick-shell-hint">Off: agent panes only. On: plain shell (y/n) prompts too, while this session is armed here.</span>
+                </div>
             </div>
             <!-- A tap anywhere on the bar stops the countdown; STOP is its label. -->
             <div class="autoyes-countdown" id="autoyes-countdown" onclick="cancelAutoYesCountdown()">

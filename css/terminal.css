@@ -640,6 +640,24 @@ body.tabs-wrap .tabs-scroll-btn { display: none; }
     -webkit-tap-highlight-color: transparent;
 }
 .ay-pick-x:active { color: var(--red); }
+.ay-pick-shell {
+    flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
+    padding-top: 6px; border-top: 1px solid rgba(225, 181, 106, 0.2);
+}
+.ay-pick-shell-label { font-size: 11px; color: var(--amber); font-weight: 600; }
+.ay-pick-shell-tog {
+    font-family: var(--font); font-size: 11px; font-weight: 700;
+    color: var(--text-dim); background: transparent;
+    border: 1px solid var(--border); border-radius: 4px;
+    min-height: 44px; min-width: 60px; padding: 0 12px; cursor: pointer;
+    margin-left: auto;
+    -webkit-tap-highlight-color: transparent;
+}
+.ay-pick-shell-tog.active {
+    color: #111; background: var(--amber); border-color: var(--amber);
+}
+.ay-pick-shell-tog:disabled { opacity: 0.5; }
+.ay-pick-shell-hint { flex-basis: 100%; font-size: 10px; color: var(--text-dim); }
 
 /* Auto-Yes countdown bar */
 .autoyes-countdown {

@@ -411,6 +411,18 @@ class StopTargetTests(unittest.TestCase):
         self.assertIn('id="ay-pick-hint"', html)
         self.assertIn("Answers this session's permission prompts after", (ROOT / "js/actions.js").read_text())
 
+    def test_shell_panes_sits_in_the_delay_picker_not_the_automate_panel(self):
+        # The Automate panel is hidden while Automate is parked, so the toggle
+        # lives beside the delay, where it stays reachable.
+        html = (ROOT / "index.html").read_text()
+        picker = html[html.index('id="autoyes-picker"'):]
+        picker = picker[:picker.index('id="autoyes-countdown"')]
+        self.assertIn('id="ay-pick-shell"', picker)
+        actions = (ROOT / "js/actions.js").read_text()
+        self.assertIn("{autoyes: {shell_ok: next}}", actions)
+        self.assertIn("data.settings.autoyes.shell_ok === true", actions)
+        self.assertNotIn("'shell_ok'", (ROOT / "js/monitor.js").read_text())
+
 
 if __name__ == "__main__":
     unittest.main()
