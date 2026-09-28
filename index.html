@@ -12,7 +12,7 @@
     <link rel="stylesheet" href="/css/input.css?v=9">
     <link rel="stylesheet" href="/css/terminal.css?v=14">
     <link rel="stylesheet" href="/css/opencode.css?v=2">
-    <link rel="stylesheet" href="/css/drawers.css?v=4">
+    <link rel="stylesheet" href="/css/drawers.css?v=5">
     <link rel="stylesheet" href="/css/widgets.css?v=2">
     <link rel="stylesheet" href="/css/commands.css?v=2">
     <link rel="stylesheet" href="/css/autocomplete.css?v=2">
@@ -107,7 +107,57 @@
     <div class="drawer-left" id="drawer-left">
         <div class="drawer-header">
             <span>More Keys</span>
-            <button class="drawer-close" onclick="closeLeftDrawer()">&times;</button>
+            <div class="drawer-header-actions">
+                <button class="combo-toggle" id="combo-toggle" aria-pressed="false" onclick="toggleKeyCombo()">Any key</button>
+                <button class="drawer-close" onclick="closeLeftDrawer()">&times;</button>
+            </div>
+        </div>
+        <!-- "Any key": sticky Ctrl/Alt/Shift, then one tap sends one combo through
+             /key's combo grammar (shared/key_combo.py) and clears them. No data-key
+             here: js/keylabels.js relabels and hides [data-key] buttons per agent. -->
+        <div class="combo-panel" id="combo-panel">
+            <div class="hk-grid combo-mods">
+                <button class="hk-btn hk-dim combo-mod" data-mod="ctrl" aria-pressed="false" onclick="toggleComboMod('ctrl')"><span class="hk-label">Ctrl</span></button>
+                <button class="hk-btn hk-dim combo-mod" data-mod="alt" aria-pressed="false" onclick="toggleComboMod('alt')"><span class="hk-label">Alt</span></button>
+                <button class="hk-btn hk-dim combo-mod" data-mod="shift" aria-pressed="false" onclick="toggleComboMod('shift')"><span class="hk-label">Shift</span></button>
+            </div>
+            <input class="combo-char" id="combo-char" type="text" maxlength="1" autocomplete="off"
+                   autocapitalize="off" autocorrect="off" spellcheck="false"
+                   placeholder="Type one character to send" aria-label="Character to send">
+            <div class="combo-status" id="combo-status" aria-live="polite"></div>
+            <div class="hk-group-label">Function</div>
+            <div class="hk-grid">
+                <button class="hk-btn hk-dim" onclick="sendCombo('F1')"><span class="hk-label">F1</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('F2')"><span class="hk-label">F2</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('F3')"><span class="hk-label">F3</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('F4')"><span class="hk-label">F4</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('F5')"><span class="hk-label">F5</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('F6')"><span class="hk-label">F6</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('F7')"><span class="hk-label">F7</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('F8')"><span class="hk-label">F8</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('F9')"><span class="hk-label">F9</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('F10')"><span class="hk-label">F10</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('F11')"><span class="hk-label">F11</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('F12')"><span class="hk-label">F12</span></button>
+            </div>
+            <div class="hk-group-label">Special</div>
+            <div class="hk-grid">
+                <button class="hk-btn hk-dim" onclick="sendCombo('Escape')"><span class="hk-label">Esc</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('Tab')"><span class="hk-label">Tab</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('Enter')"><span class="hk-label">Enter</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('BSpace')"><span class="hk-label">Bksp</span></button>
+                <button class="hk-btn hk-dim hk-wide" onclick="sendCombo('Space')"><span class="hk-label">Space</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('Insert')"><span class="hk-label">Ins</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('Delete')"><span class="hk-label">Del</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('Home')"><span class="hk-label">Home</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('End')"><span class="hk-label">End</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('PgUp')"><span class="hk-label">PgUp</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('PgDn')"><span class="hk-label">PgDn</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('Left')"><span class="hk-label">&#9664;</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('Up')"><span class="hk-label">&#9650;</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('Down')"><span class="hk-label">&#9660;</span></button>
+                <button class="hk-btn hk-dim" onclick="sendCombo('Right')"><span class="hk-label">&#9654;</span></button>
+            </div>
         </div>
         <div class="hk-group-label" id="hk-cmd-label">Claude Code</div>
         <div class="hk-grid" id="hk-cmd-grid">
@@ -657,6 +707,7 @@
     <script src="/js/segments.js?v=3"></script>
     <script src="/js/drafts.js?v=5"></script>
     <script src="/js/keylabels.js?v=4"></script>
+    <script src="/js/keycombo.js?v=1"></script>
     <script src="/js/terminal.js?v=29"></script>
     <script src="/js/opencode.js?v=2"></script>
     <script src="/js/actions.js?v=16"></script>

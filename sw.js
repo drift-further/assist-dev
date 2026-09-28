@@ -1,7 +1,7 @@
 // sw.js — Service worker for Assist (network-first for static assets, cache fallback when offline)
 // Browsers register this only in a secure context (with a loopback exception),
 // so it is inert on the current plain-HTTP phone origin until TLS lands.
-const VERSION = 'assist-v3-047';
+const VERSION = 'assist-v3-048';
 const STATIC_CACHE = 'assist-static-' + VERSION;
 const STATIC_URLS = [
     '/',
@@ -15,7 +15,7 @@ const STATIC_URLS = [
     '/css/opencode.css?v=2',
     '/css/chrome.css?v=6',
     '/css/studio.css?v=5',
-    '/css/drawers.css?v=4',
+    '/css/drawers.css?v=5',
     '/css/widgets.css?v=2',
     '/css/commands.css?v=2',
     '/js/state.js?v=4',
@@ -23,6 +23,7 @@ const STATIC_URLS = [
     '/js/ui.js?v=6',
     '/js/vault.js?v=3',
     '/js/input.js?v=13',
+    '/js/keycombo.js?v=1',
     '/js/drafts.js?v=5',
     '/js/terminal.js?v=29',
     '/js/opencode.js?v=2',
