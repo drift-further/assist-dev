@@ -212,31 +212,74 @@ def state_dir_for(user_home: str) -> Path:
     return Path(xdg_state_home) / CONFIG_DIR_NAME
 
 
-def process_argv(pid: int) -> list[str]:
-    """argv of a live process: /proc keeps NUL boundaries; elsewhere ps, split on spaces."""
+# ASSIST_PROC_ROOT exists for tests that exercise the non-/proc (macOS) branch.
+PROC_ROOT = Path(os.environ.get("ASSIST_PROC_ROOT", "/proc"))
+_PYTHON_NAME = re.compile(r"[Pp]ython(3(\.[0-9]+)?)?")
+
+
+def process_argv(pid: int) -> list[str] | None:
+    """argv with its boundaries intact from /proc, or None where there is no /proc."""
     try:
-        return Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace").split("\0")
+        raw = (PROC_ROOT / str(pid) / "cmdline").read_bytes()
     except OSError:
-        pass
+        return None
+    return raw.decode(errors="replace").rstrip("\0").split("\0")
+
+
+def _process_command(pid: int) -> str:
+    """`ps` text: argv joined with spaces. Matched whole, never split."""
     try:
         return subprocess.run(
             ["ps", "-ww", "-o", "args=", "-p", str(pid)],
             capture_output=True,
             text=True,
             timeout=5,
-        ).stdout.split()
+        ).stdout.rstrip("\n")
     except (OSError, subprocess.SubprocessError):
-        return []
+        return ""
+
+
+def _is_python(path: str) -> bool:
+    return bool(_PYTHON_NAME.fullmatch(os.path.basename(path)))
+
+
+def _is_script(candidate: str, home: Path) -> bool:
+    scripts = {str(home / "serve.py"), str(home.resolve() / "serve.py")}
+    return candidate in scripts or os.path.realpath(candidate) in scripts
+
+
+def server_owner(pid: int, home: Path) -> str:
+    """"ours", "foreign" or "stale" -- the same rule as assist-ctl's pid_owner.
+
+    Ours only when the process IS this checkout's server: a Python interpreter
+    as the executable and this serve.py in the script position after it. A
+    reader or editor carrying the path (`tail -f <home>/serve.py`) is stale.
+    """
+    argv = process_argv(pid)
+    if argv is not None:
+        if len(argv) >= 2 and _is_python(argv[0]):
+            if _is_script(argv[1], home):
+                return "ours"
+            if argv[1].endswith("/serve.py"):
+                return "foreign"
+        return "stale"
+    # No /proc: every space in the joined text is a candidate boundary, since
+    # either path may contain spaces.
+    command = _process_command(pid)
+    scripts = (str(home / "serve.py"), str(home.resolve() / "serve.py"))
+    for index, character in enumerate(command):
+        if character != " " or not _is_python(command[:index]):
+            continue
+        tail = command[index + 1 :]
+        if any(tail == script or tail.startswith(script + " ") for script in scripts):
+            return "ours"
+        if re.match(r"(/.*?/serve\.py)( |$)", tail):  # absolute path in the script slot
+            return "foreign"
+    return "stale"
 
 
 def runs_checkout(pid: int, home: Path) -> bool:
-    """True when an argv element IS this checkout's serve.py -- not a substring of it.
-
-    Same rule as assist-ctl's pid_owner, so a reused PID or another checkout
-    whose path merely contains this one is never taken for this server.
-    """
-    candidates = {str(home / "serve.py"), str(home.resolve() / "serve.py")}
-    return any(arg in candidates for arg in process_argv(pid))
+    return server_owner(pid, home) == "ours"
 
 
 def _legacy_server_pid(home: Path) -> int | None:

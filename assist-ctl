@@ -69,36 +69,84 @@ rotate_log() {
 # The same script under its physical path, for a checkout reached through a symlink.
 SERVE_SCRIPT_REAL="$(cd -P "$SCRIPT_DIR" && pwd)/serve.py"
 
-# One argv element per line. /proc keeps the NUL boundaries, so a path with a
-# space still compares whole; elsewhere (macOS) ps is the best available.
-proc_args() {
-    if [[ -r "/proc/$1/cmdline" ]]; then
-        tr '\0' '\n' < "/proc/$1/cmdline" 2>/dev/null || true
+# /proc keeps argv's NUL boundaries. Where there is none (macOS), `ps` joins
+# argv with spaces, so that text is matched as a whole rather than split: a
+# checkout path may itself contain spaces. ASSIST_PROC_ROOT exists for tests.
+PROC_ROOT="${ASSIST_PROC_ROOT:-/proc}"
+
+is_python() {
+    local base="${1##*/}"
+    [[ "$base" =~ ^[Pp]ython(3(\.[0-9]+)?)?$ ]]
+}
+
+# True when $1 names this checkout's serve.py, by the path given or its
+# physical path (a checkout reached through a symlink).
+is_our_script() {
+    [[ "$1" == "$SERVE_SCRIPT" || "$1" == "$SERVE_SCRIPT_REAL" ]] && return 0
+    local dir
+    dir="$(cd -P "$(dirname "$1")" 2>/dev/null && pwd)" || return 1
+    [[ "$dir/${1##*/}" == "$SERVE_SCRIPT_REAL" ]]
+}
+
+# ours | foreign | stale from a boundary-preserving argv: a Python interpreter
+# as the executable, and serve.py in the script position right after it. A
+# reader or editor holding the same path (`tail -f .../serve.py`) is stale.
+owner_from_argv() {
+    (( $# >= 2 )) && is_python "$1" || { echo "stale"; return; }
+    if is_our_script "$2"; then
+        echo "ours"
+    elif [[ "$2" == */serve.py ]]; then
+        echo "foreign"
     else
-        ps -ww -o args= -p "$1" 2>/dev/null | tr ' ' '\n' || true
+        echo "stale"
     fi
 }
 
+# The same rule over `ps` text: "<interpreter> <script>[ <args>]", where either
+# path may contain spaces. Every space is a candidate boundary.
+owner_from_command() {
+    local cmd="$1" i interp tail script
+    for (( i = 1; i < ${#cmd}; i++ )); do
+        [[ "${cmd:i:1}" == " " ]] || continue
+        interp="${cmd:0:i}"
+        is_python "$interp" || continue
+        tail="${cmd:i+1}"
+        for script in "$SERVE_SCRIPT" "$SERVE_SCRIPT_REAL"; do
+            if [[ "$tail" == "$script" || "$tail" == "$script "* ]]; then
+                echo "ours"
+                return
+            fi
+        done
+        # The script position holds an absolute path (assist-ctl always passes
+        # one); `python -c ... /x/serve.py` carries the path as data instead.
+        if [[ "$tail" =~ ^(/.*/serve\.py)( |$) ]]; then
+            echo "foreign"
+            return
+        fi
+    done
+    echo "stale"
+}
+
 # Who a recorded PID belongs to, checked on EVERY read and again just before a
-# signal: "ours" only when an argv element IS this checkout's serve.py (not a
-# substring of it); "foreign" when it runs some other checkout's serve.py;
-# "stale" when it is dead or a reused PID running anything else.
+# signal: "ours" only when the process IS this checkout's server invocation;
+# "foreign" when it runs another checkout's serve.py; "stale" when it is dead
+# or a reused PID running anything else.
 pid_owner() {
-    local pid="$1" arg verdict="stale"
+    local pid="$1"
     if [[ ! "$pid" =~ ^[0-9]+$ ]] || ! kill -0 "$pid" 2>/dev/null; then
         echo "stale"
         return
     fi
-    while IFS= read -r arg; do
-        if [[ "$arg" == "$SERVE_SCRIPT" || "$arg" == "$SERVE_SCRIPT_REAL" ]]; then
-            echo "ours"
-            return
-        fi
-        if [[ "$arg" == */serve.py ]]; then
-            verdict="foreign"
-        fi
-    done < <(proc_args "$pid")
-    echo "$verdict"
+    if [[ -r "$PROC_ROOT/$pid/cmdline" ]]; then
+        local -a argv=()
+        local arg
+        while IFS= read -r -d '' arg; do
+            argv+=("$arg")
+        done < "$PROC_ROOT/$pid/cmdline"
+        owner_from_argv "${argv[@]}"
+    else
+        owner_from_command "$(ps -ww -o args= -p "$pid" 2>/dev/null || true)"
+    fi
 }
 
 # Sets REC_PID and REC_OWNER (none | stale | foreign | ours). No subshell, so
@@ -247,6 +295,7 @@ do_run() {
 case "${1:-help}" in
     start)   do_start ;;
     run)     do_run ;;
+    owner)   pid_owner "${2:-}" ;;  # read-only: ours | foreign | stale (tests use it)
     paths)   printf 'port=%s\npid_file=%s\nlog_file=%s\nbind=%s\n' "$PORT" "$PID_FILE" "$LOG_FILE" "${ASSIST_BIND:-}" ;;
     stop)    do_stop ;;
     restart) do_restart ;;

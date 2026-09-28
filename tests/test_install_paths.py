@@ -45,10 +45,29 @@ def _wait_for_exec(proc, marker):
     """Popen returns after fork; until exec, /proc shows the PARENT's argv."""
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
-        if marker in cli_config.process_argv(proc.pid):
+        if marker in (cli_config.process_argv(proc.pid) or []):
             return proc
         time.sleep(0.02)
     raise AssertionError(f"process {proc.pid} never exec'd with {marker}")
+
+
+_SLEEP_SCRIPT = "import time\ntime.sleep(60)\n"
+
+
+def _spawn(case, argv, executable=None, env=None):
+    proc = subprocess.Popen([str(a) for a in argv], executable=executable, env=env)
+    case.addCleanup(proc.wait)
+    case.addCleanup(proc.kill)
+    return _wait_for_exec(proc, str(argv[-1]))
+
+
+def _spawn_server(case, script, *args):
+    """A process that really RUNS `script` the way assist-ctl does: <python> <script> ..."""
+    script = Path(script)
+    if not script.exists():
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text(_SLEEP_SCRIPT)
+    return _spawn(case, [sys.executable, script, *args] if args else [sys.executable, script])
 
 
 def _free_port():
@@ -221,13 +240,7 @@ class LegacyPidAdoptionTests(unittest.TestCase):
     """A server started under the /tmp defaults, before this change."""
 
     def _spawn(self, script_path):
-        # Anything whose command line names the path is enough for the check.
-        proc = subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(60)", str(script_path)]
-        )
-        self.addCleanup(proc.wait)
-        self.addCleanup(proc.kill)
-        return _wait_for_exec(proc, str(script_path))
+        return _spawn_server(self, script_path, "--port", str(_free_port()))
 
     def test_this_checkouts_legacy_server_is_adopted_and_migrated(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -296,10 +309,8 @@ class PidOwnershipTests(unittest.TestCase):
         return True
 
     def _spawn(self, *argv):
-        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", *argv])
-        self.addCleanup(proc.wait)
-        self.addCleanup(proc.kill)
-        return _wait_for_exec(proc, argv[0])
+        # NOT a server: python -c sleep, with whatever arguments it is given.
+        return _spawn(self, [sys.executable, "-c", "import time; time.sleep(60)", *argv])
 
     def _check_trial_cannot_touch_main(self, main, trial, pid_file):
         started = main.ctl("start")
@@ -372,11 +383,108 @@ class PidOwnershipTests(unittest.TestCase):
     def test_the_cli_uses_the_same_exact_rule(self):
         with tempfile.TemporaryDirectory() as raw:
             home = Path(raw) / "main"
-            home.mkdir()
-            ours = self._spawn(str(home / "serve.py"), "--port", "1")
-            other = self._spawn(str(Path(raw) / "main2" / "serve.py"))
-            self.assertTrue(cli_config.runs_checkout(ours.pid, home))
-            self.assertFalse(cli_config.runs_checkout(other.pid, home))
+            ours = _spawn_server(self, home / "serve.py", "--port", "1")
+            other = _spawn_server(self, Path(raw) / "main2" / "serve.py")
+            carried = self._spawn(str(home / "serve.py"))  # the path as data only
+            self.assertEqual(cli_config.server_owner(ours.pid, home), "ours")
+            self.assertEqual(cli_config.server_owner(other.pid, home), "foreign")
+            self.assertEqual(cli_config.server_owner(carried.pid, home), "stale")
+
+
+class InvocationIdentityTests(unittest.TestCase):
+    """Ours means the process RUNS this serve.py, not that it names it.
+
+    Checked in both classifiers -- assist-ctl's `owner` verb and
+    cli.config.server_owner -- through /proc and through the `ps` fallback
+    that macOS uses, where argv arrives joined with spaces.
+    """
+
+    def _both(self, checkout, pid, proc_root=None):
+        env = dict(checkout.env)
+        if proc_root is not None:
+            env["ASSIST_PROC_ROOT"] = proc_root
+        shell = subprocess.run(
+            [str(checkout.home / "assist-ctl"), "owner", str(pid)],
+            env=env, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        root = Path(proc_root) if proc_root is not None else cli_config.PROC_ROOT
+        with mock.patch.object(cli_config, "PROC_ROOT", root):
+            python = cli_config.server_owner(pid, checkout.home)
+        return shell, python
+
+    def _each_branch(self, checkout, pid, expected):
+        for branch, proc_root in (("/proc", None), ("ps fallback", "/nonexistent-proc")):
+            with self.subTest(branch=branch):
+                self.assertEqual(self._both(checkout, pid, proc_root), (expected, expected))
+
+    def test_the_legacy_invocation_is_ours(self):
+        # How main runs today: <venv>/bin/python <checkout>/serve.py --port 8089.
+        # (The fake serve.py is not started; a sleep script stands in.)
+        with tempfile.TemporaryDirectory() as raw:
+            checkout = _Checkout(Path(raw))
+            (checkout.home / "serve.py").write_text(_SLEEP_SCRIPT)
+            proc = _spawn_server(self, checkout.home / "serve.py", "--port", "8089")
+            self._each_branch(checkout, proc.pid, "ours")
+
+    def test_a_reader_of_the_script_is_not_ours(self):
+        tail = shutil.which("tail")
+        if tail is None:
+            self.skipTest("no tail")
+        with tempfile.TemporaryDirectory() as raw:
+            checkout = _Checkout(Path(raw))
+            reader = _spawn(self, [tail, "-f", checkout.home / "serve.py"])
+            self._each_branch(checkout, reader.pid, "stale")
+
+    def test_an_editor_on_the_script_is_not_ours(self):
+        # argv[0] "vim" with the exact path as argv[1]: the shape of an editor.
+        with tempfile.TemporaryDirectory() as raw:
+            checkout = _Checkout(Path(raw))
+            (checkout.home / "serve.py").write_text(_SLEEP_SCRIPT)
+            # PYTHONHOME: some interpreters find their stdlib from argv[0], which is "vim" here.
+            editor = _spawn(
+                self, ["vim", checkout.home / "serve.py"], executable=sys.executable,
+                env={**os.environ, "PYTHONHOME": sys.base_prefix},
+            )
+            self._each_branch(checkout, editor.pid, "stale")
+
+    def test_python_carrying_the_path_as_an_argument_is_not_ours(self):
+        with tempfile.TemporaryDirectory() as raw:
+            checkout = _Checkout(Path(raw))
+            carrier = _spawn(
+                self, [sys.executable, "-c", "import time; time.sleep(60)", checkout.home / "serve.py"]
+            )
+            self._each_branch(checkout, carrier.pid, "stale")
+
+    def test_a_checkout_reached_through_a_symlink(self):
+        with tempfile.TemporaryDirectory() as raw:
+            checkout = _Checkout(Path(raw))
+            (checkout.home / "serve.py").write_text(_SLEEP_SCRIPT)
+            link = Path(raw) / "link"
+            link.symlink_to(checkout.home)
+            via_link = _spawn_server(self, link / "serve.py", "--port", "1")
+            self.assertEqual(self._both(checkout, via_link.pid), ("ours", "ours"))
+
+    def test_checkouts_with_spaces_through_both_branches(self):
+        with tempfile.TemporaryDirectory() as raw:
+            mine = _Checkout(Path(raw), name="My Assist")
+            (mine.home / "serve.py").write_text(_SLEEP_SCRIPT)
+            owner = _spawn_server(self, mine.home / "serve.py", "--port", "1")
+            other = _spawn_server(self, Path(raw) / "Other Assist" / "serve.py", "--port", "1")
+            self._each_branch(mine, owner.pid, "ours")
+            self._each_branch(mine, other.pid, "foreign")
+
+    def test_legacy_adoption_with_spaces_through_the_ps_fallback(self):
+        with tempfile.TemporaryDirectory() as raw:
+            checkout = _Checkout(Path(raw), [f"ASSIST_PORT={_free_port()}"], name="My Assist")
+            proc = _spawn_server(self, checkout.home / "serve.py", "--port", str(_free_port()))
+            checkout.legacy_pid.write_text(f"{proc.pid}\n")
+            with mock.patch.object(cli_config, "PROC_ROOT", Path("/nonexistent-proc")), \
+                    mock.patch.object(cli_config, "LEGACY_PID_FILE", checkout.legacy_pid):
+                self.assertEqual(cli_config._legacy_server_pid(checkout.home), proc.pid)
+            checkout.env["ASSIST_PROC_ROOT"] = "/nonexistent-proc"
+            status = checkout.ctl("status")
+            self.assertIn(f"PID {proc.pid}", status.stdout)
+            self.assertFalse(checkout.legacy_pid.exists())
 
 
 if __name__ == "__main__":
