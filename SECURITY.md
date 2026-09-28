@@ -21,11 +21,15 @@ and reach anything on your network that you can.
 
 **Assist must never be exposed to the public internet.** Not behind
 authentication, not behind a VPN you also expose, not "just for a minute". Flask
-binds `127.0.0.1` only, and the supported deployments are exactly two:
+binds `127.0.0.1`, plus at most one specific LAN address when you ask for it
+(`assist expose` writes `ASSIST_BIND`; a wildcard such as `0.0.0.0` is refused at
+start, and `assist expose` refuses a public address). The supported deployments
+are exactly two:
 
 * **Loopback** — you use it on the machine it runs on.
-* **Trusted LAN** — a reverse proxy on your own network forwards to loopback,
-  and every device that can route to it is a device you own.
+* **Trusted LAN** — Flask also listens on the host's LAN address, or a reverse
+  proxy on your own network forwards to loopback, and every device that can
+  route to it is a device you own.
 
 If you port-forward it, put it on a public cloud host, or expose it through a
 tunnel, you have published a remote shell on your machine with a single
@@ -244,7 +248,8 @@ must not be public.
 
 ## Hardening checklist
 
-1. Keep Flask on `127.0.0.1` and put your reverse proxy on a LAN address.
+1. Keep Flask on `127.0.0.1` plus, at most, the one LAN address `assist expose`
+   sets — or put a reverse proxy on the LAN address instead. Never a wildcard.
 2. Set `ASSIST_ALLOWED_ORIGINS` to the hostnames you actually use. It ships
    loopback-only, so a LAN install that skips this gets 403 on every POST.
 3. Narrow `access.open_networks` from the shipped all-private-ranges default to

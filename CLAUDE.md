@@ -39,9 +39,15 @@ before its inner subnet and allowlist gates can run. The posture doc is
 **Any test script hitting the API must send the token or it gets 401** — that is the most likely
 cause of a sudden "everything returns 401". Rotate by deleting `auth_token` and restarting.
 
-Flask binds **127.0.0.1 only**; nginx listens on the LAN address and forwards to loopback, so no
-client URL changed. **The nginx vhost lives in a separate infrastructure repo** — not here, so a
-fresh clone of this repo will not reproduce LAN access on its own.
+Flask always binds **127.0.0.1**, plus the one LAN address in `ASSIST_BIND` if set (`assist expose`
+writes it; `shared/listen.py` refuses a wildcard). This host leaves `ASSIST_BIND` unset: nginx
+listens on the LAN address and forwards to loopback. **The nginx vhost lives in a separate
+infrastructure repo** — a fresh clone gets LAN access through `assist expose` instead.
+
+PID and log default to `${XDG_STATE_HOME:-~/.local/state}/drift-assist/` (no longer `/tmp`). A
+server started under the old `/tmp/assist-server.pid` is adopted by `assist-ctl` only when its
+command line runs this checkout's `serve.py`. **Never run an older `assist-ctl` from a test** —
+its `/tmp` default reads the live PID file, and its `stop` kills the live server.
 
 **No build step.** Frontend is plain ES6 + CSS custom properties. No npm, no bundler, no framework. This is deliberate — zero frontend dependencies.
 
@@ -66,6 +72,10 @@ Run the full unittest regression suite from the repo root:
 | `test_tmux_id_targets` | that a tmux id (`%pane`, `@window`, `$session`) passes through `tmux_exact_target` untouched. The `=name:` form is for session names and `=%3:` resolves to nothing, so `/type`'s server-side password check, which addresses the pane by id, silently returned False on every request. Runs against a real, isolated tmux server because the route tests patch that check out |
 | `test_stale_list_races` | a response built before a local change must not undo it. A `/poll` in flight when Duplicate or Launch returned carried a tab list without the new pane, and the "pane vanished" fallback moved the view to the first tab (`js/target-hold.js`). A drafts snapshot taken before a first save, delivered after its ack, blanked the composer mid-message (`poll_block`'s `at`). Both directions: stale is ignored, fresh still wins |
 | `test_autoyes_downgrade_menu` | the codex veto: while a model-downgrade menu (or the luna model) is on screen, a codex pane is not auto-answered, because a bare Enter there takes the downgrade. Fixtures in both directions, so the veto cannot silently widen to every codex pane |
+| `test_install_paths` | PID and log live in `${XDG_STATE_HOME:-~/.local/state}/drift-assist/` (0700), `assist-ctl` sources `.env` before computing its port, the log rotates at start, and the CLI resolves the same paths. A server still on the old `/tmp/assist-server.pid` is adopted only if it runs THIS checkout's `serve.py` (both directions). Runs real copies of `assist-ctl` with a fake `serve.py`, and refuses to run a script that still defaults to `/tmp` — running the old one from a test once stopped the live server |
+| `test_expose` | `ASSIST_BIND` adds one LAN listener beside loopback and refuses a wildcard or hostname; `assist expose` refuses loopback/public addresses, edits only its own `.env` lines, and restarts only a running server |
+| `test_pair_and_service` | `assist pair` opens the window and prints URL + QR (golden grids, each verified with a real decoder), and refuses without opening anything when the install is loopback-only; `assist token` prints the value only to a TTY; the service unit is written for this checkout, and start/stop/restart/status defer to it — never to another checkout's unit |
+| `test_install_surface` | the one `FEATURES_PARKED` flag hides Automate/Container in the UI and CLI help (and shows them when un-parked); installer floors (Python 3.10, tmux 3.2), the hashed lock, the opt-in service step, and the start → expose → pair closing steps |
 
 One test is **not** in that command, because it needs a browser and a running server:
 `tests/playwright_vault_wire.js` proves the secret vault on the wire rather than in the source —
@@ -159,7 +169,12 @@ All three are gitignored (runtime data). Defaults live in `shared/state.py` as `
 | `assist autoyes <session> (--on\|--off\|--status) [--delay N]` | Persistently set or inspect auto-yes; enabled delays are clamped to 0.1–30 seconds |
 | `assist autoyes --global (--on\|--off\|--status) [--delay N]` | Set or inspect the all-sessions switch |
 | `assist studio [args]` | Execute a separate `studio` CLI on `PATH`; fail clearly when none is installed |
-| `assist help` | Show the full command reference |
+| `assist service install\|uninstall\|status` | systemd `--user` unit (Linux) or launchd agent (macOS) running `assist-ctl run`; start/stop/restart/status then go through it |
+| `assist expose [--ip ADDR] [--off]` | Set `ASSIST_BIND` to the LAN address (never a wildcard or public address), add its origin to `ASSIST_ALLOWED_ORIGINS`, restart if running |
+| `assist pair [--minutes N] [--url URL]` | Open the open-access window over the header token; print the phone URL and a terminal QR (`qrencode` if present, else `cli/qr.py`) |
+| `assist token` | Print the token path; the value only to a TTY |
+| `assist --version` | Version from `pyproject.toml`, plus the git commit |
+| `assist help` | Show the full command reference (container verbs hidden while `FEATURES_PARKED`) |
 
 Every session verb supports `-h`/`--help`, with descriptions for each positional argument and flag. `--autoyes` on `send` or `wait` applies only during that one wait and restores the prior setting afterward; `assist autoyes` changes the persistent per-session setting, and its `--delay` is valid only with `--on`.
 

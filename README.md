@@ -1,26 +1,9 @@
 # Drift Assist
 
-A web terminal interface for [Claude Code](https://claude.com/claude-code) tmux sessions — designed for phones and tablets. Serves a mobile-first UI on port 8089, routes typing into a chosen tmux target, streams terminal output over WebSocket, and exposes a container build/spawn system for ephemeral dev environments.
-
-Primary use case: control a Claude Code session running on your dev box from a phone over the LAN.
-
-OpenCode panes also offer **Output**: choose the conversation shown in the pane
-to read wrapped messages, reasoning and tool details with normal browser scrolling.
-**Latest** follows new output; **Terminal** returns to the interactive TUI, and
-detected prompts return there automatically. Input always goes to the pane, so
-choose again in Output after switching conversations inside OpenCode.
-
-In OpenCode's **Terminal** view, drag in either direction to pan a capture
-larger than the phone. Swipe at its top or bottom edge, or use **▲ / ▼**, to
-page through the app's transcript. The TUI stays live while you read;
-scrolling up holds your position, and **Latest** returns to the newest output.
-
-The reader uses the host's `opencode session list` and `opencode export --pure`
-(verified with 1.18.18), refreshing snapshots while visible. It needs no plugin
-or listening OpenCode server. Selection lasts for the browser's current pane
-generation. Remote/custom data stores use Terminal; a local `attach` must share
-the host's OpenCode store. The picker searches 200 recent sessions in the pane's
-exact folder; message/detail limits are disclosed in the reader.
+A phone-first remote for the Claude Code, codex and OpenCode sessions running in
+tmux on your own machine. Free and self-hosted: it runs on the host, serves a
+mobile web UI, streams each pane live, types into it, and can answer permission
+prompts for you when you ask it to.
 
 > ### ⚠ Read this before you install
 >
@@ -32,70 +15,88 @@ exact folder; message/detail limits are disclosed in the reader.
 >
 > **[SECURITY.md](SECURITY.md) is the full posture**, including what arming Auto-Yes actually hands over. Read it once before your first install.
 
-## Prerequisites
+## Requirements
 
-Linux is the primary deployment platform. Interactive tmux input and launch
-provenance read process identity through Linux `/proc` or macOS `libproc`;
-macOS clipboard helpers use `pbcopy`/`pbpaste`. The v16 activation/drain tooling
-still requires Linux `/proc`.
-
-Before installing, make sure you have the required tools:
-
-**Required:**
+- Linux or macOS
+- Python 3.10 or newer
+- tmux 3.2 or newer
+- The agent CLIs you want to drive: [Claude Code](https://claude.com/claude-code), codex, OpenCode
 
 ```bash
-# Python 3.11+
-python3 --version
-
-# tmux 3.2 or newer, plus jq
-# Linux (Debian/Ubuntu)
-sudo apt install tmux jq
-
-# claude CLI (launches Claude Code in sessions; default mode)
-# Install from: https://claude.com/claude-code
+# Debian / Ubuntu
+sudo apt install python3 python3-venv tmux
+# Fedora
+sudo dnf install python3 tmux
+# macOS (Homebrew) — the system /usr/bin/python3 is too old
+brew install python@3.12 tmux
 ```
 
-**Optional (but recommended):**
+Optional: `xclip`, `xdotool` and `zenity` on Linux (clipboard, key-send, native
+folder picker), and `curl`. `jq` and `docker` are used only by the container
+tooling under `docker/`, which is parked.
 
-**Linux (Debian/Ubuntu):**
-```bash
-sudo apt install xclip xdotool curl docker.io zenity
-```
-
-For **docker**, you may need additional setup:
-- **Linux**: `sudo usermod -aG docker $USER && newgrp docker`
-
-**Other Linux distributions:**
-- **Fedora/RHEL**: `sudo dnf install tmux jq xclip xdotool curl docker zenity`
-- **Arch**: `sudo pacman -S tmux jq xclip xdotool curl docker zenity`
-
-## Quick install
+## Install
 
 ```bash
-git clone https://github.com/drift-further/assist-dev ~/.local/share/assist-dev
-cd ~/.local/share/assist-dev
+# <REPO-URL> is a placeholder: the public repository URL is not decided yet.
+git clone <REPO-URL> ~/.local/share/drift-assist
+cd ~/.local/share/drift-assist
 ./install.sh
 ```
 
-The installer creates a venv, installs Python deps, seeds `.env` from `env.example`, records the install path in `~/.config/drift-assist/config.env`, and symlinks `~/.local/bin/assist` → `bin/assist` so you get a global `assist` command. An install made before the rename to Drift Assist still works: for one release the CLI reads `~/.config/claude-assist/config.env` when `~/.config/drift-assist/` does not exist, and says so on stderr; re-run `./install.sh` to move to the new path. That command re-execs itself under the project venv, so it works from any shell whatever virtualenv happens to be active.
+The installer checks the prerequisites, creates a venv and installs the pinned,
+hash-checked dependencies from `requirements.lock`, seeds `.env` from
+`env.example` (never overwriting an existing one), records the install path in
+`~/.config/drift-assist/config.env`, and symlinks `~/.local/bin/assist` →
+`bin/assist`. It then offers, default no, to run Assist as a service. The
+`assist` command re-execs itself under the project venv, so it works from any
+shell whatever virtualenv is active.
 
-Then:
+## Reach it from your phone
 
 ```bash
-assist start                  # start the server
-assist doctor                 # verify prerequisites
+assist start      # or: assist service install  (starts now, and at every login)
+assist expose     # also listen on this host's LAN address, and allow it in .env
+assist pair       # print the phone URL and a QR code; scan it with the phone
 ```
 
-On an ordinary startup, Assist automatically creates a missing
-`.assist-launch-provenance-v1/` store using the same empty-epoch operation as
-the explicit initializer and writes
-`.assist-launch-provenance-v1-initialization.json` beside it. Startup never
-re-initializes an existing path: an existing but invalid store still fails
-closed. The park-handoff startup path does not run this initializer.
+- `assist start` prints the local URL, `http://localhost:8089/`, which works on
+  the host straight away.
+- `assist expose` sets `ASSIST_BIND` to the address of the default route
+  (choose another with `--ip`) and adds `http://<that-address>:8089` to
+  `ASSIST_ALLOWED_ORIGINS` in `.env`. It restarts the server if it is
+  running. It refuses a wildcard such as `0.0.0.0` and any public address.
+  `assist expose --off` goes back to loopback only.
+- `assist pair` opens a sign-in window for five minutes (`--minutes N`). The
+  first device on a private network (Settings → Access → Allowed Networks) to
+  load the URL is signed in, and the window closes behind it. The strip across
+  the top of the UI stays lit while a window is open.
 
-Open `http://localhost:8089` on the host. Flask listens on loopback, so a phone
-cannot connect directly to `http://<host-ip>:8089`. For LAN access, add the
-phone-facing origin to `.env`, then put nginx on the LAN address:
+The login page says the same: *No device signed in yet? Run `assist pair` on
+the host.*
+
+### Other ways to sign in
+
+- **The token.** `assist token` prints where it is, and prints the value too
+  when run in a terminal. Paste it into the login page once; the browser keeps a
+  cookie from then on.
+- **Approval.** A new browser can press *Request device approval* on the login
+  page, and any signed-in session approves or denies it.
+
+### Keep it running
+
+`assist service install` writes a systemd `--user` unit on Linux or a launchd
+agent on macOS, and starts it. From then on `assist start`, `stop`, `restart`
+and `status` go through the unit. On Linux it starts at login. To keep it
+running while you are logged out, and to start it at boot, run
+`sudo loginctl enable-linger $USER` once. `assist service status` and
+`assist service uninstall` do what they say.
+
+### Advanced: a reverse proxy instead
+
+Use this if you want a hostname, or TLS. Leave `ASSIST_BIND` unset so Flask
+stays on loopback, add every phone-facing origin to `.env`, then put nginx on
+the LAN address:
 
 ```bash
 ASSIST_ALLOWED_ORIGINS=http://<lan-ip>:8089
@@ -128,18 +129,66 @@ Use the exact scheme, hostname or address, and port your phone opens in
 `ASSIST_ALLOWED_ORIGINS`. Restart after changing `.env`. The WebSocket upgrade
 headers are required for live terminal streaming.
 
+The Caddy equivalent (Caddy passes WebSocket upgrades through by itself):
+
+```caddy
+http://<lan-ip>:8089 {
+    reverse_proxy 127.0.0.1:8089 {
+        header_up X-Real-IP {remote_host}
+    }
+}
+```
+
+## Upgrade
+
+```bash
+cd ~/.local/share/drift-assist
+git pull
+./install.sh       # re-installs the pinned dependencies; never overwrites .env
+assist restart
+```
+
+`assist --version` prints the version, plus the commit in a git checkout. Put
+it in any bug report. Releases are not tagged yet.
+
+## Uninstall
+
+```bash
+assist service uninstall                # only if you installed the service
+assist stop
+rm ~/.local/bin/assist
+rm -rf ~/.config/drift-assist
+rm -rf ~/.config/claude-assist          # pre-rename config dir, if present
+rm -rf ~/.local/state/drift-assist      # PID file and logs
+rm -rf ~/.local/share/drift-assist      # or wherever you cloned
+```
+
+The checkout also holds your prompt history (`history.json`), favorites and
+segments (`favorites.json`), `settings.json` and `auth_token`. Copy anything you
+want to keep before deleting it. An install from before the move to
+`~/.local/state` may also have left `/tmp/assist-server.{pid,log}`.
+
+If you approved status-line setup during installation, the installer may also
+have changed `statusLine` in `~/.claude/settings.json`. Restore the timestamped
+`~/.claude/settings.json.bak.<timestamp>` it created, or remove that
+`statusLine` entry manually, before deleting the checkout whose script it names.
+
 ## CLI
 
 Once installed, `assist` manages everything:
 
 | Command | What it does |
 |---------|--------------|
-| `assist start` | Start the server (PID tracked in `/tmp/assist-server.pid`) |
+| `assist start` | Start the server (through the service unit when one is installed); prints the URL |
 | `assist stop` | Stop the server |
 | `assist restart` | Restart the server |
-| `assist activate-park-v16 [--resume]` | Run or resume the receipted new-first park activation controller |
 | `assist status` | Server status + health check |
 | `assist logs [N\|-f\|--follow]` | Tail last N lines (default 100), or follow with `-f`/`--follow` |
+| `assist service install\|uninstall\|status` | Run Assist as a systemd `--user` unit (Linux) or launchd agent (macOS) |
+| `assist expose [--ip ADDR] [--off]` | Also listen on this host's LAN address, allow its origin, restart if running |
+| `assist pair [--minutes N] [--url URL]` | Open a short sign-in window; print the phone URL and a QR code |
+| `assist token` | Print the token file path, and the token itself only to a terminal |
+| `assist --version` | Print the version (and git commit in a checkout) |
 | `assist config` | Print resolved paths, ports, env |
 | `assist doctor` | Check prereqs, venv, .env, server health |
 | `assist container status` | Image info + running `claude-session-*` containers |
@@ -158,7 +207,7 @@ Once installed, `assist` manages everything:
 | `assist studio [args]` | Execute the Studio CLI found on `PATH` — `sto` first, then `studio` — or fail if neither is installed |
 | `assist help` | Full command reference |
 
-The process commands delegate to `./assist-ctl`. The container commands hit the running server's HTTP API (`/api/container/*`), so the server must be running for them to work.
+The process commands delegate to `./assist-ctl`, or to the service unit once `assist service install` has run. The container verbs are parked with the rest of the container tooling and are left out of `assist help` until that ends. The container commands hit the running server's HTTP API (`/api/container/*`), so the server must be running for them to work.
 
 Each session verb (`ls`, `view`, `send`, `wait`, `launch`, `kill`, and `autoyes`) supports `-h`/`--help`; its generated help describes every argument and flag. `--autoyes` on `send` or `wait` is a temporary window scoped to that one wait and restores the prior state afterward. `assist autoyes` changes the persistent per-session setting instead; `--delay` is valid only with `--on`.
 
@@ -178,34 +227,6 @@ Session wait commands use these exit codes:
 | `10` | prompt | The pane is quiet because it is asking something; a summary is printed |
 | `75` | working | The pane is still changing at the deadline; this is not an error, so re-run `assist wait` |
 
-## Temporary execution park
-
-While container host wiring migrates, Assist refuses exactly these execution
-intents:
-
-- Automate start, hard relaunch, soft clear, soft resend, trust answer, and
-  auto-answer (`automate_start`, `automate_hard_relaunch`,
-  `automate_soft_clear`, `automate_soft_resend`, `automate_trust_answer`, and
-  `automate_auto_answer`).
-- The configured host CLI proxy (`configured_cli_proxy`, `/api/cli-proxy`).
-- Configured container image builds (`configured_image_build`,
-  `/api/container/build`).
-
-Saved commands, `/api/git/run`, project-venv creation, `/api/restart`, run-init,
-launch or duplicate with an init command, and the native folder picker remain
-available. There is no un-park API or CLI verb; changing the park phase does not
-enable a denied intent. For example, a refused Automate start returns HTTP 409
-with this exact body (the `intent` value identifies the refused operation):
-
-```json
-{
-  "ok": false,
-  "error": "container_launch_parked",
-  "reason": "Container launch automation is temporarily parked while host wiring migrates.",
-  "intent": "automate_start"
-}
-```
-
 ## Configuration
 
 All configuration is environment-variable based, via `.env` in the repo. See `env.example` for the full list. The most common ones:
@@ -219,25 +240,17 @@ All configuration is environment-variable based, via `.env` in the repo. See `en
 | `ASSIST_REPLY_TO` | Reply address used by the `assist send` callback hint | (the caller's own tmux session) |
 | `ASSIST_MOUNT_SCRIPT` | Container launch script used by Automate | `docker/claude-mount.sh` when that file exists; otherwise none |
 | `ASSIST_CLI_BIN` | Host CLI exposed to containers via `/api/cli-proxy` | (none — proxy disabled) |
-| `ASSIST_OPENCODE_BIN` | OpenCode executable used by the Output reader | Auto-detected; see below |
+| `ASSIST_OPENCODE_BIN` | OpenCode executable used by the Output reader | Auto-detected; see [docs/details.md](docs/details.md) |
 | `ASSIST_CLI_DIR` | Working directory used when invoking `ASSIST_CLI_BIN` | `~` |
 | `ASSIST_CLI_ALLOWED` | Comma-separated allowlist of subcommands (**empty = proxy disabled**) | (empty) |
 | `ASSIST_DB_NAME` | PostgreSQL DB for session history | `claude_archives` |
 | `ASSIST_DB_HOST` | PostgreSQL host for session history | `localhost` |
-| `ASSIST_PID_FILE` | Server PID file | `/tmp/assist-server.pid` |
-| `ASSIST_LOG_FILE` | Server log read by `assist logs` | `/tmp/assist-server.log` |
-| `ASSIST_CONTROL_DIR` | Park-activation control and receipt directory | `/tmp/assist-park-v16` |
+| `ASSIST_BIND` | One extra LAN address to listen on, beside loopback. Written by `assist expose`; a wildcard such as `0.0.0.0` is refused | (loopback only) |
+| `ASSIST_PID_FILE` | Server PID file | `~/.local/state/drift-assist/assist.pid` (`$XDG_STATE_HOME`) |
+| `ASSIST_LOG_FILE` | Server log read by `assist logs`; moved to `.1` at start once over `ASSIST_LOG_MAX_BYTES` (10 MB) | `~/.local/state/drift-assist/assist.log` |
 | `ASSIST_AUTH_TOKEN_PATH` | Shared-secret file | `<assist-home>/auth_token` |
 | `ASSIST_ALLOWED_ORIGINS` | Browser origins accepted by the CSRF check, comma-separated. **Required on any install reached from more than localhost** — `shared/security.py` ships loopback only, so list your hostname and the LAN address your phone uses or every POST from them 403s while GETs still work | (loopback only) |
 | `DISPLAY` | X11 display for clipboard helpers | `:0` |
-
-The OpenCode reader uses the first executable file found in this order:
-`ASSIST_OPENCODE_BIN`, `opencode` on the server's `PATH`,
-`~/.local/bin/opencode`, `~/.opencode/bin/opencode`,
-`/opt/homebrew/bin/opencode`, then `/usr/local/bin/opencode`.
-Set `ASSIST_OPENCODE_BIN` to an absolute path for a custom installation;
-`~/` is also accepted. Missing paths, directories and non-executable files
-are skipped. These fallbacks work when a service has a minimal `PATH`.
 
 Changes to `.env` require `assist restart` to take effect.
 
@@ -261,14 +274,11 @@ BduKDRwh…
 
 To rotate: delete `auth_token` and restart. A new secret is generated and every issued cookie stops matching, because the HMAC key changed.
 
-**Adding a device without typing the token.** A browser that arrives with no token can ask to be let in: it raises an approval request that any already-logged-in session sees and approves or denies. The request path is the one thing not behind the auth gate — a device with no token is exactly who calls it — so it is fenced instead by a LAN allowlist, a cap on pending requests, a per-IP cooldown, and a secret claim that binds an approval to the browser that asked. If you would rather onboard the first device the blunt way, **More → Access → Open** starts a time-boxed open-access window, and the strip across the top of the UI stays lit until it closes.
+**Adding a device without typing the token.** A browser that arrives with no token can ask to be let in: it raises an approval request that any already-logged-in session sees and approves or denies. The request path is the one thing not behind the auth gate — a device with no token is exactly who calls it — so it is fenced instead by a LAN allowlist, a cap on pending requests, a per-IP cooldown, and a secret claim that binds an approval to the browser that asked. To onboard the first device, `assist pair` on the host (or **More → Access → Open** in a signed-in browser) starts a time-boxed open-access window, and the strip across the top of the UI stays lit until it closes.
 
 Only three things are exempt: `/login`, `/health` (a liveness probe whose exact body is `{"status":"ok"}`), and `/api/cli-proxy` — containers have no way to hold the token, so that endpoint is restricted to the container subnet at the proxy layer and remains fail-closed on its own `ASSIST_CLI_ALLOWED` allowlist. The CLI proxy is also currently stopped by the temporary execution park before any subprocess can run.
 
-**Flask binds `127.0.0.1` only.** nginx is the LAN ingress. The Quick install
-section includes the supported reverse-proxy block and required origin setting.
-
-Run `serve.py --host 0.0.0.0` to go back to binding all interfaces — but that re-exposes every endpoint to the network, and is only sane if you have no proxy in front.
+**Flask listens on `127.0.0.1`,** plus the one LAN address `assist expose` sets in `ASSIST_BIND`. A wildcard (`0.0.0.0`, `::`) is refused at start, and `assist expose` refuses a public address. A reverse proxy on the LAN address is the alternative; see [Reach it from your phone](#reach-it-from-your-phone).
 
 ## Composing prompts
 
@@ -349,43 +359,6 @@ Notes:
 - Settings → **Reset All to Defaults** clears `studio.api_token` along with everything else.
 - Anyone who can reach Assist's port can answer your Studio questions — the same trust boundary as every other Assist endpoint. Keep it on a trusted network.
 
-## Host CLI proxy
-
-Containers launched by Assist run on an isolated network with no LAN access, but they can reach the host on port 8089. This is used to expose a single host-side CLI tool inside the container without copying its dependencies in.
-
-The proxy is currently in the temporary execution park: every request returns
-the 409 body documented above, with `"intent":"configured_cli_proxy"`, before a
-host subprocess starts. The configuration and inner subnet/allowlist gates
-below remain in place for a future release that enables the intent; there is no
-runtime un-park verb.
-
-Two pieces:
-
-1. **Host-side** (`.env`) — `ASSIST_CLI_BIN`, `ASSIST_CLI_DIR`, `ASSIST_CLI_ALLOWED`. The Flask server's `/api/cli-proxy` endpoint runs `ASSIST_CLI_BIN <args>` on the host and returns stdout/stderr/exit code. `ASSIST_CLI_ALLOWED` (comma-separated) restricts which first-arg subcommands are accepted; **leaving it empty disables the proxy (403)**.
-2. **Container-side** (`container_config.json` → `cli_proxy`) — set `enabled: true` and `container_command: "<name>"`. The image build installs a thin bash wrapper at `/usr/local/bin/<name>` that POSTs to the proxy.
-
-Example — exposing a host CLI called `mycli`:
-
-```bash
-# .env
-ASSIST_CLI_BIN=/opt/mycli/bin/mycli
-ASSIST_CLI_DIR=/srv/mycli
-ASSIST_CLI_ALLOWED=status,build,deploy
-```
-
-```json
-// container_config.json
-{
-  "cli_proxy": { "enabled": true, "container_command": "mycli" }
-}
-```
-
-Once a future release enables both parked intents, restart and rebuild the image. Inside a newly launched container, `mycli status` then runs against the host binary.
-
-The wrapper accepts `-f <path>` to base64-upload a file from the container — the host writes it to a temp dir and replaces the arg with the resolved path before invoking the CLI. The temp dir is removed whether or not the call succeeds.
-
-A `--timeout N` in the forwarded args sets how long the host waits, plus 30s of slack. It must be a non-negative integer — anything else is a 400 rather than a silent fallback — and it is capped at 600s, so a proxied call cannot hold a host subprocess open indefinitely.
-
 ## Architecture
 
 - **`serve.py`** — Flask + flask-sock app factory, registers blueprints, starts background threads
@@ -394,23 +367,12 @@ A `--timeout N` in the forwarded args sets how long the host waits, plus 30s of 
 - **`js/`** — 21 ES6 frontend modules (no framework, no bundler)
 - **`css/`** — 15 CSS modules, mobile-first with custom properties
 - **`docker/`** — parameterized `Dockerfile`, `entrypoint.sh`, extension definitions (`extensions/*.json`), helper scripts
-- **`assist-ctl`** — low-level start/stop/restart/status shell script (called by `assist`)
+- **`assist-ctl`** — low-level start/stop/restart/status shell script (called by `assist`); `assist-ctl run` is the foreground mode the service unit uses
 - **`bin/assist`** — high-level CLI installed to `~/.local/bin/assist`
+- **`docs/`** — [details.md](docs/details.md): the OpenCode Output reader, launch provenance, the temporary execution park and the host CLI proxy
 - **`tests/`** — the unittest regression suite. Run the same command documented in `CLAUDE.md`: `.venv/bin/python3 -m unittest discover -s tests -p 'test_*.py'`
 
-## Uninstall
+## More detail
 
-```bash
-assist stop                             # stop the server first
-rm ~/.local/bin/assist
-rm -rf ~/.config/drift-assist
-rm -rf ~/.config/claude-assist          # pre-rename config dir, if present
-rm -rf ~/.local/share/assist-dev        # or wherever you cloned
-```
-
-Runtime files in `/tmp/assist-server.{pid,log}` can also be removed.
-
-If you approved status-line setup during installation, the installer may also
-have changed `statusLine` in `~/.claude/settings.json`. Restore the timestamped
-`~/.claude/settings.json.bak.<timestamp>` it created, or remove that
-`statusLine` entry manually, before deleting the checkout whose script it names.
+[docs/details.md](docs/details.md) covers the OpenCode Output reader, launch
+provenance, the temporary execution park, and the host CLI proxy.
