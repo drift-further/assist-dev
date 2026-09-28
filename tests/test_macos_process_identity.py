@@ -35,16 +35,23 @@ def _bsdinfo_response(pid, flavor, arg, buffer, size, *, status=2, micros=123456
     return returned_size
 
 
+def _enter(case, manager):
+    """TestCase.enterContext, which only exists from Python 3.11; the floor is 3.10."""
+    value = manager.__enter__()
+    case.addCleanup(manager.__exit__, None, None, None)
+    return value
+
+
 class DarwinProcessReaderTests(unittest.TestCase):
     def setUp(self):
-        self.enterContext(mock.patch.object(agent_identity, "_IS_MAC", True))
-        self.proc_open = self.enterContext(mock.patch.object(
+        _enter(self, mock.patch.object(agent_identity, "_IS_MAC", True))
+        self.proc_open = _enter(self, mock.patch.object(
             agent_identity, "open", side_effect=FileNotFoundError("macOS has no /proc"), create=True
         ))
         agent_identity._darwin_pidinfo.cache_clear()
         self.addCleanup(agent_identity._darwin_pidinfo.cache_clear)
         self.pidinfo = mock.Mock(side_effect=_bsdinfo_response)
-        self.loader = self.enterContext(mock.patch.object(
+        self.loader = _enter(self, mock.patch.object(
             ctypes, "CDLL", return_value=mock.Mock(proc_pidinfo=self.pidinfo)
         ))
 
@@ -102,9 +109,9 @@ class DarwinProcessReaderTests(unittest.TestCase):
 
 class ExistingMacPaneTests(unittest.TestCase):
     def setUp(self):
-        self.root = Path(self.enterContext(tempfile.TemporaryDirectory(prefix="t561-")))
+        self.root = Path(_enter(self, tempfile.TemporaryDirectory(prefix="t561-")))
         self.socket = self.root / "private.sock"
-        self.enterContext(mock.patch.dict(os.environ, {
+        _enter(self, mock.patch.dict(os.environ, {
             "TMUX": f"{self.socket},0,0",
             "ASSIST_HOME": str(self.root),
             "ASSIST_LAUNCH_PROVENANCE_ROOT": str(self.root / "registry"),
@@ -115,8 +122,8 @@ class ExistingMacPaneTests(unittest.TestCase):
             "list-panes", "-a", "-F", "#{session_name}:#{window_index}.#{pane_index}"
         ).stdout.strip()
         self.pane_id = self.run_tmux("display-message", "-p", "-t", self.target, "#{pane_id}").stdout.strip()
-        self.enterContext(mock.patch.object(agent_identity, "_IS_MAC", True))
-        self.enterContext(mock.patch.object(
+        _enter(self, mock.patch.object(agent_identity, "_IS_MAC", True))
+        _enter(self, mock.patch.object(
             agent_identity, "open", side_effect=FileNotFoundError("macOS has no /proc"), create=True
         ))
         # Only the OS call is simulated. Decoding, pane/socket observation,
@@ -124,10 +131,10 @@ class ExistingMacPaneTests(unittest.TestCase):
         agent_identity._darwin_pidinfo.cache_clear()
         self.addCleanup(agent_identity._darwin_pidinfo.cache_clear)
         self.native = mock.Mock(side_effect=_bsdinfo_response)
-        self.enterContext(mock.patch.object(
+        _enter(self, mock.patch.object(
             ctypes, "CDLL", return_value=mock.Mock(proc_pidinfo=self.native)
         ))
-        self.enterContext(mock.patch.object(input_routes.state, "touch_activity"))
+        _enter(self, mock.patch.object(input_routes.state, "touch_activity"))
         self.app = Flask(__name__)
         self.app.register_blueprint(input_routes.input_bp)
 

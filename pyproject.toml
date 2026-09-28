@@ -2,7 +2,7 @@
 name = "drift-assist"
 version = "0.1.0"
 description = "Web terminal interface for Claude Code tmux sessions"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     "flask>=3.0",
     "flask-sock>=0.7",
