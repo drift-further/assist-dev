@@ -285,12 +285,41 @@ def detection_depth():
     return max(2, min(30, depth))
 
 
+def detection_window_lines(depth=None):
+    """How many rows of a pane BOTH detectors read: the input-window contract.
+
+    The numbered branch looks up to max(depth*4, 60) rows above a footer for
+    option 1 or its top rule, and accepts a footer up to depth*4 rows above the
+    bottom, so the window is the sum plus the footer row. Every input is cut to
+    it: this detector (via detection_window), the scanner's and /poll's
+    captures (which reach back at least this far), the tails /poll serializes,
+    and js/poll-sync.js:detectionTail for poll tails and stream frames alike.
+    Before, the server read `-S -60` plus the whole visible screen and the
+    browser the last 60 rows, so a long wrapped option was answered by one and
+    not offered by the other (judge #6). /poll ships the number;
+    js/actions.js:_detectionWindowFor is the same formula.
+    """
+    if depth is None:
+        depth = detection_depth()
+    return max(depth * 4, _OPTION_REGION_LOOKBACK) + depth * 4 + 1
+
+
+def detection_window(text, depth=None):
+    """`text` as the detectors read it: escapes stripped, the blank rows under
+    the last output dropped, then the last detection_window_lines() rows."""
+    lines = _ANSI_ESCAPE_RE.sub("", text or "").rstrip("\n").split("\n")
+    return "\n".join(lines[-detection_window_lines(depth):])
+
+
 def _detect_autoyes_prompt(tail, agent_kind):
     """Detect prompts that auto-yes should answer. Returns (type, send_text, with_enter, summary) or None."""
+    depth = detection_depth()
+    # The shared input window first (detection_window_lines), so every caller
+    # detects on exactly what the browser does.
+    tail = detection_window(tail, depth)
     # Only check last N lines for y/n prompts — avoids false positives from
     # answered prompts still in scrollback
     lines = tail.split("\n")
-    depth = detection_depth()
     bottom = "\n".join(lines[-depth:])
     if agent_kind == "claude" and (
         _PERMISSION_YNA_MARKER_RE.search(bottom)
@@ -566,9 +595,31 @@ def _prompt_region(tail, size=500):
     return tail[-size:] if size else tail
 
 
-def _prompt_hash(tail):
-    """Hash a stable region of the prompt to detect the same prompt across ticks."""
-    return hash(_prompt_region(tail))
+def _prompt_identity(tail):
+    """Which request is on screen: a digest of the whole capture up to the end
+    of the prompt's terminator line, or None when there is no terminator.
+
+    The countdown, the cancel and the send-time check all compare this. It used
+    to be the last 500 characters before the terminator, so two long codex
+    approvals whose commands differed above their common wrapped tail were the
+    "same prompt", and the replacement was answered with the first one's
+    countdown (judge #3). Raising the cutoff only moves that line. Instead it
+    covers everything captured above the terminator: a TUI draws its live
+    dialog on the visible screen, which the capture always holds whole, and the
+    scrollback above it cannot change while the agent is blocked on the dialog.
+    What sits below the terminator, the animated status area, is left out.
+    Escapes and trailing spaces are dropped so a redraw with different colours
+    is still the same request. No terminator means the request cannot be
+    placed, and the caller withholds the answer.
+    """
+    text = _ANSI_ESCAPE_RE.sub("", tail or "")
+    matches = list(_PROMPT_TERMINATOR_RE.finditer(text))
+    if not matches:
+        return None
+    end = text.find("\n", matches[-1].end())
+    region = text if end < 0 else text[:end]
+    normalized = "\n".join(ln.rstrip() for ln in region.split("\n")).strip("\n")
+    return hashlib.sha256(normalized.encode("utf-8", "replace")).hexdigest()
 
 
 def prompt_fingerprint(tail):
@@ -715,14 +766,14 @@ def autoyes_scanner():
         time.sleep(_scan_interval())
 
 
-def _prompt_still_on_screen(expected, agent_kind, prompt_type, phash):
+def _prompt_still_on_screen(expected, agent_kind, prompt_type, ident):
     """True while the pane still shows the prompt the countdown was started for.
 
     A countdown is decided seconds before its answer lands, and in that gap the
     prompt can be answered by hand or replaced, for example by codex's "Retry
     with a faster model" menu, which a bare Enter accepts (review rel #3). So the
     pane is captured again, by its pane id, and must still detect as the same
-    type with the same hash, codex vetoes included. The same idea as the sudo
+    type with the same _prompt_identity, codex vetoes included. The same idea as the sudo
     popup's prompt_owner_waiting. Any failure to tell is a no.
     """
     pane_id = expected.get("pane_id") if isinstance(expected, dict) else None
@@ -730,7 +781,7 @@ def _prompt_still_on_screen(expected, agent_kind, prompt_type, phash):
         return False
     try:
         cap = subprocess.run(
-            ["tmux", "capture-pane", "-p", "-t", tmux_exact_target(pane_id), "-S", "-60"],
+            ["tmux", "capture-pane", "-p", "-t", tmux_exact_target(pane_id), "-S", f"-{detection_window_lines()}"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -741,7 +792,12 @@ def _prompt_still_on_screen(expected, agent_kind, prompt_type, phash):
         return False
     tail = cap.stdout.rstrip("\n")
     detected = detect_answerable_prompt(tail, agent_kind, pane_id)
-    return bool(detected) and detected[0] == prompt_type and _prompt_hash(tail) == phash
+    return (
+        bool(detected)
+        and detected[0] == prompt_type
+        and ident is not None
+        and _prompt_identity(tail) == ident
+    )
 
 
 def _deliver_autoyes_answer(expected, send_text, with_enter, still_on_screen=None):
@@ -871,7 +927,7 @@ def _autoyes_scan_tick():
             continue
 
         cap = subprocess.run(
-            ["tmux", "capture-pane", "-p", "-t", tmux_exact_target(target), "-S", "-60"],
+            ["tmux", "capture-pane", "-p", "-t", tmux_exact_target(target), "-S", f"-{detection_window_lines()}"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -889,7 +945,7 @@ def _autoyes_scan_tick():
         if agent_kind not in AGENT_KINDS and not _shell_ok(session_name, source):
             continue
         qualified.add(session_name)
-        phash = _prompt_hash(tail)
+        pident = _prompt_identity(tail)
         # Detection plus the codex vetoes (see _LUNA_RE, _CODEX_DOWNGRADE_RE).
         # The vetoes are applied AFTER detection rather than instead of it, so a
         # countdown already ticking when the vetoed text appears is cancelled by
@@ -913,8 +969,16 @@ def _autoyes_scan_tick():
                 # This ensures a NEW prompt with the same hash as a previous one
                 # (e.g., consecutive edits to the same file) is not skipped.
                 if target in state.autoyes_answered:
-                    if state.autoyes_answered[target][0] != phash:
+                    if state.autoyes_answered[target][0] != pident:
                         del state.autoyes_answered[target]
+            continue
+
+        # A prompt is detected but the request it belongs to cannot be placed
+        # (see _prompt_identity): withhold. Any countdown goes, since it cannot
+        # be shown to be for this request; a cancellation stays.
+        if pident is None:
+            with state.autoyes_lock:
+                state.autoyes_countdowns.pop(target, None)
             continue
 
         # A prompt is up but its pane could not be identified (the control
@@ -926,13 +990,13 @@ def _autoyes_scan_tick():
             continue
 
         with state.autoyes_lock:
-            if (phash, detected[0]) in state.autoyes_cancelled.get(target, ()):
+            if (pident, detected[0]) in state.autoyes_cancelled.get(target, ()):
                 continue
 
             log.info("autoyes: detected %s on %s", detected[0], target)
 
             answered = state.autoyes_answered.get(target)
-            if answered and answered[0] == phash:
+            if answered and answered[0] == pident:
                 if now - answered[1] < 3.0:
                     # Recently fired — y is still being processed
                     state.autoyes_countdowns.pop(target, None)
@@ -947,12 +1011,13 @@ def _autoyes_scan_tick():
                     del state.autoyes_answered[target]
 
             existing = state.autoyes_countdowns.get(target)
-            # The same prompt means the same region AND the same detected type. An
-            # old prompt's terminator can stay in the capture above a new prompt
-            # whose own line is not one, and must not hand it the old countdown.
+            # The same prompt means the same request (_prompt_identity) AND the
+            # same detected type. An old prompt's terminator can stay in the
+            # capture above a new prompt whose own line is not one, and must not
+            # hand it the old countdown.
             same_prompt = bool(
                 existing
-                and existing["prompt_hash"] == phash
+                and existing["prompt_hash"] == pident
                 and existing.get("prompt_type") == detected[0]
             )
 
@@ -988,7 +1053,8 @@ def _autoyes_scan_tick():
                     )
                 summary = detected[3] if len(detected) > 3 else None
                 state.autoyes_countdowns[target] = {
-                    "prompt_hash": phash,
+                    # _prompt_identity, not a hash of a fixed-size suffix.
+                    "prompt_hash": pident,
                     "deadline": now + delay,
                     "delay": delay,
                     "prompt_type": detected[0],
@@ -1005,12 +1071,12 @@ def _autoyes_scan_tick():
                 send_text,
                 with_enter,
                 still_on_screen=lambda: _prompt_still_on_screen(
-                    expected, agent_kind, prompt_type, phash
+                    expected, agent_kind, prompt_type, pident
                 ),
             )
             if result.ok:
                 with state.autoyes_lock:
-                    state.autoyes_answered[target] = (phash, now)
+                    state.autoyes_answered[target] = (pident, now)
                 broadcast_event = (target, "fired", prompt_type)
                 log.info(
                     "autoyes: FIRED %s on %s (send=%r enter=%r)",

@@ -61,6 +61,31 @@ CODEX_THEN_DOWNGRADE = CODEX + (
 
 SHELL_YN = "$ ./cleanup.sh\nDelete 3 files? (y/n)"
 
+
+def _long_codex(env):
+    """A codex approval whose command wraps: the differing part (the command and
+    the start of option 2) sits above twenty common wrapped rows, so the last
+    500 characters before the footer are the same for every `env`."""
+    rows = [f"     --artifact /srv/releases/common/build-{i:02d}/bundle.tar.gz \\" for i in range(20)]
+    return "\n".join([
+        "Would you like to run the following command?",
+        "",
+        f"  $ deploy {env} --all \\",
+        *[r.replace("     ", "      ", 1) for r in rows],
+        "",
+        "› 1. Yes, proceed (y)",
+        f"  2. Yes, and don't ask again for commands that start with `deploy {env} --all",
+        *rows,
+        "     ` (p)",
+        "  3. No, and tell Codex what to do differently (esc)",
+        "",
+        "  Press enter to confirm or esc to cancel",
+    ])
+
+
+LONG_STAGING = _long_codex("staging")
+LONG_PRODUCTION = _long_codex("production")
+
 PANE_ID = "%1"
 _IDENTITY = SimpleNamespace(as_dict=lambda: {"pane_id": PANE_ID})
 _UNSET = object()
@@ -221,6 +246,51 @@ class RecheckBeforeSendTests(_ScannerCase):
         deliver = self.tick(CODEX, now=105.0, kind="codex")
         deliver.assert_called_once()
         self.assertEqual(deliver.call_args.kwargs, {"text": "", "enter": True})
+
+    def test_the_long_fixtures_share_their_last_500_characters(self):
+        self.assertNotEqual(LONG_STAGING, LONG_PRODUCTION)
+        self.assertEqual(autoyes._prompt_region(LONG_STAGING), autoyes._prompt_region(LONG_PRODUCTION))
+        for tail in (LONG_STAGING, LONG_PRODUCTION):
+            self.assertEqual(autoyes._detect_autoyes_prompt(tail, "codex")[0], "numbered-yes")
+
+    def test_a_different_long_approval_with_the_same_suffix_gets_no_answer(self):
+        """Judge #3: the staging approval was answered by hand and codex put up
+        the production one before the delayed send ran."""
+        self.tick(LONG_STAGING, now=100.0, kind="codex")
+        deliver = self.tick(LONG_STAGING, now=105.0, kind="codex", recapture=LONG_PRODUCTION)
+        deliver.assert_not_called()
+
+    def test_a_replacement_long_approval_gets_its_own_countdown(self):
+        self.tick(LONG_STAGING, now=100.0, kind="codex")
+        self.tick(LONG_PRODUCTION, now=103.0, kind="codex").assert_not_called()
+        self.assertEqual(self.countdown()["deadline"], 108.0)
+        self.tick(LONG_PRODUCTION, now=105.0, kind="codex").assert_not_called()
+        self.tick(LONG_PRODUCTION, now=108.0, kind="codex").assert_called_once()
+
+    def test_cancelling_a_long_approval_does_not_cancel_its_replacement(self):
+        self.tick(LONG_STAGING, now=100.0, kind="codex")
+        autoyes.cancel_countdown(self.TARGET)
+        self.tick(LONG_STAGING, now=101.0, kind="codex")
+        self.assertIsNone(self.countdown())
+        self.tick(LONG_PRODUCTION, now=102.0, kind="codex")
+        self.assertEqual(self.countdown()["deadline"], 107.0)
+
+    def test_an_unchanged_long_approval_still_fires(self):
+        self.tick(LONG_STAGING, now=100.0, kind="codex")
+        self.tick(LONG_STAGING, now=105.0, kind="codex").assert_called_once()
+
+    def test_the_status_area_below_the_request_does_not_change_its_identity(self):
+        self.tick(LONG_STAGING + "\n  gpt-6-astra high · 40% left", now=100.0, kind="codex")
+        deliver = self.tick(LONG_STAGING + "\n  gpt-6-astra high · 39% left", now=105.0,
+                            kind="codex")
+        deliver.assert_called_once()
+
+    def test_a_request_that_cannot_be_established_is_withheld(self):
+        self.assertIsNone(autoyes._prompt_identity("no prompt terminator on this screen"))
+        with patch("routes.autoyes._prompt_identity", return_value=None):
+            self.tick(LONG_STAGING, now=100.0, kind="codex")
+            self.assertIsNone(self.countdown())
+            self.tick(LONG_STAGING, now=200.0, kind="codex").assert_not_called()
 
     def test_the_recheck_runs_inside_the_park_effect(self):
         source = (ROOT / "routes/autoyes.py").read_text()

@@ -27,17 +27,22 @@ from shared.agent_identity import (
 )
 from shared.agent_model import observe as observe_model
 from shared.tmux import capture_reusable, prettify_command, sudo_prompt_waiting, tmux_exact_target
-from routes.autoyes import autoyes_will_consider, detection_depth, prompt_popup_info
+from routes.autoyes import (
+    autoyes_will_consider,
+    detection_depth,
+    detection_window,
+    detection_window_lines,
+    prompt_popup_info,
+)
 from routes.terminal import enrich_panes_with_agents
 
 poll_bp = Blueprint("poll_bp", __name__)
 
 CLI_PROXY_TIMEOUT_CEILING = 600
 
-# Lines of each pane's tail the browser gets: the window detectSmartActions
-# reads (js/actions.js, `lines.slice(-60)`). The server-side detectors still
-# see the whole capture.
-SCAN_TAIL_LINES = 60
+# Each pane's tail goes to the browser cut to the detectors' shared input window
+# (routes/autoyes.py:detection_window_lines), and the capture reaches back at
+# least that far, so the browser detects on exactly the rows the scanner does.
 # A pane whose change marker has not moved reuses its last capture, but never
 # one older than this (shared/tmux.py:capture_reusable).
 SCAN_RECAPTURE_SEC = 30
@@ -72,8 +77,7 @@ def _parse_since(value):
 def _store_scan_capture(target, raw, prev):
     """Cache a fresh capture; bump the rev only if the browser tail changed."""
     global _scan_rev
-    plain = _ANSI_ESCAPE_RE.sub("", raw)
-    tail = "\n".join(plain.split("\n")[-SCAN_TAIL_LINES:])
+    tail = detection_window(raw)
     with _SCAN_LOCK:
         entry = _SCAN_CACHE.get(target)
         # Two browsers poll concurrently: an older capture landing second must
@@ -428,7 +432,7 @@ def consolidated_poll():
         else:
             captured_at = time.time()
             cap = subprocess.run(
-                ["tmux", "capture-pane", "-e", "-p", "-t", tmux_exact_target(target), "-S", "-60"],
+                ["tmux", "capture-pane", "-e", "-p", "-t", tmux_exact_target(target), "-S", f"-{detection_window_lines()}"],
                 capture_output=True,
                 text=True,
                 timeout=5,
@@ -510,6 +514,8 @@ def consolidated_poll():
     # js/actions.js windows the pane with this, so the action bar and Auto-Yes
     # agree on what is a prompt at any Settings depth.
     result["detection_depth"] = detection_depth()
+    # The rows of each tail that detection reads, for js/poll-sync.js:detectionTail.
+    result["detection_window"] = detection_window_lines()
 
     # Clean up stale targets no longer in tmux
     if proc.returncode == 0:
