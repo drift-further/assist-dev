@@ -153,11 +153,14 @@ function toggleGitPanel() {
     btn.classList.toggle('active', !visible);
 }
 
-async function gitRunOp(op, message) {
+// target/expectDir: a confirmed Commit & push passes the pane and directory it
+// showed the user, so dispatch never rereads a selection that may have moved.
+async function gitRunOp(op, message, target, expectDir) {
     showFlash('sent', 'Git: running...');
     try {
-        const body = { op, target: getInputTarget() };
+        const body = { op, target: target !== undefined ? target : getInputTarget() };
         if (message !== undefined) body.message = message;
+        if (expectDir !== undefined) body.expect_dir = expectDir;
         const resp = await fetch('/api/git/run', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -169,7 +172,7 @@ async function gitRunOp(op, message) {
             lastAction = Date.now();
             updateStatusTime();
         } else {
-            showFlash('error', data.error || 'Git failed');
+            showFlash('error', data.reason || data.error || 'Git failed');
         }
     } catch (e) {
         showFlash('error', 'Offline');
@@ -196,14 +199,6 @@ async function createVenv() {
     } catch (e) {
         showFlash('error', 'Offline');
     }
-}
-
-function gitCommitPush() {
-    const inp = document.getElementById('git-commit-msg');
-    const msg = inp.value.trim();
-    if (!msg) { showFlash('error', 'Enter a message'); return; }
-    gitRunOp('commit_push', msg);
-    inp.value = '';
 }
 
 // ================================================================

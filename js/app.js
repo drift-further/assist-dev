@@ -56,12 +56,18 @@ document.getElementById('git-commit-msg').addEventListener('keydown', function(e
     }
 });
 
+// The pane and message are captured once, before the preview, and exactly those
+// are dispatched: the preview is async, and a tab switch while it is pending
+// used to confirm one repository and then commit and push the other.
 async function gitCommitPushConfirm() {
-    const msg = document.getElementById('git-commit-msg').value.trim();
+    const box = document.getElementById('git-commit-msg');
+    const msg = box.value.trim();
+    const target = getInputTarget();
     if (!msg) { showFlash('error', 'Enter a message'); return; }
+    if (!target) { showFlash('error', 'No active session'); return; }
     let info;
     try {
-        const resp = await fetch('/api/git/preview?target=' + encodeURIComponent(getInputTarget()));
+        const resp = await fetch('/api/git/preview?target=' + encodeURIComponent(target));
         if (authLost(resp)) return;
         info = await resp.json();
     } catch (e) {
@@ -69,17 +75,24 @@ async function gitCommitPushConfirm() {
         return;
     }
     if (!info.ok) { showFlash('error', info.error || 'Git preview failed'); return; }
+    if (getInputTarget() !== target) {
+        showFlash('error', 'Session changed — tap Commit & push again');
+        return;
+    }
     const files = info.changed + ' changed file' + (info.changed === 1 ? '' : 's');
     const dest = info.upstream
         ? info.upstream + (info.remote_url ? ' (' + info.remote_url + ')' : '')
         : 'no upstream set, so the push will fail';
     const text = 'Commit & push?\n\n'
+        + 'Pane: ' + target + (info.dir ? ' (' + info.dir + ')' : '') + '\n'
         + 'Branch: ' + info.branch + '\n'
         + 'Push to: ' + dest + '\n'
         + files + ', all staged with git add -A\n\n'
         + 'Message: ' + msg;
     if (!confirm(text)) return;
-    gitCommitPush();
+    gitRunOp('commit_push', msg, target, info.dir);
+    // Clear only the message that was sent; a newer draft typed meanwhile stays.
+    if (box.value.trim() === msg) box.value = '';
 }
 
 // The ◇ button is the whole doorway: connected, it deep-links the active
