@@ -33,9 +33,9 @@ class QrEncoderTests(unittest.TestCase):
     # blocks). A change here must be re-verified with a real decoder.
     GOLDEN = {
         "x": (21, "bde62c08cc481a13206bb3b7acd1be1c1cd0353ba5986de928a1af0f297e56ca"),
-        "http://10.0.0.101:8089/": (
+        "http://10.20.30.40:8089/": (
             25,
-            "59e514a1ff77abc510778413a30e4409a8aa9876922ff4e7b1b49022c15e4a58",
+            "7a359e8cac634539ca41cc067bde6c81e8d5c07258650d56664ea3a11f32abba",
         ),
         "b" * 134: (41, "e8537809da43555e233ec9cf305efd21d3cc0bc9b998b24352be0849285656a0"),
     }
@@ -68,8 +68,8 @@ class QrEncoderTests(unittest.TestCase):
 
 class PhoneUrlTests(unittest.TestCase):
     def test_bind_wins(self):
-        env = {"ASSIST_BIND": "10.0.0.101", "ASSIST_ALLOWED_ORIGINS": "http://assist.lan"}
-        self.assertEqual(pair.phone_url(8089, env), "http://10.0.0.101:8089/")
+        env = {"ASSIST_BIND": "10.20.30.40", "ASSIST_ALLOWED_ORIGINS": "http://assist.lan"}
+        self.assertEqual(pair.phone_url(8089, env), "http://10.20.30.40:8089/")
 
     def test_first_non_loopback_origin_for_a_proxy_install(self):
         env = {"ASSIST_ALLOWED_ORIGINS": "http://localhost:8089, http://assist.lan/ ,http://x"}
@@ -91,11 +91,11 @@ class PairCommandTests(unittest.TestCase):
             "ok": True, "access": {"open": True, "remaining_sec": 300}
         }) as post, mock.patch.object(pair.shutil, "which", return_value=None), \
                 redirect_stdout(out):
-            code = pair.command(self._resolved(), 5, url="http://10.0.0.101:8089/")
+            code = pair.command(self._resolved(), 5, url="http://10.20.30.40:8089/")
         self.assertEqual(code, 0)
         post.assert_called_once_with("/access/open", {"minutes": 5})
         text = out.getvalue()
-        self.assertIn("http://10.0.0.101:8089/", text)
+        self.assertIn("http://10.20.30.40:8089/", text)
         self.assertIn("5 min", text)
         self.assertIn("█", text)
 

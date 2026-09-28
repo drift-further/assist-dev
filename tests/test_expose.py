@@ -52,7 +52,7 @@ class ListenAddressTests(unittest.TestCase):
 
 class ExposeAddressTests(unittest.TestCase):
     def test_private_and_cgnat_addresses_are_accepted(self):
-        for value in ("10.0.0.101", "192.168.1.50", "172.20.1.2", "100.101.102.103", "fd00::5"):
+        for value in ("10.20.30.40", "192.168.1.50", "172.20.1.2", "100.101.102.103", "fd00::5"):
             with self.subTest(value=value):
                 self.assertEqual(expose.check_address(value), value)
 
@@ -81,38 +81,38 @@ class EnvFileTests(unittest.TestCase):
             "# ASSIST_ALLOWED_ORIGINS=http://commented.example\n"
             "ASSIST_ALLOWED_ORIGINS=http://assist.lan,http://10.0.0.9:8089\n"
         )
-        expose.write_exposure(path, "10.0.0.101", 8089)
+        expose.write_exposure(path, "10.20.30.40", 8089)
         text = path.read_text()
         self.assertIn("# comment kept\n", text)
         self.assertIn("ASSIST_PORT=8089\n", text)
         self.assertIn("# ASSIST_ALLOWED_ORIGINS=http://commented.example\n", text)
-        self.assertIn("ASSIST_BIND=10.0.0.101\n", text)
+        self.assertIn("ASSIST_BIND=10.20.30.40\n", text)
         self.assertIn(
             "ASSIST_ALLOWED_ORIGINS=http://assist.lan,http://10.0.0.9:8089,"
-            "http://10.0.0.101:8089\n",
+            "http://10.20.30.40:8089\n",
             text,
         )
 
     def test_is_idempotent(self):
         path = self._env("")
-        expose.write_exposure(path, "10.0.0.101", 8089)
+        expose.write_exposure(path, "10.20.30.40", 8089)
         first = path.read_text()
-        expose.write_exposure(path, "10.0.0.101", 8089)
+        expose.write_exposure(path, "10.20.30.40", 8089)
         self.assertEqual(path.read_text(), first)
-        self.assertEqual(first.count("http://10.0.0.101:8089"), 1)
+        self.assertEqual(first.count("http://10.20.30.40:8089"), 1)
 
     def test_replaces_an_existing_bind(self):
         path = self._env("ASSIST_BIND=10.0.0.5\n")
-        expose.write_exposure(path, "10.0.0.101", 8089)
+        expose.write_exposure(path, "10.20.30.40", 8089)
         self.assertNotIn("10.0.0.5\n", path.read_text())
         self.assertEqual(path.read_text().count("ASSIST_BIND="), 1)
 
     def test_off_removes_the_bind_but_keeps_the_origins(self):
-        path = self._env("ASSIST_BIND=10.0.0.101\nASSIST_ALLOWED_ORIGINS=http://10.0.0.101:8089\n")
+        path = self._env("ASSIST_BIND=10.20.30.40\nASSIST_ALLOWED_ORIGINS=http://10.20.30.40:8089\n")
         expose.remove_exposure(path)
         text = path.read_text()
         self.assertNotIn("ASSIST_BIND=10", text)
-        self.assertIn("ASSIST_ALLOWED_ORIGINS=http://10.0.0.101:8089\n", text)
+        self.assertIn("ASSIST_ALLOWED_ORIGINS=http://10.20.30.40:8089\n", text)
 
 
 class ExposeCommandTests(unittest.TestCase):
@@ -121,7 +121,7 @@ class ExposeCommandTests(unittest.TestCase):
         (home / ".env").write_text("")
         return SimpleNamespace(home=home, port=8089)
 
-    def _run(self, resolved, running, ip="10.0.0.101"):
+    def _run(self, resolved, running, ip="10.20.30.40"):
         out = io.StringIO()
         health = mock.Mock(return_value={"status": "ok"})
         if not running:
@@ -247,7 +247,7 @@ class ExposedOriginPassesTheRequestFences(unittest.TestCase):
         return security
 
     def test_the_exposed_address_is_let_in_and_a_rebound_name_is_not(self):
-        for address, host in (("10.0.0.101", "10.0.0.101:8120"),
+        for address, host in (("10.20.30.40", "10.20.30.40:8120"),
                               ("fd00::1", "[fd00::1]:8120")):
             with self.subTest(address=address), tempfile.TemporaryDirectory() as raw:
                 env_file = Path(raw) / ".env"
@@ -264,10 +264,10 @@ class ExposedOriginPassesTheRequestFences(unittest.TestCase):
     def test_off_keeps_the_origin_so_a_proxy_in_front_still_works(self):
         with tempfile.TemporaryDirectory() as raw:
             env_file = Path(raw) / ".env"
-            expose.write_exposure(env_file, "10.0.0.101", 8120)
+            expose.write_exposure(env_file, "10.20.30.40", 8120)
             expose.remove_exposure(env_file)
             security = self._configure_from(env_file)
-            self.assertTrue(security.host_allowed("10.0.0.101"))
+            self.assertTrue(security.host_allowed("10.20.30.40"))
 
 
 if __name__ == "__main__":

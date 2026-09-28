@@ -101,7 +101,7 @@ class _Configured(unittest.TestCase):
     """Rebuild the allowlists from a controlled environment, restore after."""
 
     PORT = 8089
-    EXTRA = "http://assist.example.lan,http://10.0.0.101:8089"
+    EXTRA = "http://assist.example.lan,http://10.20.30.40:8089"
 
     def setUp(self):
         env = {"ASSIST_ALLOWED_ORIGINS": self.EXTRA}
@@ -135,7 +135,7 @@ class LoopbackOriginPortTests(_Configured):
 class HostAllowlistTests(_Configured):
     def test_live_nginx_host_shapes_are_allowed(self):
         # nginx `proxy_set_header Host $host` drops the port.
-        for host in ("assist.example.lan", "10.0.0.101", "10.0.0.101:8089",
+        for host in ("assist.example.lan", "10.20.30.40", "10.20.30.40:8089",
                      "ASSIST.example.lan", "assist.example.lan."):
             with self.subTest(host=host):
                 self.assertTrue(security.host_allowed(host))

@@ -37,7 +37,7 @@ class TerminalKillAuditTests(unittest.TestCase):
             "/terminal/kill",
             json={"session": "del-example"},
             headers={
-                "X-Real-IP": "10.0.0.233",
+                "X-Real-IP": "198.51.100.23",
                 "X-Forwarded-For": "198.51.100.9, 127.0.0.1",
                 "User-Agent": "Assist audit test",
                 "Referer": "https://assist.example/",
@@ -55,7 +55,7 @@ class TerminalKillAuditTests(unittest.TestCase):
         self.assertEqual(record["session"], "del-example")
         self.assertEqual(record["outcome"], "success")
         self.assertEqual(record["stderr"], "")
-        self.assertEqual(record["source_ip"], "10.0.0.233")
+        self.assertEqual(record["source_ip"], "198.51.100.23")
         self.assertEqual(record["user_agent"], "Assist audit test")
         self.assertEqual(record["referrer"], "https://assist.example/")
         self.assertRegex(record["timestamp"], r"^\d{4}-\d{2}-\d{2}T.*[+-]\d{2}:\d{2}$")
@@ -68,7 +68,7 @@ class TerminalKillAuditTests(unittest.TestCase):
         response = self.client.post(
             "/terminal/kill",
             json={"session": "missing"},
-            headers={"X-Forwarded-For": "10.0.0.44, 127.0.0.1"},
+            headers={"X-Forwarded-For": "203.0.113.44, 127.0.0.1"},
         )
 
         self.assertEqual(response.status_code, 500)
