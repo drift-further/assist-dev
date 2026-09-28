@@ -43,6 +43,11 @@ def systemd_unit(home: Path, path_env: str) -> str:
         f"WorkingDirectory={home}\n"
         f"Environment=PATH={path_env}\n"
         f"ExecStart={home / 'assist-ctl'} run\n"
+        # Signal only the Flask process on stop, restart and failure cleanup.
+        # A tmux server Assist started is a child of this unit and sits in its
+        # cgroup; the default KillMode=control-group would kill it -- and every
+        # agent session in it -- whenever the web UI restarts.
+        "KillMode=process\n"
         "Restart=on-failure\n"
         "RestartSec=3\n"
         "\n"
@@ -60,6 +65,10 @@ def launchd_plist(home: Path, path_env: str) -> bytes:
             "EnvironmentVariables": {"PATH": path_env},
             "RunAtLoad": True,
             "KeepAlive": {"SuccessfulExit": False},
+            # launchd kills the job's process group when the job exits. tmux
+            # daemonizes into its own session, but say so explicitly: a tmux
+            # server Assist started must outlive a restart of the web UI.
+            "AbandonProcessGroup": True,
         }
     )
 
