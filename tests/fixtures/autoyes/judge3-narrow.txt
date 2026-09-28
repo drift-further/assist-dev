@@ -1,0 +1,24 @@
+Would you like to run the following comm
+and?
+
+  $ git status
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for this c
+ommand (p)
+  3. No, and tell Codex what to do diffe
+rently (esc)
+
+  Press enter to confirm or esc to cance
+l
+
+Working (3s)
+
+
+
+
+
+
+
+
+

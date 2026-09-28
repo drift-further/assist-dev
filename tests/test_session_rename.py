@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parent.parent
 class _IsolatedState(unittest.TestCase):
     def setUp(self):
         maps = ("autoyes_sessions", "autoyes_delays", "autoyes_countdowns",
-                "autoyes_answered", "autoyes_cancelled", "autoyes_effective",
+                "autoyes_answered", "autoyes_cancelled", "autoyes_cancel_quiet", "autoyes_effective",
                 "autoyes_sources")
         for name in maps:
             patcher = patch.object(state, name, {})

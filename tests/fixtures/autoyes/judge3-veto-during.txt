@@ -1,0 +1,118 @@
+old history 093 previously used luna
+old history 094
+old history 095
+old history 096
+old history 097
+old history 098
+old history 099
+old history 100
+old history 101
+old history 102
+old history 103
+old history 104
+old history 105
+old history 106
+old history 107
+old history 108
+old history 109
+old history 110
+old history 111
+old history 112
+old history 113
+old history 114
+old history 115
+old history 116
+old history 117
+old history 118
+old history 119
+old history 120
+old history 121
+old history 122
+old history 123
+old history 124
+old history 125
+old history 126
+old history 127
+old history 128
+old history 129
+old history 130
+old history 131
+old history 132
+old history 133
+old history 134
+old history 135
+old history 136
+old history 137
+old history 138
+old history 139
+old history 140
+old history 141
+old history 142
+old history 143
+old history 144
+old history 145
+old history 146
+old history 147
+old history 148
+old history 149
+old history 150
+old history 151
+old history 152
+old history 153
+old history 154
+old history 155
+old history 156
+old history 157
+old history 158
+old history 159
+old history 160
+old history 161
+old history 162
+old history 163
+old history 164
+old history 165
+old history 166
+old history 167
+old history 168
+old history 169
+old history 170
+old history 171
+old history 172
+old history 173
+old history 174
+old history 175
+old history 176
+old history 177
+old history 178
+old history 179
+old history 180
+old history 181
+old history 182
+old history 183
+old history 184
+old history 185
+old history 186
+old history 187
+old history 188
+old history 189
+old history 190
+old history 191
+old history 192
+old history 193
+old history 194
+old history 195
+old history 196
+old history 197
+old history 198
+old history 199
+Would you like to run the following command?
+
+  $ git status
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for this command (p)
+  3. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel
+
+  Working (3s)

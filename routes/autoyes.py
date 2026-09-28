@@ -598,14 +598,21 @@ def _prompt_region(tail, size=500):
 # Where a request's dialog begins, for _prompt_identity. codex heads every
 # approval with one question (the four "Would you like to …?" forms in the
 # 0.156 binary: run a command, make edits, grant permissions, send input to a
-# terminal) and its directory-trust dialog with its own.
+# terminal) and its directory-trust dialog with its own. Matched at the start
+# of rows joined by _joined, since a narrow pane wraps the question.
 _CODEX_HEADER_RE = re.compile(
-    r"^\s*(?:Would you like to .+\?|Do you trust the contents of this directory\?)\s*$"
+    r"\s*(?:Would you like to .+?\?|Do you trust the contents of .+?\?)"
 )
 # A Claude transcript entry: the tool call a y/n/a permission row is for.
 _TRANSCRIPT_ENTRY_RE = re.compile(r"^\s*[●○◉]\s*\S")
 _OPTION_ONE_RE = re.compile(r"^\s*(?:[^\d\s]\s*)?1[\.\)]\s*Yes\b", re.IGNORECASE)
 _SELECTED_YES_LINE_RE = re.compile(r"^\s*❯\s*Yes\b", re.IGNORECASE)
+
+
+def _joined(rows):
+    """Rows as one line: each newline and the whitespace around it becomes one
+    space, so a question wrapped across rows reads as it was written."""
+    return re.sub(r"\s*\n\s*", " ", "\n".join(rows))
 
 
 def _request_start(lines, term, prompt_type, agent_kind):
@@ -635,7 +642,14 @@ def _request_start(lines, term, prompt_type, agent_kind):
         if first is None:
             return None
         if agent_kind == "codex":
-            return up(_CODEX_HEADER_RE.match, first)
+            # The nearest row above option 1 where the header STARTS, reading
+            # the rows below it joined (judge3 #2: at 40 columns the question
+            # wraps mid-word). A header whose first row has scrolled away does
+            # not match, and the request is withheld.
+            for i in range(first - 1, -1, -1):
+                if _CODEX_HEADER_RE.match(_joined(lines[i:first])):
+                    return i
+            return None
         return up(_OPTION_SEP_RE.match, first)
     if prompt_type == "permission-yna":
         return up(_TRANSCRIPT_ENTRY_RE.match, term)
@@ -754,6 +768,10 @@ def autoyes_will_consider(target, enabled, source, process_kind, agent_kind):
         return False
     with state.autoyes_lock:
         return not state.autoyes_cancelled.get(target)
+
+
+# Consecutive scans with no prompt at all that release a human cancel.
+_CANCEL_RELEASE_SCANS = 2
 
 
 def _shell_ok(session, source):
@@ -918,10 +936,10 @@ def _autoyes_scan_tick():
         # tmux server gone — every session is dead; drop all auto-yes state
         # so ghost countdowns/toggles aren't served for the process lifetime.
         if "no server" in (proc.stderr or "").lower():
+            # Cancellations are kept: only two quiet scans release one.
             with state.autoyes_lock:
                 state.autoyes_countdowns.clear()
                 state.autoyes_answered.clear()
-                state.autoyes_cancelled.clear()
                 state.autoyes_sessions.clear()
                 state.autoyes_delays.clear()
         return
@@ -955,9 +973,9 @@ def _autoyes_scan_tick():
         for t in list(state.autoyes_answered):
             if t not in live_targets:
                 state.autoyes_answered.pop(t, None)
-        for t in list(state.autoyes_cancelled):
-            if t not in live_targets:
-                state.autoyes_cancelled.pop(t, None)
+        # autoyes_cancelled is NOT pruned here: nothing but two quiet scans of
+        # the target releases a cancel (judge3 #1). A dead pane's entry waits
+        # for its name to be reused and seen quiet, which fails safe.
 
     # Resolve once per session rather than once per pane, then publish the
     # result: /autoyes/status has no live session list of its own. Outside the
@@ -1015,11 +1033,14 @@ def _autoyes_scan_tick():
         if agent_kind not in AGENT_KINDS and not _shell_ok(session_name, source):
             continue
         qualified.add(session_name)
-        # Detection plus the codex vetoes (see _LUNA_RE, _CODEX_DOWNGRADE_RE).
-        # The vetoes are applied AFTER detection rather than instead of it, so a
-        # countdown already ticking when the vetoed text appears is cancelled by
-        # the `if not detected` branch below rather than being left to fire.
-        detected = detect_answerable_prompt(tail, agent_kind, target)
+        # Two questions, kept apart (judge3 #1). Is a prompt PRESENT? That is
+        # raw detection, vetoes ignored, and only it can release a cancel. Is
+        # it ELIGIBLE to answer? That is detection minus the codex vetoes
+        # (_LUNA_RE, _CODEX_DOWNGRADE_RE), and a veto only clears a pending
+        # countdown: a resize that brings an old "luna" row into the capture
+        # leaves the approval on screen, and used to read as "prompt gone".
+        present = _detect_autoyes_prompt(tail, agent_kind)
+        detected = detect_answerable_prompt(tail, agent_kind, target) if present else None
         pident = _prompt_identity(tail, detected[0], agent_kind) if detected else None
 
         # Collect broadcast event to fire AFTER releasing the lock
@@ -1029,16 +1050,32 @@ def _autoyes_scan_tick():
         broadcast_event = None
         fire_action = None  # (identity, send_text, with_enter, prompt_type)
 
-        if not detected:
+        if not present:
             with state.autoyes_lock:
                 state.autoyes_countdowns.pop(target, None)
-                # No prompt on screen: whatever the human cancelled has gone,
-                # and this is the ONLY place a cancellation ends.
-                state.autoyes_cancelled.pop(target, None)
                 # No prompt visible: forget what was answered, so a NEW prompt
                 # with the same request as a previous one (consecutive edits to
                 # the same file, say) is not skipped.
                 state.autoyes_answered.pop(target, None)
+                # The ONLY way a cancel ends: no prompt on two consecutive
+                # scans, so one odd capture cannot release it.
+                if target in state.autoyes_cancelled:
+                    quiet = state.autoyes_cancel_quiet.get(target, 0) + 1
+                    if quiet >= _CANCEL_RELEASE_SCANS:
+                        state.autoyes_cancelled.pop(target, None)
+                        state.autoyes_cancel_quiet.pop(target, None)
+                    else:
+                        state.autoyes_cancel_quiet[target] = quiet
+            continue
+
+        with state.autoyes_lock:
+            # A prompt is present: a release has to start counting again.
+            state.autoyes_cancel_quiet.pop(target, None)
+
+        if not detected:
+            # Vetoed: drop any pending countdown and nothing else.
+            with state.autoyes_lock:
+                state.autoyes_countdowns.pop(target, None)
             continue
 
         # A prompt is detected but its request's dialog cannot be placed
@@ -1058,8 +1095,8 @@ def _autoyes_scan_tick():
             continue
 
         with state.autoyes_lock:
-            # A cancel holds for the whole pane until a tick sees no prompt,
-            # whatever the identity does meanwhile. Keyed by identity, a resize
+            # A cancel holds for the whole pane until two consecutive scans see
+            # no prompt, whatever the identity or a veto does meanwhile. Keyed by identity, a resize
             # or a row below the footer revived it (judge2 #1); leaving a prompt
             # to the human is the safe way to be wrong.
             if state.autoyes_cancelled.get(target):
@@ -1236,6 +1273,7 @@ def rename_autoyes_session(old, new):
             state.autoyes_countdowns,
             state.autoyes_answered,
             state.autoyes_cancelled,
+            state.autoyes_cancel_quiet,
         ):
             for target in [t for t in by_target if t.startswith(old_prefix)]:
                 by_target[new_prefix + target[len(old_prefix):]] = by_target.pop(target)
@@ -1311,8 +1349,8 @@ def cancel_countdown(target):
     """Cancel the countdown running on `target`. False if none was running.
 
     The cancellation is recorded apart from the countdown and outlives it: the
-    scanner answers nothing on that pane until it sees no prompt there (review
-    rel #2, judge2 #1). The (identity, type) pairs are kept for the log only.
+    scanner answers nothing on that pane until two consecutive scans see no
+    prompt there, vetoes ignored (review rel #2, judge2 #1, judge3 #1). The (identity, type) pairs are kept for the log only.
     """
     with state.autoyes_lock:
         cd = state.autoyes_countdowns.pop(target, None)
