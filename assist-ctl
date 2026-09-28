@@ -247,7 +247,7 @@ do_run() {
 case "${1:-help}" in
     start)   do_start ;;
     run)     do_run ;;
-    paths)   printf 'port=%s\npid_file=%s\nlog_file=%s\n' "$PORT" "$PID_FILE" "$LOG_FILE" ;;
+    paths)   printf 'port=%s\npid_file=%s\nlog_file=%s\nbind=%s\n' "$PORT" "$PID_FILE" "$LOG_FILE" "${ASSIST_BIND:-}" ;;
     stop)    do_stop ;;
     restart) do_restart ;;
     status)  do_status ;;

@@ -126,9 +126,9 @@ class ExposeCommandTests(unittest.TestCase):
         health = mock.Mock(return_value={"status": "ok"})
         if not running:
             health.side_effect = http.server_not_running("http://127.0.0.1:8089")
-        with mock.patch.object(expose.http, "get", health), mock.patch.object(
-            expose.proc, "restart", return_value=0
-        ) as restart, redirect_stdout(out), redirect_stderr(io.StringIO()):
+        with mock.patch.dict(os.environ), mock.patch.object(expose.http, "get", health), \
+                mock.patch.object(expose.proc, "restart", return_value=0) as restart, \
+                redirect_stdout(out), redirect_stderr(io.StringIO()):
             code = expose.command(resolved, ip)
         return code, restart, out.getvalue()
 
@@ -163,6 +163,66 @@ class ExposeCommandTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn("ASSIST_BIND=192.168.1.50", (resolved.home / ".env").read_text())
 
+
+
+class RestartSeesTheEditedBindTests(unittest.TestCase):
+    """The full handoff: CLI loads .env, expose edits it, restart inherits the env.
+
+    The CLI's loader puts ASSIST_BIND into os.environ, restart hands that
+    environment to assist-ctl, and sourcing an .env that no longer mentions
+    the variable does not unset it -- so `--off` used to restart straight back
+    onto the LAN address while printing "loopback only". The observer here is
+    the real assist-ctl's `paths` verb, run the way proc._control runs it.
+    """
+
+    def _handoff(self, env_text, **command_args):
+        import shutil
+        import subprocess
+
+        from cli.config import _load_assignments
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        shutil.copy2(ROOT / "assist-ctl", home / "assist-ctl")
+        (home / ".env").write_text(env_text)
+        seen = {}
+
+        def restart_observer(resolved):
+            out = subprocess.run(
+                [str(home / "assist-ctl"), "paths"], cwd=home,
+                capture_output=True, text=True, check=True,
+            ).stdout  # env=None: inherits os.environ, exactly like _control
+            seen.update(line.split("=", 1) for line in out.splitlines())
+            return 0
+
+        base = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": tmp.name}
+        with mock.patch.dict(os.environ, base, clear=True):
+            _load_assignments(home / ".env")  # what resolve() does at CLI start
+            out = io.StringIO()
+            with mock.patch.object(expose.http, "get", return_value={"status": "ok"}), \
+                    mock.patch.object(expose.proc, "restart", side_effect=restart_observer), \
+                    redirect_stdout(out), redirect_stderr(io.StringIO()):
+                code = expose.command(
+                    SimpleNamespace(home=home, port=8089), **command_args
+                )
+        return code, seen, out.getvalue()
+
+    def test_off_restarts_on_loopback_only(self):
+        code, seen, out = self._handoff("ASSIST_BIND=192.168.1.50\n", ip=None, off=True)
+        self.assertEqual(code, 0)
+        self.assertEqual(seen["bind"], "", "the restarted server still gets ASSIST_BIND")
+        self.assertIn("loopback only", out)
+
+    def test_changing_the_address_restarts_on_the_new_one(self):
+        code, seen, _out = self._handoff("ASSIST_BIND=192.168.1.50\n", ip="192.168.1.77")
+        self.assertEqual(code, 0)
+        self.assertEqual(seen["bind"], "192.168.1.77")
+
+    def test_on_from_nothing_restarts_on_the_address(self):
+        code, seen, _out = self._handoff("", ip="10.0.0.9")
+        self.assertEqual(code, 0)
+        self.assertEqual(seen["bind"], "10.0.0.9")
 
 
 class ExposedOriginPassesTheRequestFences(unittest.TestCase):

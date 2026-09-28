@@ -10,6 +10,7 @@ that needs no root and no second config file.
 """
 
 import ipaddress
+import os
 import re
 import socket
 from pathlib import Path
@@ -132,11 +133,28 @@ def _server_running() -> bool:
     return True
 
 
+def _sync_environment(env_file: Path) -> None:
+    """Make this process's environment match the edited .env before a restart.
+
+    resolve() loaded the OLD .env into os.environ, and restart hands that
+    environment to assist-ctl. Sourcing an .env that no longer assigns
+    ASSIST_BIND does not unset an inherited one, so without this `--off`
+    restarts straight back onto the LAN address.
+    """
+    lines = _load(env_file)
+    for name in (_BIND, _ORIGINS):
+        value = _read_value(lines, name)
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+
+
 def command(resolved, ip: str | None, off: bool = False) -> int:
     env_file = resolved.home / ".env"
     if off:
         remove_exposure(env_file)
-        print(f"Removed ASSIST_BIND from {env_file}; Assist listens on loopback only.")
+        print(f"Removed ASSIST_BIND from {env_file}.")
         address = None
     else:
         candidate = ip if ip is not None else detect_lan_ip()
@@ -151,15 +169,22 @@ def command(resolved, ip: str | None, off: bool = False) -> int:
         origin = write_exposure(env_file, address, resolved.port)
         print(f"ASSIST_BIND={address}  (in {env_file})")
         print(f"Allowed origin: {origin}")
+    _sync_environment(env_file)
 
     if _server_running():
         print("Restarting the server to apply it...")
         code = proc.restart(resolved)
         if code != 0:
+            proc.print_error("the restart failed; the change in .env applies at the next start")
             return code
+        applied = "Assist now listens"
     else:
         print("The server is not running; start it with: assist start")
-    if address is not None:
+        applied = "Assist will listen"
+    if address is None:
+        print(f"{applied} on loopback only.")
+    else:
+        print(f"{applied} on {address} as well as loopback.")
         print()
         print(f"Phone URL: {origin_for(address, resolved.port)}/")
         print("Next: assist pair   (signs the phone in without typing the token)")
