@@ -50,8 +50,8 @@ def _free_port():
 class _Checkout:
     """A throwaway copy of assist-ctl with its own .env and fake serve.py."""
 
-    def __init__(self, root: Path, env_lines=()):
-        self.home = root / "checkout"
+    def __init__(self, root: Path, env_lines=(), name="checkout"):
+        self.home = root / name
         self.home.mkdir()
         script = (ROOT / "assist-ctl").read_text()
         # Hard stop, not a failure: a control script that still defaults to the
@@ -263,6 +263,110 @@ class LegacyPidAdoptionTests(unittest.TestCase):
             time.sleep(0.2)
             self.assertIsNone(proc.poll(), "another checkout's server was killed")
             self.assertTrue(checkout.legacy_pid.exists())
+
+
+class PidOwnershipTests(unittest.TestCase):
+    """The per-user PID file is shared by every checkout of the same user.
+
+    Moving it out of /tmp did not by itself stop a trial checkout from reading
+    the main checkout's record and signalling that PID. Ownership is now
+    checked on every read and again right before the signal, by exact argv.
+    """
+
+    def _pair(self, raw, extra=()):
+        main = _Checkout(Path(raw), [f"ASSIST_PORT={_free_port()}", *extra], name="main")
+        trial = _Checkout(Path(raw), [f"ASSIST_PORT={_free_port()}", *extra], name="trial")
+        return main, trial
+
+    def _alive(self, pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        return True
+
+    def _spawn(self, *argv):
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", *argv])
+        self.addCleanup(proc.wait)
+        self.addCleanup(proc.kill)
+        return proc
+
+    def _check_trial_cannot_touch_main(self, main, trial, pid_file):
+        started = main.ctl("start")
+        self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
+        try:
+            record = pid_file.read_text()
+            main_pid = int(record)
+            for verb in ("stop", "restart", "start"):
+                with self.subTest(verb=verb):
+                    result = trial.ctl(verb)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn("another checkout", result.stderr)
+                    self.assertTrue(self._alive(main_pid), f"trial `{verb}` killed main")
+                    self.assertEqual(pid_file.read_text(), record, f"trial `{verb}` rewrote it")
+            self.assertIn("another checkout", trial.ctl("status").stdout)
+        finally:
+            stopped = main.ctl("stop")
+        # ...and the owner still controls its own server.
+        self.assertIn(f"Stopped (PID {main_pid})", stopped.stdout)
+
+    def test_a_second_checkout_cannot_stop_restart_or_overwrite_the_default_record(self):
+        with tempfile.TemporaryDirectory() as raw:
+            main, trial = self._pair(raw)
+            pid_file = main.state_home / "drift-assist" / "assist.pid"
+            self._check_trial_cannot_touch_main(main, trial, pid_file)
+
+    def test_the_same_holds_for_a_shared_explicit_pid_file(self):
+        with tempfile.TemporaryDirectory() as raw:
+            shared = Path(raw) / "shared" / "a.pid"
+            main, trial = self._pair(raw, [f"ASSIST_PID_FILE={shared}"])
+            self._check_trial_cannot_touch_main(main, trial, shared)
+
+    def test_a_reused_pid_is_never_signalled_and_the_record_is_replaced(self):
+        with tempfile.TemporaryDirectory() as raw:
+            checkout = _Checkout(Path(raw), [f"ASSIST_PORT={_free_port()}"])
+            pid_file = checkout.state_home / "drift-assist" / "assist.pid"
+            pid_file.parent.mkdir(parents=True)
+            unrelated = self._spawn("--some-other-program")
+            pid_file.write_text(f"{unrelated.pid}\n")
+
+            stopped = checkout.ctl("stop")
+            self.assertEqual(stopped.returncode, 0)
+            self.assertIn("not running", stopped.stdout)
+            time.sleep(0.2)
+            self.assertIsNone(unrelated.poll(), "a reused PID was signalled")
+            self.assertFalse(pid_file.exists())
+
+            pid_file.write_text(f"{unrelated.pid}\n")
+            try:
+                started = checkout.ctl("start")
+                self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
+                self.assertNotEqual(pid_file.read_text().strip(), str(unrelated.pid))
+            finally:
+                checkout.ctl("stop")
+            self.assertIsNone(unrelated.poll())
+
+    def test_a_path_that_only_contains_this_serve_py_is_not_ours(self):
+        # Substring matching took `<home>/serve.py.orig` for this server.
+        with tempfile.TemporaryDirectory() as raw:
+            checkout = _Checkout(Path(raw), [f"ASSIST_PORT={_free_port()}"])
+            pid_file = checkout.state_home / "drift-assist" / "assist.pid"
+            pid_file.parent.mkdir(parents=True)
+            lookalike = self._spawn(str(checkout.home / "serve.py") + ".orig")
+            pid_file.write_text(f"{lookalike.pid}\n")
+            checkout.ctl("stop")
+            time.sleep(0.2)
+            self.assertIsNone(lookalike.poll())
+            self.assertFalse(cli_config.runs_checkout(lookalike.pid, checkout.home))
+
+    def test_the_cli_uses_the_same_exact_rule(self):
+        with tempfile.TemporaryDirectory() as raw:
+            home = Path(raw) / "main"
+            home.mkdir()
+            ours = self._spawn(str(home / "serve.py"), "--port", "1")
+            other = self._spawn(str(Path(raw) / "main2" / "serve.py"))
+            self.assertTrue(cli_config.runs_checkout(ours.pid, home))
+            self.assertFalse(cli_config.runs_checkout(other.pid, home))
 
 
 if __name__ == "__main__":

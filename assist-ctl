@@ -66,31 +66,69 @@ rotate_log() {
     fi
 }
 
-runs_this_checkout() {
-    local cmd
-    cmd="$(ps -o command= -p "$1" 2>/dev/null || true)"
-    [[ "$cmd" == *"$SERVE_SCRIPT"* ]]
+# The same script under its physical path, for a checkout reached through a symlink.
+SERVE_SCRIPT_REAL="$(cd -P "$SCRIPT_DIR" && pwd)/serve.py"
+
+# One argv element per line. /proc keeps the NUL boundaries, so a path with a
+# space still compares whole; elsewhere (macOS) ps is the best available.
+proc_args() {
+    if [[ -r "/proc/$1/cmdline" ]]; then
+        tr '\0' '\n' < "/proc/$1/cmdline" 2>/dev/null || true
+    else
+        ps -ww -o args= -p "$1" 2>/dev/null | tr ' ' '\n' || true
+    fi
 }
 
-read_pid() {
-    if [[ -f "$PID_FILE" ]]; then
-        cat "$PID_FILE" 2>/dev/null || echo ""
+# Who a recorded PID belongs to, checked on EVERY read and again just before a
+# signal: "ours" only when an argv element IS this checkout's serve.py (not a
+# substring of it); "foreign" when it runs some other checkout's serve.py;
+# "stale" when it is dead or a reused PID running anything else.
+pid_owner() {
+    local pid="$1" arg verdict="stale"
+    if [[ ! "$pid" =~ ^[0-9]+$ ]] || ! kill -0 "$pid" 2>/dev/null; then
+        echo "stale"
         return
     fi
-    if [[ -z "${ASSIST_PID_FILE:-}" && -f "$LEGACY_PID_FILE" ]]; then
+    while IFS= read -r arg; do
+        if [[ "$arg" == "$SERVE_SCRIPT" || "$arg" == "$SERVE_SCRIPT_REAL" ]]; then
+            echo "ours"
+            return
+        fi
+        if [[ "$arg" == */serve.py ]]; then
+            verdict="foreign"
+        fi
+    done < <(proc_args "$pid")
+    echo "$verdict"
+}
+
+# Sets REC_PID and REC_OWNER (none | stale | foreign | ours). No subshell, so
+# the legacy migration below happens once, in this process.
+load_record() {
+    REC_PID=""
+    REC_OWNER="none"
+    if [[ -f "$PID_FILE" ]]; then
+        REC_PID="$(tr -dc '0-9' < "$PID_FILE" 2>/dev/null || true)"
+        REC_OWNER="$(pid_owner "$REC_PID")"
+    fi
+    if [[ "$REC_OWNER" == "none" || "$REC_OWNER" == "stale" ]] \
+            && [[ -z "${ASSIST_PID_FILE:-}" && -f "$LEGACY_PID_FILE" ]]; then
         local legacy
-        legacy="$(cat "$LEGACY_PID_FILE" 2>/dev/null || true)"
-        if [[ -n "$legacy" ]] && kill -0 "$legacy" 2>/dev/null \
-                && runs_this_checkout "$legacy"; then
+        legacy="$(tr -dc '0-9' < "$LEGACY_PID_FILE" 2>/dev/null || true)"
+        if [[ "$(pid_owner "$legacy")" == "ours" ]]; then
             # Migrate: from here on the per-user path is the only record.
             ensure_state_dirs
             echo "$legacy" > "$PID_FILE"
             rm -f "$LEGACY_PID_FILE"
-            echo "$legacy"
-            return
+            REC_PID="$legacy"
+            REC_OWNER="ours"
         fi
     fi
-    echo ""
+}
+
+refuse_foreign() {
+    echo "PID file $PID_FILE records PID $REC_PID, which runs another checkout's serve.py." >&2
+    echo "Not touching it. Give this checkout its own ASSIST_PID_FILE and ASSIST_LOG_FILE in .env." >&2
+    return 1
 }
 
 is_alive() {
@@ -103,12 +141,11 @@ health_check() {
 }
 
 do_start() {
-    local pid
-    pid="$(read_pid)"
-    if is_alive "$pid"; then
-        echo "Assist server already running (PID $pid)"
-        return 0
-    fi
+    load_record
+    case "$REC_OWNER" in
+        ours)    echo "Assist server already running (PID $REC_PID)"; return 0 ;;
+        foreign) refuse_foreign; return 1 ;;
+    esac
 
     ensure_state_dirs
     rotate_log
@@ -138,43 +175,56 @@ do_start() {
 }
 
 do_stop() {
-    local pid
-    pid="$(read_pid)"
+    load_record
+    case "$REC_OWNER" in
+        foreign) refuse_foreign; return 1 ;;
+        ours) ;;
+        *)
+            # Check if something is on the port anyway
+            if health_check; then
+                echo "No PID file but server responding on port $PORT — find and kill manually"
+                return 1
+            fi
+            echo "Assist server is not running."
+            if [[ "$REC_OWNER" == "stale" ]]; then
+                rm -f "$PID_FILE"
+            fi
+            return 0
+            ;;
+    esac
 
-    if [[ -z "$pid" ]] || ! is_alive "$pid"; then
-        # Check if something is on the port anyway
-        if health_check; then
-            echo "No PID file but server responding on port $PORT — find and kill manually"
-            return 1
-        fi
-        echo "Assist server is not running."
+    # Re-check at the last moment: the process could have exited and its PID
+    # been reused since load_record looked.
+    if [[ "$(pid_owner "$REC_PID")" != "ours" ]]; then
+        echo "PID $REC_PID no longer runs this checkout's server; not signalling it."
         rm -f "$PID_FILE"
         return 0
     fi
-
-    kill "$pid" 2>/dev/null || true
+    kill "$REC_PID" 2>/dev/null || true
     rm -f "$PID_FILE"
-    echo "Stopped (PID $pid)"
+    echo "Stopped (PID $REC_PID)"
 }
 
 do_restart() {
-    do_stop
+    do_stop || return 1
     sleep 1
     do_start
 }
 
 do_status() {
-    local pid
-    pid="$(read_pid)"
+    load_record
 
-    if [[ -n "$pid" ]] && is_alive "$pid"; then
+    if [[ "$REC_OWNER" == "ours" ]]; then
         if health_check; then
-            echo "Assist server is running (PID $pid) — healthy"
+            echo "Assist server is running (PID $REC_PID) — healthy"
         else
-            echo "Assist server process alive (PID $pid) — NOT responding on /health"
+            echo "Assist server process alive (PID $REC_PID) — NOT responding on /health"
         fi
         echo "  Port: $PORT"
         echo "  Log:  $LOG_FILE"
+    elif [[ "$REC_OWNER" == "foreign" ]]; then
+        echo "Assist server is not running from this checkout."
+        echo "  $PID_FILE records PID $REC_PID, another checkout's server."
     else
         if health_check; then
             echo "Assist server responding on port $PORT but PID file stale/missing"

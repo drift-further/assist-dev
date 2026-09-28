@@ -212,19 +212,40 @@ def state_dir_for(user_home: str) -> Path:
     return Path(xdg_state_home) / CONFIG_DIR_NAME
 
 
+def process_argv(pid: int) -> list[str]:
+    """argv of a live process: /proc keeps NUL boundaries; elsewhere ps, split on spaces."""
+    try:
+        return Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace").split("\0")
+    except OSError:
+        pass
+    try:
+        return subprocess.run(
+            ["ps", "-ww", "-o", "args=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout.split()
+    except (OSError, subprocess.SubprocessError):
+        return []
+
+
+def runs_checkout(pid: int, home: Path) -> bool:
+    """True when an argv element IS this checkout's serve.py -- not a substring of it.
+
+    Same rule as assist-ctl's pid_owner, so a reused PID or another checkout
+    whose path merely contains this one is never taken for this server.
+    """
+    candidates = {str(home / "serve.py"), str(home.resolve() / "serve.py")}
+    return any(arg in candidates for arg in process_argv(pid))
+
+
 def _legacy_server_pid(home: Path) -> int | None:
     """PID in the pre-XDG /tmp PID file, only if it runs THIS checkout's serve.py."""
     try:
         pid = int(LEGACY_PID_FILE.read_text(encoding="utf-8").strip())
-        command = subprocess.run(
-            ["ps", "-o", "command=", "-p", str(pid)],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        ).stdout
-    except (OSError, ValueError, subprocess.SubprocessError):
+    except (OSError, ValueError):
         return None
-    return pid if str(home / "serve.py") in command else None
+    return pid if runs_checkout(pid, home) else None
 
 
 def resolve(
