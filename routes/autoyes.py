@@ -16,7 +16,12 @@ from shared.agent_identity import (
     refine_with_content,
     resolve_process,
 )
-from shared.tmux import expected_target_identity, generation_bound_delivery
+from shared.tmux import (
+    DeliveryResult,
+    expected_target_identity,
+    generation_bound_delivery,
+    tmux_exact_target,
+)
 from routes.streaming import broadcast_autoyes_event
 
 log = logging.getLogger(__name__)
@@ -614,19 +619,36 @@ def prompt_popup_info(tail, agent_kind, autoyes_armed):
 def autoyes_will_consider(target, enabled, source, process_kind, agent_kind):
     """Whether the scanner would act on this pane's prompt at all.
 
-    The same scope rule as _autoyes_scan_tick: a globally-armed session covers
-    agent panes only, judged by the process (a shell) AND by content (a
-    non-agent program such as apt in the foreground). And once the human cancels
-    a countdown, the scanner leaves that prompt alone for as long as it stays on
-    screen, so the question popup must not be suppressed for it either.
+    The same scope rule as _autoyes_scan_tick: agent panes only, judged by the
+    process (a shell) AND by content (a non-agent program such as apt in the
+    foreground), unless the session is shell-ok (_shell_ok). And once the human
+    cancels a countdown, the scanner leaves that prompt alone for as long as it
+    stays on screen, so the question popup must not be suppressed for it either.
     """
     if not enabled:
         return False
-    if source == "global" and (process_kind == "shell" or agent_kind not in AGENT_KINDS):
+    if (process_kind == "shell" or agent_kind not in AGENT_KINDS) and not _shell_ok(
+        target.rsplit(":", 1)[0], source
+    ):
         return False
     with state.autoyes_lock:
-        countdown = state.autoyes_countdowns.get(target)
-    return not (countdown and countdown.get("cancelled"))
+        return not state.autoyes_cancelled.get(target)
+
+
+def _shell_ok(session, source):
+    """Whether this session's Auto-Yes may answer plain shell panes.
+
+    Text a shell prints is whatever the command in it prints, so `curl … | sh`
+    or `cat` of a hostile file can draw a (y/n) line for Auto-Yes to answer
+    (review sec F8). The all-sessions switch has always left shells alone; a
+    session armed by hand now does too, unless its project settings say
+    `autoyes.shell_ok: true`. Only a real True counts, and never under the
+    switch alone.
+    """
+    return (
+        source == "explicit"
+        and state.get_project_setting(session, "autoyes", "shell_ok") is True
+    )
 
 
 def _clamp_delay(value):
@@ -693,10 +715,45 @@ def autoyes_scanner():
         time.sleep(_scan_interval())
 
 
-def _deliver_autoyes_answer(expected, send_text, with_enter):
-    """Deliver one detected AutoYes answer with fixed subsystem provenance."""
+def _prompt_still_on_screen(expected, agent_kind, prompt_type, phash):
+    """True while the pane still shows the prompt the countdown was started for.
+
+    A countdown is decided seconds before its answer lands, and in that gap the
+    prompt can be answered by hand or replaced, for example by codex's "Retry
+    with a faster model" menu, which a bare Enter accepts (review rel #3). So the
+    pane is captured again, by its pane id, and must still detect as the same
+    type with the same hash, codex vetoes included. The same idea as the sudo
+    popup's prompt_owner_waiting. Any failure to tell is a no.
+    """
+    pane_id = expected.get("pane_id") if isinstance(expected, dict) else None
+    if not pane_id:
+        return False
+    try:
+        cap = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-t", tmux_exact_target(pane_id), "-S", "-60"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if cap.returncode != 0:
+        return False
+    tail = cap.stdout.rstrip("\n")
+    detected = detect_answerable_prompt(tail, agent_kind, pane_id)
+    return bool(detected) and detected[0] == prompt_type and _prompt_hash(tail) == phash
+
+
+def _deliver_autoyes_answer(expected, send_text, with_enter, still_on_screen=None):
+    """Deliver one detected AutoYes answer with fixed subsystem provenance.
+
+    `still_on_screen`, when given, is asked inside the effect, right before the
+    keys go, and a False refuses the send as "prompt_changed".
+    """
 
     def effect():
+        if still_on_screen is not None and not still_on_screen():
+            return DeliveryResult("prompt_changed")
         return generation_bound_delivery(
             expected,
             text=send_text,
@@ -738,6 +795,7 @@ def _autoyes_scan_tick():
             with state.autoyes_lock:
                 state.autoyes_countdowns.clear()
                 state.autoyes_answered.clear()
+                state.autoyes_cancelled.clear()
                 state.autoyes_sessions.clear()
                 state.autoyes_delays.clear()
         return
@@ -771,6 +829,9 @@ def _autoyes_scan_tick():
         for t in list(state.autoyes_answered):
             if t not in live_targets:
                 state.autoyes_answered.pop(t, None)
+        for t in list(state.autoyes_cancelled):
+            if t not in live_targets:
+                state.autoyes_cancelled.pop(t, None)
 
     # Resolve once per session rather than once per pane, then publish the
     # result: /autoyes/status has no live session list of its own. Outside the
@@ -806,7 +867,7 @@ def _autoyes_scan_tick():
         # That is both the scope rule and what keeps the tick cheap once every
         # pane on the host is in scope.
         process_kind = resolve_process(target, parts[3], parts[4])
-        if source == "global" and process_kind == "shell":
+        if process_kind == "shell" and not _shell_ok(session_name, source):
             continue
 
         cap = subprocess.run(
@@ -822,11 +883,10 @@ def _autoyes_scan_tick():
             continue
 
         agent_kind = refine_with_content(process_kind, tail)
-        # Globally-armed sessions cover agent panes only: apt, ssh host-key and
-        # stray (y/n) prompts in a plain shell stay manual. A session armed by
-        # hand keeps that capability — it is an existing deliberate feature and
-        # the global switch must not take it away.
-        if source == "global" and agent_kind not in AGENT_KINDS:
+        # Agent panes only: apt, ssh host-key and stray (y/n) prompts in a plain
+        # shell stay manual. A session armed by hand can opt back in with
+        # shell_ok; the global switch never does (see _shell_ok).
+        if agent_kind not in AGENT_KINDS and not _shell_ok(session_name, source):
             continue
         qualified.add(session_name)
         phash = _prompt_hash(tail)
@@ -842,17 +902,31 @@ def _autoyes_scan_tick():
         # must not run under the lock.
         broadcast_event = None
         fire_action = None  # (identity, send_text, with_enter, prompt_type)
-        detected_identity = expected_target_identity(target) if detected else None
 
-        with state.autoyes_lock:
-            if not detected or detected_identity is None:
+        if not detected:
+            with state.autoyes_lock:
                 state.autoyes_countdowns.pop(target, None)
+                # No prompt on screen: whatever the human cancelled has gone,
+                # and this is the ONLY place a cancellation ends.
+                state.autoyes_cancelled.pop(target, None)
                 # Clear answered cache when content changes (no prompt visible).
                 # This ensures a NEW prompt with the same hash as a previous one
                 # (e.g., consecutive edits to the same file) is not skipped.
                 if target in state.autoyes_answered:
                     if state.autoyes_answered[target][0] != phash:
                         del state.autoyes_answered[target]
+            continue
+
+        # A prompt is up but its pane could not be identified (the control
+        # attach timed out under load, say). Skip the tick and leave the
+        # countdown and any cancellation exactly as they are. Popping here is
+        # what used to lose a cancel and answer on the next tick (rel #2).
+        detected_identity = expected_target_identity(target)
+        if detected_identity is None:
+            continue
+
+        with state.autoyes_lock:
+            if (phash, detected[0]) in state.autoyes_cancelled.get(target, ()):
                 continue
 
             log.info("autoyes: detected %s on %s", detected[0], target)
@@ -881,12 +955,6 @@ def _autoyes_scan_tick():
                 and existing["prompt_hash"] == phash
                 and existing.get("prompt_type") == detected[0]
             )
-
-            if existing and existing["cancelled"]:
-                if same_prompt:
-                    continue
-                del state.autoyes_countdowns[target]
-                existing = None
 
             if existing and same_prompt:
                 if now >= existing["deadline"]:
@@ -923,7 +991,6 @@ def _autoyes_scan_tick():
                     "prompt_hash": phash,
                     "deadline": now + delay,
                     "delay": delay,
-                    "cancelled": False,
                     "prompt_type": detected[0],
                     "summary": summary,
                     "expected_target_identity": detected_identity.as_dict(),
@@ -933,7 +1000,14 @@ def _autoyes_scan_tick():
         # Send keystrokes outside the lock (subprocess + sleep)
         if fire_action:
             expected, send_text, with_enter, prompt_type = fire_action
-            result = _deliver_autoyes_answer(expected, send_text, with_enter)
+            result = _deliver_autoyes_answer(
+                expected,
+                send_text,
+                with_enter,
+                still_on_screen=lambda: _prompt_still_on_screen(
+                    expected, agent_kind, prompt_type, phash
+                ),
+            )
             if result.ok:
                 with state.autoyes_lock:
                     state.autoyes_answered[target] = (phash, now)
@@ -974,13 +1048,12 @@ def autoyes_status():
         countdowns = {}
         now = time.time()
         for target, cd in state.autoyes_countdowns.items():
-            if not cd["cancelled"]:
-                countdowns[target] = {
-                    "remaining": max(0, round(cd["deadline"] - now, 1)),
-                    "prompt_type": cd["prompt_type"],
-                    "delay": cd.get("delay", state.AUTOYES_DELAY),
-                    "summary": cd.get("summary"),
-                }
+            countdowns[target] = {
+                "remaining": max(0, round(cd["deadline"] - now, 1)),
+                "prompt_type": cd["prompt_type"],
+                "delay": cd.get("delay", state.AUTOYES_DELAY),
+                "summary": cd.get("summary"),
+            }
         # The runtime map is the pre-first-tick answer; the scanner's effective
         # map covers sessions nobody ever toggled, so it wins where it has one.
         sessions = dict(state.autoyes_sessions)
@@ -1001,30 +1074,20 @@ def autoyes_status():
         )
 
 
-@autoyes_bp.route("/autoyes/toggle", methods=["POST"])
-def autoyes_toggle():
-    """Toggle auto-yes for a session."""
-    data = request.get_json(silent=True) or {}
-    session = (data.get("session") or "").strip()
-    if not session:
-        return jsonify({"ok": False, "error": "No session"}), 400
-    delay = data.get("delay")
+def _set_session_autoyes(session, enabled, delay=None):
+    """Arm or disarm one session, and persist it in the regime's own flag."""
     global_on = state.get_setting("autoyes", "all_sessions") == "on"
-    # Toggle against the EFFECTIVE state: under the global switch a session
-    # nobody touched is already on, so `autoyes_sessions.get(session, False)`
-    # would read it as off and the first tap would be a no-op.
-    current, _source = state.autoyes_enabled_for(session)
     with state.autoyes_lock:
-        state.autoyes_sessions[session] = not current
-        state.autoyes_effective[session] = not current
-        if not current and delay is not None and not global_on:
+        state.autoyes_sessions[session] = enabled
+        state.autoyes_effective[session] = enabled
+        if enabled and delay is not None and not global_on:
             # Enabling — store per-session delay
             try:
                 delay = _clamp_delay(delay)
             except (ValueError, TypeError):
                 delay = state.AUTOYES_DELAY
             state.autoyes_delays[session] = delay
-        if current:
+        if not enabled:
             to_remove = [
                 t for t in state.autoyes_countdowns if t.startswith(session + ":")
             ]
@@ -1034,14 +1097,66 @@ def autoyes_toggle():
             state.autoyes_delays.pop(session, None)
     # Persist into whichever flag is authoritative in the current regime.
     if global_on:
-        state.patch_project_settings(session, {"autoyes": {"global_opt_out": current}})
+        state.patch_project_settings(
+            session, {"autoyes": {"global_opt_out": not enabled}}
+        )
     else:
-        persist = {"autoyes": {"enabled_default": not current}}
-        if not current and delay is not None:
+        persist = {"autoyes": {"enabled_default": enabled}}
+        if enabled and delay is not None:
             persist["autoyes"]["delay"] = delay
         state.patch_project_settings(session, persist)
+    return jsonify({"ok": True, "session": session, "enabled": enabled})
 
-    return jsonify({"ok": True, "session": session, "enabled": not current})
+
+@autoyes_bp.route("/autoyes/set", methods=["POST"])
+def autoyes_set():
+    """Set auto-yes on or off for a session: {"session", "enabled", "delay"?}.
+
+    Absolute, so a caller whose view of the state is stale still gets what it
+    asked for. A toggle computed from a stale view turned Auto-Yes OFF when the
+    browser meant ON (review rel #4).
+    """
+    data = request.get_json(silent=True) or {}
+    session = (data.get("session") or "").strip()
+    if not session:
+        return jsonify({"ok": False, "error": "No session"}), 400
+    enabled = data.get("enabled")
+    if not isinstance(enabled, bool):
+        return jsonify({"ok": False, "error": "enabled must be true or false"}), 400
+    return _set_session_autoyes(session, enabled, data.get("delay"))
+
+
+@autoyes_bp.route("/autoyes/toggle", methods=["POST"])
+def autoyes_toggle():
+    """Flip auto-yes for a session. Kept for pages cached before /autoyes/set;
+    nothing in this repo calls it."""
+    data = request.get_json(silent=True) or {}
+    session = (data.get("session") or "").strip()
+    if not session:
+        return jsonify({"ok": False, "error": "No session"}), 400
+    # Toggle against the EFFECTIVE state: under the global switch a session
+    # nobody touched is already on.
+    current, _source = state.autoyes_enabled_for(session)
+    return _set_session_autoyes(session, not current, data.get("delay"))
+
+
+def cancel_countdown(target):
+    """Cancel the countdown running on `target`. False if none was running.
+
+    The cancellation is recorded by (prompt hash, type) apart from the countdown
+    and outlives it: the scanner leaves that prompt alone until it sees no
+    prompt on the pane (review rel #2).
+    """
+    with state.autoyes_lock:
+        cd = state.autoyes_countdowns.pop(target, None)
+        if cd is None:
+            return False
+        state.autoyes_cancelled.setdefault(target, set()).add(
+            (cd["prompt_hash"], cd["prompt_type"])
+        )
+    # Outside the lock: broadcast_autoyes_event takes autoyes_lock itself.
+    broadcast_autoyes_event(target, "cancelled", cd["prompt_type"])
+    return True
 
 
 @autoyes_bp.route("/autoyes/cancel", methods=["POST"])
@@ -1051,18 +1166,7 @@ def autoyes_cancel():
     target = (data.get("target") or "").strip()
     if not target:
         return jsonify({"ok": False, "error": "No target"}), 400
-    # Collect the event to fire AFTER releasing the lock
-    # (broadcast_autoyes_event also acquires autoyes_lock — avoid deadlock).
-    broadcast_event = None
-    with state.autoyes_lock:
-        cd = state.autoyes_countdowns.get(target)
-        if cd and not cd["cancelled"]:
-            cd["cancelled"] = True
-            broadcast_event = (target, "cancelled", cd["prompt_type"])
-    if broadcast_event:
-        broadcast_autoyes_event(*broadcast_event)
-        return jsonify({"ok": True, "cancelled": True})
-    return jsonify({"ok": True, "cancelled": False})
+    return jsonify({"ok": True, "cancelled": cancel_countdown(target)})
 
 
 @autoyes_bp.route("/autoyes/set-delay", methods=["POST"])
@@ -1101,7 +1205,7 @@ def autoyes_set_delay():
         # Recompute any active countdown for this session against the new delay,
         # anchored to the prompt's original start time.
         for target, cd in state.autoyes_countdowns.items():
-            if target.startswith(session + ":") and not cd["cancelled"]:
+            if target.startswith(session + ":"):
                 start = cd["deadline"] - cd["delay"]
                 cd["delay"] = delay
                 cd["deadline"] = start + delay

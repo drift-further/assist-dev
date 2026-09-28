@@ -142,6 +142,12 @@ stay manual, which is what keeps `apt`, ssh host-key and stray `(y/n)` prompts
 out of scope, and a session turned off by hand records an opt-out that survives
 a restart.
 
+**A session armed by hand follows the same shell rule.** Whatever runs in a
+shell pane decides what it prints, so `curl … | sh` or `cat` of a hostile file
+can draw a `(y/n)` line. Shell panes are answered only in a session armed by
+hand whose project settings say `autoyes.shell_ok: true` (Automate panel →
+Auto-Yes → Shell panes); it ships off, and the all-sessions switch ignores it.
+
 Shipped defaults, which a fresh clone gets because `settings.json` is gitignored:
 
 | Setting | Ships as | Means |

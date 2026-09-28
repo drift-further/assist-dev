@@ -314,6 +314,7 @@ class AutoYesScopeTests(unittest.TestCase):
     def tearDown(self):
         with state.autoyes_lock:
             state.autoyes_countdowns.pop(self.TARGET, None)
+            state.autoyes_cancelled.pop(self.TARGET, None)
 
     def consider(self, enabled=True, source="global", process_kind="claude", agent_kind="claude"):
         return autoyes.autoyes_will_consider(self.TARGET, enabled, source, process_kind, agent_kind)
@@ -325,21 +326,28 @@ class AutoYesScopeTests(unittest.TestCase):
         self.assertFalse(self.consider(process_kind="shell", agent_kind="shell"))
         self.assertFalse(self.consider(process_kind=None, agent_kind="shell"))
 
-    def test_a_session_armed_by_hand_keeps_its_shell_prompts(self):
-        self.assertTrue(self.consider(source="explicit", process_kind="shell", agent_kind="shell"))
+    def test_a_session_armed_by_hand_answers_shell_prompts_only_when_shell_ok(self):
+        # Was unconditional; sec F8 put hand-armed sessions under the global
+        # rule unless the session opts in (tests/test_autoyes_failsafe.py).
+        with patch("routes.autoyes.state.get_project_setting", return_value=False):
+            self.assertFalse(self.consider(source="explicit", process_kind="shell", agent_kind="shell"))
+        with patch("routes.autoyes.state.get_project_setting", return_value=True):
+            self.assertTrue(self.consider(source="explicit", process_kind="shell", agent_kind="shell"))
 
     def test_a_disabled_session_is_never_covered(self):
         self.assertFalse(self.consider(enabled=False))
 
     def test_a_cancelled_countdown_leaves_the_prompt_to_the_human(self):
+        # The cancel lives in its own map now, so a dropped countdown cannot
+        # take it along (review rel #2).
         with state.autoyes_lock:
-            state.autoyes_countdowns[self.TARGET] = {"cancelled": True, "prompt_hash": 1}
+            state.autoyes_cancelled[self.TARGET] = {(1, "permission-yna")}
         self.assertFalse(self.consider())
 
     def test_the_scanner_still_applies_the_same_two_gates(self):
         source = (ROOT / "routes/autoyes.py").read_text()
-        self.assertIn('if source == "global" and process_kind == "shell":', source)
-        self.assertIn('if source == "global" and agent_kind not in AGENT_KINDS:', source)
+        self.assertIn('if process_kind == "shell" and not _shell_ok(session_name, source):', source)
+        self.assertIn("if agent_kind not in AGENT_KINDS and not _shell_ok(session_name, source):", source)
         self.assertIn("autoyes_will_consider(", (ROOT / "routes/poll.py").read_text())
 
 
@@ -412,7 +420,8 @@ class AutoYesCountdownIdentityTests(unittest.TestCase):
     TARGET = "idtest:0.0"
 
     def setUp(self):
-        for name in ("autoyes_sessions", "autoyes_countdowns", "autoyes_answered", "autoyes_delays"):
+        for name in ("autoyes_sessions", "autoyes_countdowns", "autoyes_answered", "autoyes_delays",
+                     "autoyes_cancelled"):
             p = patch.dict(getattr(state, name), clear=True)
             p.start()
             self.addCleanup(p.stop)
@@ -466,10 +475,10 @@ class AutoYesCountdownIdentityTests(unittest.TestCase):
 
     def test_a_cancelled_old_prompt_does_not_suppress_the_new_one(self):
         self.tick(CLAUDE_YNA, now=100.0)
-        state.autoyes_countdowns[self.TARGET]["cancelled"] = True
+        with patch("routes.autoyes.broadcast_autoyes_event"):
+            self.assertTrue(autoyes.cancel_countdown(self.TARGET))
         self.tick(SSH_AFTER_YNA, now=101.0).assert_not_called()
         countdown = state.autoyes_countdowns[self.TARGET]
-        self.assertFalse(countdown["cancelled"])
         self.assertEqual(countdown["prompt_type"], "ssh-host-key")
 
     def test_the_same_prompt_still_fires_at_its_deadline(self):

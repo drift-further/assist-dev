@@ -11,7 +11,7 @@ const STATIC_URLS = [
     '/css/base.css?v=2',
     '/css/status-bar.css?v=5',
     '/css/input.css?v=9',
-    '/css/terminal.css?v=14',
+    '/css/terminal.css?v=15',
     '/css/opencode.css?v=2',
     '/css/chrome.css?v=6',
     '/css/studio.css?v=5',
@@ -28,7 +28,7 @@ const STATIC_URLS = [
     '/js/opencode.js?v=2',
     '/js/actions.js?v=17',
     '/js/commands.js?v=4',
-    '/js/monitor.js?v=6',
+    '/js/monitor.js?v=7',
     '/js/chrome.js?v=3',
     '/js/app.js?v=22',
 ];

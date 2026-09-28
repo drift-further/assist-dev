@@ -450,12 +450,8 @@ async function loadProjectSettings(project) {
     if (nameEl) nameEl.textContent = _projectSettingsName ? shortName(_projectSettingsName) : '';
     // Render settings panel
     renderProjectSettings();
-    // Auto-enable auto-yes if project has enabled_default
-    if (_projectSettings && _projectSettings.autoyes.enabled_default) {
-        if (!isAutoYes(project)) {
-            _enableAutoYes(project, _projectSettings.autoyes.delay);
-        }
-    }
+    // Nothing here arms Auto-Yes: the scanner resolves enabled_default itself,
+    // and doing it from this page raced syncAutoYesState and toggled it OFF.
 }
 
 function renderProjectSettings() {
@@ -469,6 +465,8 @@ function renderProjectSettings() {
     html += '<div class="proj-section-hdr">Auto-Yes</div>';
     html += _projRow('Delay', _projStepper('autoyes', 'delay', s.autoyes.delay, 1, 30, 's'));
     html += _projRow('Auto-enable', _projToggle('autoyes', 'enabled_default', s.autoyes.enabled_default));
+    // Off: a session armed by hand answers agent panes only (routes/autoyes.py:_shell_ok).
+    html += _projRow('Shell panes', _projToggle('autoyes', 'shell_ok', !!s.autoyes.shell_ok));
 
     // Triggers section
     html += '<div class="proj-section-hdr">Triggers</div>';

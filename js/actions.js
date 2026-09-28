@@ -55,6 +55,10 @@ function _renderAyPickVal() {
         ? String(Math.round(_autoyesDelay * 1000))
         : String(_autoyesDelay);
     if (unitEl) unitEl.textContent = _autoyesDelay < 1 ? 'ms' : 'sec';
+    // Say what arming does, in the picker itself (review ux #7).
+    const hintEl = document.getElementById('ay-pick-hint');
+    if (hintEl) hintEl.textContent = "Answers this session's permission prompts after "
+        + (_autoyesDelay < 1 ? `${Math.round(_autoyesDelay * 1000)} ms.` : `${_autoyesDelay} s.`);
 }
 
 // Format a delay (seconds, possibly fractional) for flash messages.
@@ -71,7 +75,7 @@ function ayPickConfirm() {
     if (isAutoYes(session)) {
         _setAutoYesDelay(session, _autoyesDelay);  // already running — update delay
     } else {
-        _enableAutoYes(session, _autoyesDelay);     // off — enable with chosen delay
+        _setAutoYes(session, true, _autoyesDelay);  // off — enable with chosen delay
     }
 }
 
@@ -80,7 +84,7 @@ function ayPickTurnOff() {
     const session = target ? target.split(':')[0] : '';
     document.getElementById('autoyes-picker').classList.remove('visible');
     _autoyesPickerVisible = false;
-    if (session) _enableAutoYes(session, null);  // toggle off
+    if (session) _setAutoYes(session, false, null);
 }
 
 function ayPickCancel() {
@@ -108,11 +112,13 @@ async function _setAutoYesDelay(session, delay) {
     }
 }
 
-async function _enableAutoYes(session, delay) {
+// Absolute on/off (/autoyes/set). A toggle computed from this page's view of
+// the state turned Auto-Yes off when the view was stale and it meant on.
+async function _setAutoYes(session, enabled, delay) {
     try {
-        const body = { session };
+        const body = { session, enabled };
         if (delay !== null) body.delay = delay;
-        const resp = await fetch('/autoyes/toggle', {
+        const resp = await fetch('/autoyes/set', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(body),
@@ -122,7 +128,9 @@ async function _enableAutoYes(session, delay) {
             _autoyesState[session] = data.enabled;
             if (data.enabled && delay !== null) _autoyesDelays[session] = delay;
             else if (!data.enabled) delete _autoyesDelays[session];
-            showFlash('sent', data.enabled ? `Auto-Yes ON (${_fmtDelay(delay)})` : 'Auto-Yes OFF');
+            showFlash('sent', data.enabled
+                ? (delay !== null ? `Auto-Yes ON (${_fmtDelay(delay)})` : 'Auto-Yes ON')
+                : 'Auto-Yes OFF');
             updateAutoYesUI(session);
             _getSmartState(_termTarget).key = '';  // force re-render (toggle label changed)
             if (_termLatestContent) {
@@ -147,10 +155,10 @@ async function toggleAutoYes() {
         return;
     }
     // Global switch on: there is one delay and it is not this session's to
-    // pick, so the tap is a straight opt-out toggle with no picker.
+    // pick, so the tap sets the opposite of what the button shows, no picker.
     const target = _smartActionTarget || _termTarget;
     const session = target ? target.split(':')[0] : '';
-    if (session) _enableAutoYes(session, null);
+    if (session) _setAutoYes(session, !isAutoYes(session), null);
 }
 
 function updateAutoYesUI(session) {

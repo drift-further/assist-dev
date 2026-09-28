@@ -158,6 +158,10 @@ DEFAULT_PROJECT_SETTINGS = {
         # off -> enabled_default; switch on -> not global_opt_out), so neither
         # has to encode the other's history.
         "global_opt_out": False,
+        # A session armed by hand answers prompts in its agent panes only, as
+        # the all_sessions switch always has. True also lets it answer plain
+        # shell panes: apt, ssh host keys and any (y/n) that shell prints.
+        "shell_ok": False,
     },
     "automate": {
         "default_prompt": "",
@@ -534,7 +538,11 @@ autoyes_sessions = {}  # session_name -> True/False
 autoyes_lock = threading.Lock()
 autoyes_countdowns = (
     {}
-)  # target -> { "prompt_hash", "deadline", "cancelled", "prompt_type" }
+)  # target -> { "prompt_hash", "deadline", "delay", "prompt_type", ... }
+# target -> {(prompt_hash, prompt_type), ...}: prompts the human cancelled. Kept
+# apart from the countdown, which a tick can drop, and cleared only when the
+# scanner sees no prompt on that pane.
+autoyes_cancelled = {}
 autoyes_answered = {}  # target -> (prompt_hash, answered_at_timestamp)
 autoyes_delays = {}  # session_name -> seconds (per-session override)
 AUTOYES_DELAY = DEFAULT_SETTINGS["autoyes"]["default_delay"]

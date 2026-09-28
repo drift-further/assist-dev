@@ -415,11 +415,11 @@ def autoyes(
     if mode != "status":
         requested = mode == "on"
         if enabled != requested:
-            payload: dict[str, object] = {"session": session}
+            payload: dict[str, object] = {"session": session, "enabled": requested}
             # The global switch owns the delay; sending one would be ignored.
             if requested and delay is not None and not global_on:
                 payload["delay"] = delay
-            http.post("/autoyes/toggle", payload)
+            http.post("/autoyes/set", payload)
             status = http.get("/autoyes/status")
             enabled, current_delay = _autoyes_state(status, session)
 
