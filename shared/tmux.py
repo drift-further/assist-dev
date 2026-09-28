@@ -961,8 +961,51 @@ def activate_venv(target, project_path):
     return venv
 
 
+def capture_reusable(prev, marker, now, max_age, min_interval=0.0):
+    """True when a capture taken earlier still shows what the pane shows now.
+
+    `prev` is `(marker, captured_at)` from that capture and `marker` the pane's
+    change marker read now: (window_activity, history_size, cursor_x, cursor_y,
+    width, height, alternate_on, pane_id). Output, scrolling, a resize, a mode
+    switch or a different pane at the target all move one of those.
+
+    window_activity has one-second resolution, so output later in the same
+    second as the capture leaves the marker unchanged. The capture is trusted
+    only if it began in a later second than the pane's last output, or, with
+    `min_interval`, if it is younger than that: a busy pane then costs one
+    capture per `min_interval` rather than one per call. `max_age` bounds how
+    long any capture is reused, as a backstop for a redraw that moves none of
+    the fields.
+    """
+    if not prev or marker is None:
+        return False
+    prev_marker, captured_at = prev
+    if prev_marker != marker or now - captured_at >= max_age:
+        return False
+    if now - captured_at < min_interval:
+        return True
+    try:
+        return int(captured_at) > int(marker[0])
+    except (TypeError, ValueError):
+        return False
+
+
 def capture_pane(target, lines=2000, tui=None):
     """Capture tmux pane content and info. Returns (content, info) or (None, None).
+
+    See capture_pane_if_changed for the capture itself.
+    """
+    content, info, _prev = capture_pane_if_changed(target, lines, tui=tui)
+    return content, info
+
+
+def capture_pane_if_changed(target, lines=2000, tui=None, prev=None, max_age=2.0, min_interval=0.0):
+    """Capture tmux pane content and info, unless it cannot have changed.
+
+    Returns (content, info, prev_next). `prev_next` is the `prev` to pass on the
+    next call. With `prev` from an earlier call and capture_reusable() true,
+    nothing is captured and the result is (None, info, prev) with
+    info["unchanged"] = True. A failed capture is (None, None, None).
 
     When the pane is on the alternate screen (a TUI like Claude Code is
     running), capture only the current screen — alt-screen content does not
@@ -982,6 +1025,7 @@ def capture_pane(target, lines=2000, tui=None):
     history. We only expose `info["is_wrapper"]` so the streamer knows to
     use Ctrl+L (not a resize toggle) when it self-heals.
     """
+    captured_at = time.time()
     info_proc = subprocess.run(
         [
             "tmux",
@@ -989,7 +1033,8 @@ def capture_pane(target, lines=2000, tui=None):
             "-t",
             tmux_exact_target(target),
             "-p",
-            "#{pane_current_command}\t#{pane_width}\t#{pane_height}\t#{cursor_y}\t#{alternate_on}\t#{pane_pid}\t#{session_attached}",
+            "#{pane_current_command}\t#{pane_width}\t#{pane_height}\t#{cursor_y}\t#{alternate_on}\t#{pane_pid}\t#{session_attached}"
+            "\t#{window_activity}\t#{history_size}\t#{cursor_x}\t#{pane_id}",
         ],
         capture_output=True,
         text=True,
@@ -1000,6 +1045,7 @@ def capture_pane(target, lines=2000, tui=None):
     info = {}
     alternate_on = False
     pane_pid = None
+    marker = None
     if info_proc.returncode == 0 and info_proc.stdout.strip():
         parts = info_proc.stdout.strip().split("\t")
         if len(parts) >= 3:
@@ -1024,6 +1070,14 @@ def capture_pane(target, lines=2000, tui=None):
                     info["session_attached"] = 0
             info["command_display"] = prettify_command(info.get("command", ""))
             info["alternate_on"] = alternate_on
+            if len(parts) >= 11:
+                marker = (
+                    parts[7], parts[8], parts[9], parts[3],
+                    parts[1], parts[2], parts[4], parts[10],
+                )
+                if capture_reusable(prev, marker, captured_at, max_age, min_interval):
+                    info["unchanged"] = True
+                    return None, info, prev
 
     # Capture range and redraw behavior must use process identity here: content
     # fingerprints are not available until after this function captures.
@@ -1061,7 +1115,7 @@ def capture_pane(target, lines=2000, tui=None):
         timeout=5,
     )
     if proc.returncode != 0:
-        return None, None
+        return None, None, None
 
     content = proc.stdout
     lines_list = content.split("\n")
@@ -1072,7 +1126,7 @@ def capture_pane(target, lines=2000, tui=None):
     info["is_native_tui"] = (
         not alternate_on and info["agent_kind"] == "claude"
     )
-    return content, info
+    return content, info, ((marker, captured_at) if marker else None)
 
 
 # tmux's own ids: %pane, @window, $session. Exact by construction.

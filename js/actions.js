@@ -136,7 +136,7 @@ async function _setAutoYes(session, enabled, delay) {
             if (_termLatestContent) {
                 const info = _paneInfo[_termTarget];
                 const detected = detectSmartActions(
-                    stripAnsi(_termLatestContent),
+                    detectionTail(_termLatestContent),
                     _termTarget,
                     info && info.agent_kind
                 );
@@ -822,10 +822,10 @@ function dismissSmartActions() {
         const split = _splitPanes[session];
         if (split && split.target === target) content = split.lastContent;
     }
-    // Store ANSI-STRIPPED content — detection always receives stripped
-    // content, so a raw capture here would never match and the panel
-    // would reappear on the next poll.
-    _getSmartState(target).dismissedContent = content ? stripAnsi(content) : null;
+    // Store the same stripped tail detection receives (detectionTail) — a raw
+    // capture here would never match and the panel would reappear on the
+    // next poll.
+    _getSmartState(target).dismissedContent = content ? detectionTail(content) : null;
     hideSmartActions();
 }
 

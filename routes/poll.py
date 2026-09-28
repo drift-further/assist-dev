@@ -4,12 +4,14 @@ import hashlib
 import json as json_mod
 import os
 import re
+import secrets
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, Response, jsonify, request
 
 import shared.auth as auth
 import shared.drafts as drafts
@@ -19,17 +21,72 @@ import shared.tab_state as tab_state
 from shared.agent_identity import (
     _ANSI_ESCAPE_RE,
     _VERSION_CMD_RE,
+    child_pids,
     refine_with_content,
     resolve_process,
 )
 from shared.agent_model import observe as observe_model
-from shared.tmux import prettify_command, sudo_prompt_waiting, tmux_exact_target
+from shared.tmux import capture_reusable, prettify_command, sudo_prompt_waiting, tmux_exact_target
 from routes.autoyes import autoyes_will_consider, detection_depth, prompt_popup_info
 from routes.terminal import enrich_panes_with_agents
 
 poll_bp = Blueprint("poll_bp", __name__)
 
 CLI_PROXY_TIMEOUT_CEILING = 600
+
+# Lines of each pane's tail the browser gets: the window detectSmartActions
+# reads (js/actions.js, `lines.slice(-60)`). The server-side detectors still
+# see the whole capture.
+SCAN_TAIL_LINES = 60
+# A pane whose change marker has not moved reuses its last capture, but never
+# one older than this (shared/tmux.py:capture_reusable).
+SCAN_RECAPTURE_SEC = 30
+# Idle state is written when a pane's content changed, else at most this often.
+IDLE_SAVE_INTERVAL_SEC = 30
+# Git branch and status counts are reused for this long per project dir,
+# unless .git/index or .git/HEAD moves first.
+GIT_META_TTL_SEC = 10
+
+# target -> {"raw", "tail", "rev", "prev"}: the last capture of each pane. `rev`
+# rises whenever a pane's browser tail changes, and a browser that echoes the
+# `gen` it last applied as ?since= gets only tails newer than that. The epoch
+# makes a `since` from before a restart read as "has nothing".
+_SCAN_CACHE = {}
+_SCAN_LOCK = threading.Lock()
+_SCAN_EPOCH = secrets.token_hex(4)
+_scan_rev = 0
+_last_idle_save = 0.0
+
+_GIT_META_CACHE = {}
+_GIT_META_LOCK = threading.Lock()
+
+
+def _parse_since(value):
+    """The rev a browser already holds, or None when it holds nothing we issued."""
+    epoch, _, rev = (value or "").partition(".")
+    if epoch != _SCAN_EPOCH or not rev.isdigit():
+        return None
+    return int(rev)
+
+
+def _store_scan_capture(target, raw, prev):
+    """Cache a fresh capture; bump the rev only if the browser tail changed."""
+    global _scan_rev
+    plain = _ANSI_ESCAPE_RE.sub("", raw)
+    tail = "\n".join(plain.split("\n")[-SCAN_TAIL_LINES:])
+    with _SCAN_LOCK:
+        entry = _SCAN_CACHE.get(target)
+        # Two browsers poll concurrently: an older capture landing second must
+        # not replace a newer one.
+        if entry and entry["prev"][1] > prev[1]:
+            return entry["raw"]
+        if entry is None or entry["tail"] != tail:
+            _scan_rev += 1
+            rev = _scan_rev
+        else:
+            rev = entry["rev"]
+        _SCAN_CACHE[target] = {"raw": raw, "tail": tail, "rev": rev, "prev": prev}
+    return raw
 
 def _find_project_dir(cwd):
     """Find the nearest project root for a tmux pane cwd."""
@@ -95,6 +152,71 @@ def _merge_opencode_meta(result, project_dir):
         if oc.get("updated"):
             result["agent_updated"] = oc.get("updated")
         return
+
+
+def _git_meta(project_dir):
+    """Branch and edited-file counts for a project dir, cached briefly.
+
+    Every browser's /poll asks for the active pane's repo every 5 s. A repo
+    with a large untracked tree made each ask a long `git status`, so the
+    answer is reused for GIT_META_TTL_SEC, or until .git/index or .git/HEAD
+    changes. `--untracked-files=normal` counts an untracked directory once,
+    which is all the info bar shows, instead of walking into it.
+    """
+    stamp = []
+    for name in ("index", "HEAD"):
+        try:
+            stamp.append((project_dir / ".git" / name).stat().st_mtime_ns)
+        except OSError:
+            stamp.append(None)
+    stamp = tuple(stamp)
+    key = str(project_dir)
+    now = time.time()
+    with _GIT_META_LOCK:
+        cached = _GIT_META_CACHE.get(key)
+    if cached and cached[0] == stamp and now - cached[1] < GIT_META_TTL_SEC:
+        return dict(cached[2])
+
+    meta = {}
+    # Git branch
+    try:
+        git_proc = _run_git(project_dir, ["rev-parse", "--abbrev-ref", "HEAD"])
+        if git_proc.returncode == 0:
+            meta["branch"] = git_proc.stdout.strip()
+    except Exception:
+        pass
+
+    # Edited files. Use lock-free status polling so Assist does not race the
+    # interactive agent for .git/index.lock.
+    try:
+        gs_proc = _run_git(project_dir, ["status", "--porcelain=v1", "--untracked-files=normal"])
+        if gs_proc.returncode == 0:
+            edited = staged = untracked = deleted = 0
+            for line in gs_proc.stdout.strip().split("\n"):
+                if not line:
+                    continue
+                x = line[0] if len(line) > 0 else " "
+                y = line[1] if len(line) > 1 else " "
+                if x == "?" and y == "?":
+                    untracked += 1
+                    edited += 1
+                    continue
+                if x != " ":
+                    staged += 1
+                if x == "D" or y == "D":
+                    deleted += 1
+                if x in "MADRCU" or y in "MADRCU":
+                    edited += 1
+            meta["edited_files"] = edited
+            meta["staged_files"] = staged
+            meta["untracked_files"] = untracked
+            meta["deleted_files"] = deleted
+    except Exception:
+        pass
+
+    with _GIT_META_LOCK:
+        _GIT_META_CACHE[key] = (stamp, now, meta)
+    return dict(meta)
 
 
 def get_claude_meta(target):
@@ -163,41 +285,7 @@ def get_claude_meta(target):
         except Exception:
             pass
 
-        # Git branch
-        try:
-            git_proc = _run_git(project_dir, ["rev-parse", "--abbrev-ref", "HEAD"])
-            if git_proc.returncode == 0:
-                result["branch"] = git_proc.stdout.strip()
-        except Exception:
-            pass
-
-        # Edited files. Use lock-free status polling so Assist does not race the
-        # interactive agent for .git/index.lock.
-        try:
-            gs_proc = _run_git(project_dir, ["status", "--porcelain=v1", "--untracked-files=all"])
-            if gs_proc.returncode == 0:
-                edited = staged = untracked = deleted = 0
-                for line in gs_proc.stdout.strip().split("\n"):
-                    if not line:
-                        continue
-                    x = line[0] if len(line) > 0 else " "
-                    y = line[1] if len(line) > 1 else " "
-                    if x == "?" and y == "?":
-                        untracked += 1
-                        edited += 1
-                        continue
-                    if x != " ":
-                        staged += 1
-                    if x == "D" or y == "D":
-                        deleted += 1
-                    if x in "MADRCU" or y in "MADRCU":
-                        edited += 1
-                result["edited_files"] = edited
-                result["staged_files"] = staged
-                result["untracked_files"] = untracked
-                result["deleted_files"] = deleted
-        except Exception:
-            pass
+        result.update(_git_meta(project_dir))
 
         # Open tasks (sessions/tasks/*.md not containing "status: done/completed")
         try:
@@ -251,7 +339,8 @@ def consolidated_poll():
             "#{session_name}\t#{window_index}\t#{pane_index}\t"
             "#{pane_current_command}\t#{pane_width}\t#{pane_height}\t"
             "#{session_activity}\t#{pane_pid}\t#{pane_id}\t#{session_created}\t"
-            "#{pane_tty}",
+            "#{pane_tty}\t#{window_activity}\t#{history_size}\t#{cursor_x}\t"
+            "#{cursor_y}\t#{alternate_on}",
         ],
         capture_output=True,
         text=True,
@@ -261,6 +350,9 @@ def consolidated_poll():
     panes = []
     # Kept off the pane dicts: the browser has no use for a tty path.
     pane_ttys = {}
+    # What says a pane changed since its last capture; same field order as
+    # shared/tmux.py:capture_pane_if_changed.
+    pane_markers = {}
     seen_sessions = set()
     now = time.time()
     if proc.returncode == 0:
@@ -276,6 +368,11 @@ def consolidated_poll():
                 # "sort by opened date" in the tab strip.
                 created = int(parts[9]) if len(parts) >= 10 and parts[9].isdigit() else 0
                 pane_ttys[target] = parts[10] if len(parts) >= 11 else ""
+                if len(parts) >= 16:
+                    pane_markers[target] = (
+                        parts[11], parts[12], parts[13], parts[14],
+                        parts[4], parts[5], parts[15], pane_id,
+                    )
                 is_subpane = parts[0] in seen_sessions
                 seen_sessions.add(parts[0])
                 panes.append(
@@ -310,21 +407,40 @@ def consolidated_poll():
 
     # --- Scan ---
     # Must run BEFORE states so content-based idle_seconds is available.
+    global _last_idle_save
     scan_results = []
     sudo_prompts = []
     autoyes_by_session = {}
     live_targets = set()
+    idle_changed = False
     for pane in panes:
         target = pane["target"]
         live_targets.add(target)
-        cap = subprocess.run(
-            ["tmux", "capture-pane", "-e", "-p", "-t", tmux_exact_target(target), "-S", "-60"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if cap.returncode == 0:
-            tail = cap.stdout.rstrip("\n")
+        # A pane that has not changed since its last capture reuses it: a
+        # capture-pane per pane per browser per poll was most of /poll's cost.
+        with _SCAN_LOCK:
+            cached = _SCAN_CACHE.get(target)
+        if cached and capture_reusable(
+            cached["prev"], pane_markers.get(target), now, SCAN_RECAPTURE_SEC
+        ):
+            captured = True
+            tail = cached["raw"]
+        else:
+            captured_at = time.time()
+            cap = subprocess.run(
+                ["tmux", "capture-pane", "-e", "-p", "-t", tmux_exact_target(target), "-S", "-60"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            captured = cap.returncode == 0
+            if captured:
+                tail = _store_scan_capture(
+                    target,
+                    cap.stdout.rstrip("\n"),
+                    (pane_markers.get(target), captured_at),
+                )
+        if captured:
             agent_kind = refine_with_content(process_kinds.get(target), tail)
             pane["agent_kind"] = agent_kind
             # One regex pass over <=5 lines of a capture already taken. The
@@ -351,6 +467,7 @@ def consolidated_poll():
                         state.pane_last_activity.setdefault(target, now)
                     elif content_hash != prev_hash:
                         state.pane_last_activity[target] = now
+                    idle_changed = idle_changed or content_hash != prev_hash
                     state.pane_content_hash[target] = content_hash
                 # Every open browser pops these (js/prompt-popup.js), whichever
                 # tab is in view.
@@ -375,10 +492,19 @@ def consolidated_poll():
                         "session": pane["session"],
                         "command": pane["command"],
                         "agent_kind": agent_kind,
-                        "tail": tail,
                         "prompt": prompt,
                     }
                 )
+    # Tails go out as the cache holds them, read in one pass with the rev they
+    # are stamped against, and only those newer than what this browser holds.
+    since = _parse_since(request.args.get("since"))
+    with _SCAN_LOCK:
+        for entry in scan_results:
+            cached = _SCAN_CACHE.get(entry["target"])
+            if cached and (since is None or cached["rev"] > since):
+                entry["tail"] = cached["tail"]
+                entry["tail_rev"] = cached["rev"]
+        result["gen"] = f"{_SCAN_EPOCH}.{_scan_rev}"
     result["scan"] = scan_results
     result["sudo_prompts"] = sudo_prompts
     # js/actions.js windows the pane with this, so the action bar and Auto-Yes
@@ -391,13 +517,20 @@ def consolidated_poll():
         with state._activity_lock:
             for stale in set(state.pane_model) - live_targets:
                 state.pane_model.pop(stale, None)
+        with _SCAN_LOCK:
+            for stale in set(_SCAN_CACHE) - live_targets:
+                _SCAN_CACHE.pop(stale, None)
     with state._activity_lock:
         for stale in set(state.pane_content_hash) - live_targets:
             state.pane_content_hash.pop(stale, None)
             state.pane_last_activity.pop(stale, None)
+            idle_changed = True
 
-    # Persist idle state to disk (every poll cycle is ~5s, lightweight write)
-    state.save_idle_state()
+    # Persist idle state when it changed, else now and then. An fsync'd write
+    # on every poll from every browser was pure cost on a quiet host.
+    if idle_changed or now - _last_idle_save >= IDLE_SAVE_INTERVAL_SEC:
+        _last_idle_save = now
+        state.save_idle_state()
 
     # --- States ---
     AGENT_COMMANDS = {
@@ -432,13 +565,17 @@ def consolidated_poll():
         elif command in SHELL_COMMANDS:
             if pane_pid:
                 try:
-                    child_check = subprocess.run(
-                        ["pgrep", "-P", pane_pid],
-                        capture_output=True,
-                        text=True,
-                        timeout=3,
-                    )
-                    if child_check.stdout.strip():
+                    has_children = child_pids(pane_pid)
+                    if has_children is None:
+                        # No /proc (macOS): pgrep, one process-table scan per shell.
+                        child_check = subprocess.run(
+                            ["pgrep", "-P", pane_pid],
+                            capture_output=True,
+                            text=True,
+                            timeout=3,
+                        )
+                        has_children = child_check.stdout.strip()
+                    if has_children:
                         st = "running"
                     elif idle_seconds > idle_thresh:
                         st = "idle"
@@ -519,7 +656,12 @@ def consolidated_poll():
     # flight would take the operator's only warning with it.
     result["access"] = auth.window_state()
 
-    return jsonify(result)
+    # Raw UTF-8, not jsonify's \uXXXX escapes: agent panes are full of box
+    # drawing and bullets, which the escapes turned into six bytes each.
+    return Response(
+        json_mod.dumps(result, ensure_ascii=False, separators=(",", ":")),
+        mimetype="application/json",
+    )
 
 
 @poll_bp.route("/health")

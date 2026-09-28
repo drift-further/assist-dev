@@ -856,7 +856,7 @@ function _doRender(content, info, target) {
     // feeding smart actions from the actual TUI, including while reading up.
     const actionTarget = target || _termTarget;
     const actionInfo = _paneInfo[actionTarget];
-    const detected = detectSmartActions(stripAnsi(content), actionTarget, actionInfo && actionInfo.agent_kind);
+    const detected = detectSmartActions(detectionTail(content), actionTarget, actionInfo && actionInfo.agent_kind);
     if (typeof OpenCodeOutput !== 'undefined' && OpenCodeOutput.onFrame(actionTarget, actionInfo, detected)) {
         _termLastContent = content;
         _termLatestContent = content;
@@ -1131,11 +1131,31 @@ function disconnectTerminalWs() {
     updateConnIndicator();
 }
 
+// A hidden page stops its stream. The server captured the pane up to five
+// times a second for a tab nobody could see, and the phone rendered every
+// frame. Shown again, it reconnects and resyncs any Auto-Yes countdown whose
+// events went out while it was away.
+let _termHiddenStopped = false;
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        if (_termOpen && _termTarget) {
+            _termHiddenStopped = true;
+            stopPolling();
+        }
+    } else if (_termHiddenStopped) {
+        _termHiddenStopped = false;
+        if (_termOpen && _termTarget) startPolling();
+        if (typeof syncAutoYesState === 'function') {
+            syncAutoYesState().then(() => { if (_termTarget) updateAutoYesUI(_termTarget.split(':')[0]); });
+        }
+    }
+});
+
 function _fallbackToHttp() {
     if (!_termPollTimer && _termOpen && _termTarget) {
         // Delay HTTP fallback slightly so WS reconnect (1s) has a chance first
         setTimeout(function() {
-            if (!_termWsConnected && !_termPollTimer && _termOpen && _termTarget) {
+            if (!_termWsConnected && !_termPollTimer && _termOpen && _termTarget && !document.hidden) {
                 captureTerminal();
                 _termPollTimer = setInterval(captureTerminal, 3000);
                 updateConnIndicator();
@@ -1209,7 +1229,7 @@ function resumeTerminal() {
         // Re-detect smart actions after resume
         const info = _paneInfo[_termTarget];
         const detected = detectSmartActions(
-            stripAnsi(_termLatestContent),
+            detectionTail(_termLatestContent),
             _termTarget,
             info && info.agent_kind
         );

@@ -144,7 +144,7 @@ _classify(
 )
 _classify(
     "fixed:observe",
-    "shared/tmux.py:capture_pane",
+    "shared/tmux.py:capture_pane_if_changed",
     "shared/tmux.py:pane_awaits_secret",
     "shared/tmux.py:prompt_owner_waiting",
     "shared/tmux.py:_tty_prompt_waiters",

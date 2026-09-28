@@ -1,5 +1,7 @@
 """shared/utils.py — Pure helpers used across multiple blueprints."""
 
+import gzip
+import json
 import re
 import threading
 import time
@@ -10,6 +12,50 @@ import time
 import shared.state as state
 
 _history_lock = threading.Lock()
+
+# Below this a JSON body goes out as is; gzip's header and CPU are not worth it.
+GZIP_MIN_BYTES = 8 * 1024
+
+
+def _accepts_gzip(accept_encoding):
+    for item in (accept_encoding or "").split(","):
+        coding, *params = [part.strip() for part in item.split(";")]
+        if coding.lower() != "gzip":
+            continue
+        for param in params:
+            name, _, value = param.partition("=")
+            if name.strip().lower() == "q":
+                try:
+                    return float(value) > 0
+                except ValueError:
+                    return False
+        return True
+    return False
+
+
+def gzip_json_response(response, accept_encoding):
+    """Gzip a large JSON response for a client that accepts it.
+
+    /poll is ~20-600 KB of JSON every 5 s to every browser. nginx's default
+    gzip_types leaves application/json raw, and a self-install may have no
+    proxy at all, so the app compresses its own JSON.
+    """
+    if (
+        response.status_code != 200
+        or response.mimetype != "application/json"
+        or response.direct_passthrough
+        or response.is_streamed
+        or "Content-Encoding" in response.headers
+        or not _accepts_gzip(accept_encoding)
+    ):
+        return response
+    body = response.get_data()
+    if len(body) < GZIP_MIN_BYTES:
+        return response
+    response.set_data(gzip.compress(body, compresslevel=5))
+    response.headers["Content-Encoding"] = "gzip"
+    response.vary.add("Accept-Encoding")
+    return response
 
 # Common CLI commands that phone keyboards auto-capitalize.
 _LOWERCASE_COMMANDS = {
