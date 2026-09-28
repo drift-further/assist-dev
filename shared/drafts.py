@@ -21,7 +21,6 @@ marker and the stored map still cannot disagree.
 """
 
 import copy
-import json
 import threading
 import time
 from pathlib import Path
@@ -125,10 +124,7 @@ def _is_default(entry):
 def load_drafts():
     """Load from disk. Called once at import."""
     global _drafts
-    try:
-        data = json.loads(DRAFTS_FILE.read_text())
-    except (OSError, ValueError, json.JSONDecodeError):
-        data = {}
+    data = state.read_json_state(DRAFTS_FILE, {}, expect=dict)
     with _lock:
         _drafts = _normalize(data)
 

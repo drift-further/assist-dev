@@ -21,6 +21,8 @@ container_config.json
 extensions.json
 sudo_pw.dat
 auth_token
+# A state file that did not parse, moved aside at load (shared/state.py)
+*.corrupt-*
 
 # Environment
 .env

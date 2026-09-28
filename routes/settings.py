@@ -34,7 +34,8 @@ def _masked(settings):
 
 
 def _filter_patch(patch, defaults, blocked=frozenset(), _prefix=""):
-    """Keep only keys that exist in the defaults structure (recursively).
+    """Keep only keys that exist in the defaults structure (recursively),
+    with values that pass state.check_setting against their default.
 
     Returns (filtered_patch, rejected_key_paths). Keys in `blocked`
     (dotted paths) are stripped even when they exist in defaults.
@@ -58,8 +59,20 @@ def _filter_patch(patch, defaults, blocked=frozenset(), _prefix=""):
             # Type-shape mismatch (dict vs scalar) — refuse to clobber.
             rejected.append(path)
         else:
-            filtered[key] = value
+            # Type and range of the default: a null limit stopped the server
+            # starting, and a string delay reached innerHTML.
+            ok, value = state.check_setting(path, value, default_value)
+            if ok:
+                filtered[key] = value
+            else:
+                rejected.append(path)
     return filtered, rejected
+
+def _no_valid_keys(rejected):
+    """400 naming what was refused, so the panel's flash says which value."""
+    error = "Invalid value: " + ", ".join(rejected) if rejected else "No valid keys"
+    return jsonify({"ok": False, "error": error, "rejected": rejected}), 400
+
 
 # Track server start time for uptime display
 _start_time = None
@@ -113,7 +126,7 @@ def patch_settings():
         data, state.DEFAULT_SETTINGS, blocked=_API_BLOCKED_KEYS
     )
     if not filtered:
-        return jsonify({"ok": False, "error": "No valid keys", "rejected": rejected}), 400
+        return _no_valid_keys(rejected)
     updated = state.patch_settings(filtered)
     return jsonify({"ok": True, "settings": _masked(updated), "rejected": rejected})
 
@@ -139,7 +152,7 @@ def patch_project_settings_api(project):
         return jsonify({"ok": False, "error": "No data"}), 400
     data, rejected = _filter_patch(data, state.DEFAULT_PROJECT_SETTINGS)
     if not data:
-        return jsonify({"ok": False, "error": "No valid keys", "rejected": rejected}), 400
+        return _no_valid_keys(rejected)
     updated = state.patch_project_settings(project, data)
     # Sync auto-yes runtime state when the patch touches it. Otherwise toggling
     # "Auto-enable: ON" in the per-project panel only persists to disk; the

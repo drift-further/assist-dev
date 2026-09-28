@@ -13,6 +13,7 @@ with no trimming, no expansion and no history entry — the same keystrokes, wit
 nothing at rest.
 """
 
+import logging
 import re
 import threading
 import time
@@ -44,6 +45,7 @@ from shared.utils import (
 )
 
 input_bp = Blueprint("input_bp", __name__)
+log = logging.getLogger(__name__)
 _favorites_lock = threading.RLock()
 
 
@@ -240,6 +242,19 @@ def _prompt_answer_is_stale(data, expected):
     return pid is not None and not prompt_owner_waiting(expected.pane_id, pid)
 
 
+def _bookkeeping_failed(target, exc):
+    """Record that /type delivered but its history/activity step failed.
+
+    Only the exception's class: its message or traceback can quote the typed
+    text or a history entry, and nothing typed is ever logged (the vault
+    contract, tests/test_vault_client_contract.py).
+    """
+    log.error(
+        "type: delivered to %s, but bookkeeping failed (%s)",
+        target, type(exc).__name__,
+    )
+
+
 @input_bp.route("/type", methods=["POST"])
 def type_text():
     """Type text into the terminal and optionally press Enter."""
@@ -313,16 +328,22 @@ def _type_text_effect(require_carried_identity=False):
 
     result = generation_bound_delivery(expected, text=send_text, enter=enter)
     if result.ok:
-        # Declarations belong to explicit agent launches Assist typed, never to
-        # the generic session launcher whose init command may leave a bare shell,
-        # and never to a password answering a prompt.
-        if text and enter and not secret:
-            declare_agent_command(expected.pane_id, text)
-        state.touch_activity(target)
-        # History stores what was typed, not what was sent — so reloading a prompt
-        # built from segments brings back the compact token form.
-        if text and not no_history:
-            add_to_history(text)
+        # The text is in the pane now. Bookkeeping below must not turn that into
+        # an error: the client would put the text back in the composer and the
+        # natural next tap sends it twice. Log a failure and still report ok.
+        try:
+            # Declarations belong to explicit agent launches Assist typed, never
+            # to the generic session launcher whose init command may leave a bare
+            # shell, and never to a password answering a prompt.
+            if text and enter and not secret:
+                declare_agent_command(expected.pane_id, text)
+            state.touch_activity(target)
+            # History stores what was typed, not what was sent — so reloading a
+            # prompt built from segments brings back the compact token form.
+            if text and not no_history:
+                add_to_history(text)
+        except Exception as exc:
+            _bookkeeping_failed(target, exc)
         return jsonify({"ok": True, "via": "tmux", "sent_chars": len(send_text)})
     status = 409 if result.status == "target_absent" else 502
     return jsonify({"ok": False, "error": result.status}), status

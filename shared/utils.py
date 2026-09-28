@@ -1,6 +1,5 @@
 """shared/utils.py — Pure helpers used across multiple blueprints."""
 
-import json
 import re
 import threading
 import time
@@ -128,13 +127,12 @@ def fix_first_word_case(text):
 
 
 def load_json(path, default=None):
-    """Load a JSON file, returning *default* (empty dict) on any error."""
+    """Load a JSON file, returning *default* (empty dict) when missing or unreadable."""
     if default is None:
         default = {}
-    try:
-        return json.loads(path.read_text()) if path.exists() else default
-    except (json.JSONDecodeError, OSError):
-        return default
+    # A file that does not parse is moved aside rather than left for the next
+    # save to overwrite (shared/state.py:read_json_state).
+    return state.read_json_state(path, default, expect=type(default))
 
 
 def save_json(path, data):

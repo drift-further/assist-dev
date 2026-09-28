@@ -12,7 +12,6 @@ own.
 """
 
 import copy
-import json
 import threading
 import time
 
@@ -132,10 +131,7 @@ def _normalize(data):
 def load_tab_state():
     """Load from disk. Called once at import."""
     global _tab_state
-    try:
-        data = json.loads(TAB_STATE_FILE.read_text())
-    except (OSError, ValueError, json.JSONDecodeError):
-        data = {}
+    data = state.read_json_state(TAB_STATE_FILE, {}, expect=dict)
     with _lock:
         _tab_state = _normalize(data)
 
