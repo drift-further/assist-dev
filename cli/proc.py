@@ -26,6 +26,7 @@ def print_error(message: str) -> None:
 
 
 def _control(resolved: Config, verb: str, arguments: list[str] | None = None, env=None) -> int:
+    sys.stdout.flush()  # keep our own lines ahead of the child's when piped
     try:
         completed = subprocess.run(
             [str(resolved.home / "assist-ctl"), verb, *(arguments or [])],

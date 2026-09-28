@@ -74,6 +74,7 @@ def installed_for(home: Path) -> bool:
 
 
 def _run(*command: str, check: bool = False) -> int:
+    sys.stdout.flush()
     try:
         return subprocess.run(list(command), check=check).returncode
     except OSError as exc:
