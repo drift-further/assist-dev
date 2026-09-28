@@ -875,6 +875,7 @@ async function restartClaudeSession(claudeCmd) {
 
         // Update global target
         _termTarget = launchData.target;
+        noteTargetChosen(_termTarget, true);
         _termExpectedIdentity = launchData.expected_target_identity || null;
         _smartActionTarget = launchData.target;
         updateTmuxIndicator();

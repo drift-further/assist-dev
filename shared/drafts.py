@@ -206,11 +206,17 @@ def poll_block():
     - marks: targets whose draft has content -> the .has-draft tab markers
     - rev:   every stored target -> updated_at, so a second device notices a
              change to the tab it is sitting on (spec §9.3) and re-fetches
+    - at:    when this snapshot was taken, on the same clock as updated_at.
+             /poll builds the block mid-request and ships it later, so a save
+             can land in between; the client reads a target missing from `rev`
+             as "deleted elsewhere" only when `at` is not older than its own
+             last save, otherwise it would blank a composer it just saved
     """
     with _lock:
         return {
             "marks": [t for t, e in _drafts.items() if has_content(e)],
             "rev": {t: e["updated_at"] for t, e in _drafts.items()},
+            "at": time.time(),
         }
 
 

@@ -280,8 +280,12 @@ function _applyDraftsData(block) {
         if (Object.prototype.hasOwnProperty.call(rev, target)) {
             // Another device wrote this tab's draft.
             if (rev[target] > known) loadDraft(target);
-        } else if (known > 0) {
-            // Another device sent from this tab, or the sweep expired it.
+        } else if (known > 0 && !(typeof block.at === 'number' && block.at < known)) {
+            // Another device sent from this tab, or the sweep expired it. Not
+            // when the snapshot predates our own last save (`at` < `known`): a
+            // poll built before a first save's PUT landed, delivered after its
+            // ack, lacks the row only because it is stale — and since the ack
+            // marked the composer synced, obeying it cleared the box mid-message.
             _draftRev[target] = 0;
             _draftCache[target] = { ..._DRAFT_EMPTY };
             _applyDraftToComposer(target);

@@ -393,6 +393,7 @@ async function _launchFromPath(path, name) {
         if (data.ok) {
             _trackRecentExplore(path, name);
             _termTarget = data.target;
+            noteTargetChosen(_termTarget, true);
             updateTmuxIndicator();
             try { localStorage.setItem('term_target', _termTarget); } catch(e) {}
             _termShowProjects = false;
@@ -435,6 +436,7 @@ async function launchProject(name, btnEl) {
         launchData = data;
         if (data.ok) {
             _termTarget = data.target;
+            noteTargetChosen(_termTarget, true);
             _termExpectedIdentity = data.expected_target_identity || null;
             updateTmuxIndicator();
             try { localStorage.setItem('term_target', _termTarget); } catch(e) {}
@@ -466,6 +468,7 @@ async function launchProject(name, btnEl) {
 
 // -- Sessions --
 async function loadSessions() {
+    const requestedAt = Date.now();   // see js/target-hold.js
     try {
         const resp = await fetch('/terminal/sessions');
         const data = await resp.json();
@@ -540,6 +543,11 @@ async function loadSessions() {
         // Auto-select if we have a saved target
         if (current && panes.some(p => p.target === current)) {
             _termTarget = current;
+            noteTargetListed(current);
+        } else if (current && panes.length > 0 && targetMissingIsStale(current, requestedAt)) {
+            // Missing only because this list predates a pane we just created —
+            // keep it. Mirrors _applySessionsData() in app.js — keep the two in sync.
+            _termTarget = current;
         } else if (current && panes.length > 0) {
             // Viewed pane vanished (e.g. a subagent pane exited): fall back to
             // that session's first surviving pane rather than a dead target.
@@ -607,6 +615,7 @@ function selectTab(target, auto) {
     // run BEFORE _termTarget moves — the draft module reads it for "here".
     if (typeof onTabSwitchDraft === 'function') onTabSwitchDraft(_termTarget, target, !auto);
     _termTarget = target;
+    noteTargetChosen(target, false);
     if (typeof OpenCodeOutput !== 'undefined') OpenCodeOutput.onTargetChange();
     // Opening a tab is the act of looking — clear its model caret.
     if (typeof _markModelSeen === 'function') _markModelSeen(target);

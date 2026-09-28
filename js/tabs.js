@@ -217,16 +217,12 @@ function _createContextMenu(tab, x, y) {
         }).then(r => r.json()).then(data => {
             if (data.ok) {
                 showFlash('sent', 'Created ' + data.session);
-                _termTarget = data.target;
-                try { localStorage.setItem('term_target', _termTarget); } catch(e) {}
-                updateTmuxIndicator();
+                // Held until a tab list shows it, so a /poll already in flight
+                // cannot drop us on another pane (js/target-hold.js). selectTab
+                // does the rest of a switch — drafts, stream, key labels, Auto-Yes.
+                noteTargetChosen(data.target, true);
+                selectTab(data.target, true);   // automatic, not a tap — see selectTab
                 consolidatedPoll();
-                // Switch WS to new target
-                if (_termWs && _termWsConnected) {
-                    _termWs.send(JSON.stringify({type: 'subscribe', target: data.target, lines: _termLines}));
-                } else {
-                    captureTerminal();
-                }
                 // Prompt to run init command
                 if (data.init_cmd && confirm('Run setup commands?\n\n' + data.init_cmd)) {
                     fetch('/terminal/run-init', {

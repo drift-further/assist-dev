@@ -88,6 +88,9 @@ setInterval(updateStatusTime, 1000);
 
 // 5s consolidated server poll (health + sessions + states + scan)
 async function consolidatedPoll() {
+    // Taken before the request: a list the server built before a pane this
+    // browser just created existed must not move us off it (js/target-hold.js).
+    const requestedAt = Date.now();
     try {
         const resp = await fetch('/poll', {signal: AbortSignal.timeout(8000)});
         const data = await resp.json();
@@ -105,7 +108,7 @@ async function consolidatedPoll() {
         if (typeof _applyTabState === 'function') _applyTabState(data.tab_state);
 
         // Sessions — update tabs
-        _applySessionsData(data.sessions || [], data.active_target || '');
+        _applySessionsData(data.sessions || [], data.active_target || '', requestedAt);
 
         // States — update tab indicators
         _applyStatesData(data.states || {});
@@ -295,7 +298,7 @@ function applyTabModel(tab, pane) {
 }
 
 // Extract session tab rendering from loadSessions() into a data-driven function
-function _applySessionsData(panes, activeTarget) {
+function _applySessionsData(panes, activeTarget, requestedAt) {
     // Skip the rebuild while a tab drag or reorder placement is in progress —
     // innerHTML='' mid-interaction reorders the wrong tab and persists the
     // corrupted order to localStorage.
@@ -360,6 +363,11 @@ function _applySessionsData(panes, activeTarget) {
 
     const hadTarget = !!_termTarget;
     if (current && panes.some(p => p.target === current)) {
+        _termTarget = current;
+        noteTargetListed(current);
+    } else if (current && panes.length > 0 && targetMissingIsStale(current, requestedAt || 0)) {
+        // Missing only because this list predates a pane we just created — keep
+        // it. Mirrors loadSessions() in terminal.js — keep the two in sync.
         _termTarget = current;
     } else if (current && panes.length > 0) {
         // Viewed pane vanished (e.g. a subagent pane exited): fall back to
