@@ -142,7 +142,12 @@ class PollWireTests(unittest.TestCase):
         return {entry["session"]: entry for entry in data["scan"]}
 
     def captured(self):
-        return sorted(c[c.index("-t") + 1].split(":")[0] for c in self.calls if "capture-pane" in c)
+        # Targets arrive in tmux's exact form (`=name:w.p`, see
+        # tests/test_exact_targets.py); the session name is what is compared.
+        return sorted(
+            c[c.index("-t") + 1].removeprefix("=").split(":")[0]
+            for c in self.calls if "capture-pane" in c
+        )
 
     def test_every_tail_is_plain_text_and_no_longer_than_the_client_reads(self):
         from shared.agent_identity import _ANSI_ESCAPE_RE

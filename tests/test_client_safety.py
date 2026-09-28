@@ -139,7 +139,10 @@ class AuthLostTests(unittest.TestCase):
 
     def test_poll_checks_before_parsing(self):
         body = _function(_js("app.js"), "consolidatedPoll")
-        fetched = body.index("fetch('/poll'")
+        # The URL carries perf's `?since=` (js/poll-sync.js), so it is built
+        # first; the fetch itself is what must precede the check.
+        self.assertIn("'/poll?since='", body)
+        fetched = body.index("await fetch(url")
         checked = body.index("if (authLost(resp)) return;")
         parsed = body.index("await resp.json()")
         self.assertLess(fetched, checked)
