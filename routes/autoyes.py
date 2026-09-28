@@ -225,6 +225,27 @@ def _has_internal_divider(lines, start, end):
     return any(_OPTION_SEP_RE.match(ln) for ln in lines[start:end])
 
 
+def _has_unanchored_divider(lines, start, end):
+    """True if a ──── rule sits below a numbered option, in a block with no top.
+
+    Only used when _option_region_start found no anchor, so every rule in the
+    window has fewer than two numbered options below it (two would have made it
+    the anchor). A rule with an option ABOVE it is therefore inside the block:
+    a question's divider whose top rule has scrolled away. A rule with no option
+    above it is the block's own top, as in a selected-yes menu whose "❯ Yes" row
+    carries no number, or earlier output; neither is a divider. codex draws no
+    rule at all.
+    """
+    seen_option = False
+    for ln in lines[start:end]:
+        if _OPTION_SEP_RE.match(ln):
+            if seen_option:
+                return True
+        elif _OPTION_LINE_RE.match(ln):
+            seen_option = True
+    return False
+
+
 def _option_region_start(lines, footer_line, search_floor):
     """Top of the numbered-option block above `footer_line`, or None.
 
@@ -245,12 +266,26 @@ def _option_region_start(lines, footer_line, search_floor):
     return None
 
 
+def detection_depth():
+    """The Settings detection depth, as an int in the Settings panel's range.
+
+    /poll ships this same number to the browser, so both detectors window the
+    pane identically. A junk value falls back to the default rather than
+    raising inside every scanner tick.
+    """
+    try:
+        depth = int(state.get_setting("autoyes", "detection_depth"))
+    except (TypeError, ValueError):
+        return int(state.DEFAULT_SETTINGS["autoyes"]["detection_depth"])
+    return max(2, min(30, depth))
+
+
 def _detect_autoyes_prompt(tail, agent_kind):
     """Detect prompts that auto-yes should answer. Returns (type, send_text, with_enter, summary) or None."""
     # Only check last N lines for y/n prompts — avoids false positives from
     # answered prompts still in scrollback
     lines = tail.split("\n")
-    depth = state.get_setting("autoyes", "detection_depth")
+    depth = detection_depth()
     bottom = "\n".join(lines[-depth:])
     if agent_kind == "claude" and (
         _PERMISSION_YNA_MARKER_RE.search(bottom)
@@ -323,12 +358,15 @@ def _detect_autoyes_prompt(tail, agent_kind):
             anchored = _option_region_start(lines, footer_line, search_floor)
             if anchored is not None:
                 region_start = anchored
-                # Only trustworthy when the block's real top was found: in the
-                # unanchored case region_start is an arbitrary 60-line window
-                # that can swallow a separator from earlier output, and reading
-                # that as a question would silently stop auto-yes entirely.
                 if _has_internal_divider(lines, region_start, footer_line):
                     return None
+            # Checked without an anchor too (js/actions.js does the same). That
+            # is a question whose top rule has scrolled out of view, leaving
+            # only its "Chat about this" divider, and it used to be answered
+            # "1. Yes" while the browser showed a question. See
+            # _has_unanchored_divider for why it cannot catch a real gate.
+            elif _has_unanchored_divider(lines, region_start, footer_line):
+                return None
             region = "\n".join(lines[region_start : footer_line + 1])
             if _NUMBERED_YES_RE.search(region):
                 return ("numbered-yes", "", True, _extract_summary(tail, "numbered"))

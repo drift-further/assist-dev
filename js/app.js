@@ -113,6 +113,9 @@ async function consolidatedPoll() {
         // States — update tab indicators
         _applyStatesData(data.states || {});
 
+        // The server's detection depth, before the scan is detected against it
+        if (Number.isInteger(data.detection_depth)) _detectionDepth = data.detection_depth;
+
         // Scan — prompt detection + activity on background tabs
         _applyScanData(data.scan || []);
 

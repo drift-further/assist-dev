@@ -144,7 +144,9 @@ const outsideRegion = [
     'Press enter to confirm',
 ];
 const staleFooter = ['❯ Yes', 'Press enter to confirm'];
-for (let i = 0; i < 31; i++) staleFooter.push('status ' + i);
+// Past the server's bound (depth 8 * 4 = 32 rows below the footer), which the
+// browser now shares; 31 rows was inside it and only stale to the old 30.
+for (let i = 0; i < 33; i++) staleFooter.push('status ' + i);
 
 console.log(JSON.stringify({
     confirmFooter: _OPT_FOOTER_RE.test('Press enter to confirm'),

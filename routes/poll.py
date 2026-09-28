@@ -24,7 +24,7 @@ from shared.agent_identity import (
 )
 from shared.agent_model import observe as observe_model
 from shared.tmux import prettify_command, sudo_prompt_waiting
-from routes.autoyes import autoyes_will_consider, prompt_popup_info
+from routes.autoyes import autoyes_will_consider, detection_depth, prompt_popup_info
 from routes.terminal import enrich_panes_with_agents
 
 poll_bp = Blueprint("poll_bp", __name__)
@@ -381,6 +381,9 @@ def consolidated_poll():
                 )
     result["scan"] = scan_results
     result["sudo_prompts"] = sudo_prompts
+    # js/actions.js windows the pane with this, so the action bar and Auto-Yes
+    # agree on what is a prompt at any Settings depth.
+    result["detection_depth"] = detection_depth()
 
     # Clean up stale targets no longer in tmux
     if proc.returncode == 0:
