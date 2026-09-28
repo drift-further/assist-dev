@@ -11,6 +11,7 @@ from flask import Flask, g, jsonify, redirect, request
 from flask_sock import Sock
 
 import shared.auth as auth
+from shared import listen
 from shared.security import origin_allowed
 
 os.environ.setdefault("DISPLAY", ":0")
@@ -175,6 +176,20 @@ def start_application_backgrounds():
     automate_recover()
 
 
+def start_extra_listeners(addresses, port, app):
+    """Serve the same app on each ASSIST_BIND address, beside loopback.
+
+    Bound here, synchronously, so a taken or unassignable address fails the
+    start loudly instead of leaving a loopback-only server that looks healthy.
+    """
+    from werkzeug.serving import make_server
+
+    for address in addresses:
+        lan_server = make_server(address, port, app, threaded=True)
+        threading.Thread(target=lan_server.serve_forever, daemon=True).start()
+        print(f"[assist] also listening on {address}:{port}", flush=True)
+
+
 def configure_logging():
     """Send this app's own log records to stderr, which assist-ctl tees to the log.
 
@@ -225,15 +240,18 @@ if __name__ == "__main__":
         default=int(os.environ.get("ASSIST_PORT", "8089")),
         help="Port to listen on",
     )
-    # Loopback only. nginx listens on the LAN address:port clients already use
-    # and forwards here, so no client URL changes while Flask itself is
-    # unreachable from the network — the blast radius of an unauthenticated
-    # endpoint slipping through is the host, not the LAN. Reverting this to
-    # 0.0.0.0 re-exposes every endpoint directly. The vhost lives in a separate
-    # infrastructure repo; README has the equivalent server block.
+    # Loopback always. A phone reaches Flask one of two ways: ASSIST_BIND (set
+    # by `assist expose`) adds the host's LAN address as a second listener, or
+    # nginx listens on the LAN address and forwards here. Never 0.0.0.0 --
+    # shared.listen refuses a wildcard in ASSIST_BIND, because every endpoint
+    # would then be on every interface, including ones nobody meant to serve.
     parser.add_argument("--host", default="127.0.0.1", help="Interface to bind")
     parser.add_argument("--park-handoff-fd", type=int, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    try:
+        addresses = listen.bind_addresses(args.host, os.environ.get("ASSIST_BIND"))
+    except ValueError as exc:
+        raise SystemExit(f"[assist] {exc}")
 
     handoff = None
     if args.park_handoff_fd is not None:
@@ -257,7 +275,8 @@ if __name__ == "__main__":
 
     configure_logging()
     app = create_app()
-    server = make_server(args.host, args.port, app, threaded=True)
+    server = make_server(addresses[0], args.port, app, threaded=True)
+    start_extra_listeners(addresses[1:], args.port, app)
     # Binding is the activation milestone.  Publish it before recovery/scanner
     # startup, whose initial read-only sweeps may legitimately take longer than
     # the controller handshake timeout.
