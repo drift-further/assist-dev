@@ -71,6 +71,7 @@ _classify(
 _classify(
     "fixed:observe",
     "routes/autoyes.py:_autoyes_scan_tick",
+    "routes/autoyes.py:_prompt_still_on_screen",
     "routes/autoyes.py:restore_autoyes_from_settings",
 )
 

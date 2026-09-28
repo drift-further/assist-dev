@@ -55,6 +55,10 @@ function _renderAyPickVal() {
         ? String(Math.round(_autoyesDelay * 1000))
         : String(_autoyesDelay);
     if (unitEl) unitEl.textContent = _autoyesDelay < 1 ? 'ms' : 'sec';
+    // Say what arming does, in the picker itself (review ux #7).
+    const hintEl = document.getElementById('ay-pick-hint');
+    if (hintEl) hintEl.textContent = "Answers this session's permission prompts after "
+        + (_autoyesDelay < 1 ? `${Math.round(_autoyesDelay * 1000)} ms.` : `${_autoyesDelay} s.`);
 }
 
 // Format a delay (seconds, possibly fractional) for flash messages.
@@ -71,7 +75,7 @@ function ayPickConfirm() {
     if (isAutoYes(session)) {
         _setAutoYesDelay(session, _autoyesDelay);  // already running — update delay
     } else {
-        _enableAutoYes(session, _autoyesDelay);     // off — enable with chosen delay
+        _setAutoYes(session, true, _autoyesDelay);  // off — enable with chosen delay
     }
 }
 
@@ -80,7 +84,7 @@ function ayPickTurnOff() {
     const session = target ? target.split(':')[0] : '';
     document.getElementById('autoyes-picker').classList.remove('visible');
     _autoyesPickerVisible = false;
-    if (session) _enableAutoYes(session, null);  // toggle off
+    if (session) _setAutoYes(session, false, null);
 }
 
 function ayPickCancel() {
@@ -108,11 +112,13 @@ async function _setAutoYesDelay(session, delay) {
     }
 }
 
-async function _enableAutoYes(session, delay) {
+// Absolute on/off (/autoyes/set). A toggle computed from this page's view of
+// the state turned Auto-Yes off when the view was stale and it meant on.
+async function _setAutoYes(session, enabled, delay) {
     try {
-        const body = { session };
+        const body = { session, enabled };
         if (delay !== null) body.delay = delay;
-        const resp = await fetch('/autoyes/toggle', {
+        const resp = await fetch('/autoyes/set', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(body),
@@ -122,7 +128,9 @@ async function _enableAutoYes(session, delay) {
             _autoyesState[session] = data.enabled;
             if (data.enabled && delay !== null) _autoyesDelays[session] = delay;
             else if (!data.enabled) delete _autoyesDelays[session];
-            showFlash('sent', data.enabled ? `Auto-Yes ON (${_fmtDelay(delay)})` : 'Auto-Yes OFF');
+            showFlash('sent', data.enabled
+                ? (delay !== null ? `Auto-Yes ON (${_fmtDelay(delay)})` : 'Auto-Yes ON')
+                : 'Auto-Yes OFF');
             updateAutoYesUI(session);
             _getSmartState(_termTarget).key = '';  // force re-render (toggle label changed)
             if (_termLatestContent) {
@@ -147,10 +155,10 @@ async function toggleAutoYes() {
         return;
     }
     // Global switch on: there is one delay and it is not this session's to
-    // pick, so the tap is a straight opt-out toggle with no picker.
+    // pick, so the tap sets the opposite of what the button shows, no picker.
     const target = _smartActionTarget || _termTarget;
     const session = target ? target.split(':')[0] : '';
-    if (session) _enableAutoYes(session, null);
+    if (session) _setAutoYes(session, !isAutoYes(session), null);
 }
 
 function updateAutoYesUI(session) {
@@ -192,16 +200,27 @@ async function syncAutoYesState() {
 
 async function cancelAutoYesCountdown() {
     if (!_autoyesCountdown) return;
+    // Only a cancel the server confirms clears the bar. This used to clear it
+    // and say "Cancelled" whatever came back, so a refused request (a 403, a
+    // dropped connection) looked like a stop while the answer still went out.
     try {
-        await fetch('/autoyes/cancel', {
+        const resp = await fetch('/autoyes/cancel', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ target: _autoyesCountdown.target }),
         });
+        const data = resp.ok ? await resp.json() : null;
+        if (!data || !data.ok) {
+            showFlash('error', 'Stop failed — answer the prompt by hand');
+            return;
+        }
         _autoyesCountdown = null;
         _renderAutoYesCountdown();
-        showFlash('sent', 'Cancelled');
-    } catch(e) {}
+        // cancelled:false means it had already fired or gone.
+        showFlash(data.cancelled ? 'sent' : 'error', data.cancelled ? 'Cancelled' : 'Too late — already answered');
+    } catch(e) {
+        showFlash('error', 'Stop failed — answer the prompt by hand');
+    }
 }
 
 // Handle autoyes WS messages from server
@@ -296,6 +315,11 @@ function _isAutoYesCandidate(result) {
 // holding at least two options.
 // Mirrors _option_region_start() in routes/autoyes.py.
 const _OPT_LOOKBACK = 60;
+// The server's detection depth (Settings → Auto-Yes → Detection Depth), refreshed
+// from every /poll so this file windows the pane exactly as the scanner does.
+// Every detection window in this file derives from it, as its server mirror does.
+let _detectionDepth = (typeof SETTINGS !== 'undefined' && SETTINGS && SETTINGS.autoyes
+    && SETTINGS.autoyes.detection_depth) || 8;
 const _OPT_RE = /^\s*(?:[^\d\s]\s*)?(\d+)[\.\)]\s+\S/;
 const _OPT_TEXT_RE = /^\s*(?:[^\d\s]\s*)?(\d+)[\.\)]\s+(.+)/;
 const _OPT_SEP_RE = /^[\s]*─{10,}/;
@@ -330,7 +354,7 @@ function _hasInternalDivider(lines, startIdx, endIdx) {
 }
 
 function _anchoredOptionRegionStart(lines, footerIdx) {
-    const floor = Math.max(0, footerIdx - _OPT_LOOKBACK);
+    const floor = Math.max(0, footerIdx - Math.max(_detectionDepth * 4, _OPT_LOOKBACK));
     for (let i = footerIdx - 1; i >= floor; i--) {
         if (!_OPT_SEP_RE.test(lines[i])) continue;
         // A separator that leaves fewer than two options below it is an
@@ -347,13 +371,29 @@ function _optionRegionStart(lines, footerIdx) {
 
 // Match routes/autoyes.py:_SELECTED_YES_RE inside the same live footer and
 // option-region bounds used by the server's numbered-menu branch.
-function _isSelectedYesMenu(lines, footerIdx) {
-    if (footerIdx < 0 || (lines.length - 1 - footerIdx) > 30) return false;
+// Whether the option block above the footer is split by a divider. Without a
+// top anchor only a rule BELOW a numbered option counts: that is a question
+// whose top rule scrolled away. A rule with no option above it is the block's
+// own top. Mirrors _has_internal_divider/_has_unanchored_divider in
+// routes/autoyes.py.
+function _blockHasDivider(lines, footerIdx) {
     const anchored = _anchoredOptionRegionStart(lines, footerIdx);
-    const startIdx = anchored >= 0
-        ? anchored
-        : Math.max(0, footerIdx - _OPT_LOOKBACK);
-    if (anchored >= 0 && _hasInternalDivider(lines, startIdx, footerIdx)) return false;
+    if (anchored >= 0) return _hasInternalDivider(lines, anchored, footerIdx);
+    let seenOption = false;
+    for (let i = _optionRegionStart(lines, footerIdx); i < footerIdx; i++) {
+        if (_OPT_SEP_RE.test(lines[i])) {
+            if (seenOption) return true;
+        } else if (_OPT_RE.test(lines[i])) {
+            seenOption = true;
+        }
+    }
+    return false;
+}
+
+function _isSelectedYesMenu(lines, footerIdx) {
+    if (footerIdx < 0 || (lines.length - 1 - footerIdx) > _detectionDepth * 4) return false;
+    const startIdx = _optionRegionStart(lines, footerIdx);
+    if (_blockHasDivider(lines, footerIdx)) return false;
     return _SELECTED_YES_RE.test(lines.slice(startIdx, footerIdx + 1).join('\n'));
 }
 
@@ -408,14 +448,14 @@ const SMART_PATTERNS = [
             // Mirrors _PERMISSION_YNA_MARKER_RE / _PERMISSION_YNA_DIALOG_RE in
             // routes/autoyes.py — keep the two in step.
             //
-            // Only the last 8 lines, which keeps answered prompts in scrollback
-            // out. Within that window the bare markers must END their line: a
+            // Only the last _detectionDepth lines, which keeps answered prompts
+            // in scrollback out. Within that window the bare markers must END their line: a
             // live prompt is the last thing written before the cursor waits,
             // whereas `(y/n/a)` quoted mid-line is an agent displaying a README,
             // a --help screen, or this repo's own source. The two full option
             // rows are joined with \s+ rather than .* for the same reason — `.*`
             // matched the regex source of the pattern itself.
-            const bottom = tail.split('\n').slice(-8).join('\n');
+            const bottom = tail.split('\n').slice(-_detectionDepth).join('\n');
             return /(?:\(y\/n\/a\)|\[Y\/n\/a\])[ \t]*$/im.test(bottom) ||
                    /Allow once\s+Always allow\s+Deny/i.test(bottom) ||
                    /Yes.*\(y\).*Always.*\(a\).*No.*\(n\)/i.test(bottom);
@@ -435,7 +475,7 @@ const SMART_PATTERNS = [
         // confirms. y/n keys (and Tab) do nothing — answers are key sequences.
         // Mirrors routes/autoyes.py:_OPENCODE_PERMISSION_RE.
         match: (tail) => {
-            const bottom = tail.split('\n').slice(-8).join('\n');
+            const bottom = tail.split('\n').slice(-_detectionDepth).join('\n');
             return /Allow once\s+Allow always\s+Reject/.test(bottom) &&
                    /Permission required/.test(tail);
         },
@@ -464,7 +504,7 @@ const SMART_PATTERNS = [
         // and the option row together rules out a match on displayed text.
         // Mirrors routes/autoyes.py:_CURSOR_PERMISSION_*.
         match: (tail) => {
-            const bottom = tail.split('\n').slice(-14).join('\n');
+            const bottom = tail.split('\n').slice(-Math.max(_detectionDepth, 14)).join('\n');
             return /Run this command\?/.test(bottom) &&
                    /Run \(once\)\s*\(y\)/.test(bottom);
         },
@@ -487,7 +527,7 @@ const SMART_PATTERNS = [
         // stray "a" into the TUI's input box.
         // Mirrors routes/autoyes.py:_CURSOR_TRUST_*.
         match: (tail) => {
-            const bottom = tail.split('\n').slice(-8).join('\n');
+            const bottom = tail.split('\n').slice(-Math.max(_detectionDepth, 8)).join('\n');
             return /\[a\] Trust this workspace/.test(bottom) &&
                    /Use arrow keys to navigate/.test(bottom);
         },
@@ -549,7 +589,7 @@ const SMART_PATTERNS = [
     // routes/autoyes.py::_detect_autoyes_prompt() and came back
     // ('numbered-yes', '', True, '$ <the command>') — the generic path below
     // already detects it, answers it correctly, and extracts a better summary
-    // than a bespoke pattern would. Note the comments at FOOTER_DEPTH_MAX and
+    // than a bespoke pattern would. Note the comments at the footer bound and
     // the region floor: this path was tuned FOR that dialog by an earlier
     // effort. Adding a second matcher would only give it something to disagree
     // with. (Untested and so not claimed either way: MCP and apply_patch
@@ -575,13 +615,12 @@ const SMART_PATTERNS = [
             // Find the LAST footer in tail. Claude Code renders its TodoWrite
             // status panel BELOW the prompt footer when tasks are active, so
             // the footer is often pushed 10-20 lines up from the bottom.
-            // Bound depth from bottom (~30 lines) to skip stale footers in
+            // Bound depth from bottom (depth*4 lines) to skip stale footers in
             // scrollback. Mirrors routes/autoyes.py:_detect_autoyes_prompt.
             // "Press enter to confirm" is codex's footer — no separator glyph
             // and different wording, so the other three forms all miss it.
-            const FOOTER_DEPTH_MAX = 30;
             const footerIdx = _findOptionFooter(lines);
-            if (footerIdx >= 0 && (lines.length - 1 - footerIdx) <= FOOTER_DEPTH_MAX) {
+            if (footerIdx >= 0 && (lines.length - 1 - footerIdx) <= _detectionDepth * 4) {
                 // The region floor is 60 lines, not 10. codex's "Yes, and don't
                 // ask again for commands that start with `<command>`" embeds the
                 // command and wraps 25-30 rows, pushing option 1 out of range so
@@ -598,7 +637,7 @@ const SMART_PATTERNS = [
             const lines = tail.split('\n');
             const footerIdx = _findOptionFooter(lines);
             if (footerIdx < 0) return false;
-            return _hasInternalDivider(lines, _optionRegionStart(lines, footerIdx), footerIdx);
+            return _blockHasDivider(lines, footerIdx);
         },
         getActions: (tail) => {
             const actions = [];

@@ -128,7 +128,7 @@ def _wait_with_autoyes(
     was_enabled = bool((status.get("sessions") or {}).get(session))
     try:
         if not was_enabled:
-            http.post("/autoyes/toggle", {"session": session})
+            http.post("/autoyes/set", {"session": session, "enabled": True})
         return wait_for(target, timeout, baseline_hash)
     finally:
         if not was_enabled:
@@ -137,7 +137,7 @@ def _wait_with_autoyes(
                 (restored_status.get("sessions") or {}).get(session)
             )
             if enabled:
-                http.post("/autoyes/toggle", {"session": session})
+                http.post("/autoyes/set", {"session": session, "enabled": False})
 
 
 def _timeout_label(timeout: float) -> str:
