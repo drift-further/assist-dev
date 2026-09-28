@@ -45,12 +45,39 @@ class _FakeIdentity:
         return {"pane_id": self.pane_id}
 
 
-def _make_venv(project_path, name=".venv"):
-    """Create the one file detect_venv() looks for."""
+def _make_venv(project_path, name=".venv", pyvenv_cfg=True):
+    """Create the file detect_venv() looks for, plus the marker a real venv has.
+
+    `pyvenv_cfg=False` is the shape of a cloned repo that merely ships an
+    `env/bin/activate` script: detected and badged, never sourced.
+    """
     activate = project_path / name / "bin" / "activate"
     activate.parent.mkdir(parents=True)
     activate.write_text("# fixture\n")
+    if pyvenv_cfg:
+        (project_path / name / "pyvenv.cfg").write_text("home = /usr/bin\n")
     return activate
+
+
+def _git(project_path, *args):
+    subprocess.run(
+        ["git", "-C", os.fspath(project_path), *args],
+        check=True,
+        capture_output=True,
+        env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull,
+             "GIT_CONFIG_NOSYSTEM": "1"},
+    )
+
+
+def _activate_recorded(project):
+    recorder = _SendRecorder()
+    with _switch("on"), patch.object(
+        tmux_shared, "tmux_send_text", side_effect=recorder.text
+    ), patch.object(
+        tmux_shared, "tmux_send_keys", side_effect=recorder.keys
+    ), patch.object(tmux_shared.time, "sleep"):
+        result = tmux_shared.activate_venv("s:0.0", project)
+    return result, recorder
 
 
 class _SendRecorder:
@@ -92,12 +119,58 @@ def _switch(value):
 class ActivateVenvHelperTests(unittest.TestCase):
     """The shared helper itself: what it sends, and when it stays silent."""
 
-    def test_shipped_default_is_on(self):
-        # The posture that regressed. Activation was unconditional before the
-        # switch existed, so the switch must not be what turns it off.
+    def test_shipped_default_is_off(self):
+        # A fresh install must not source shell code from a repo the user
+        # merely cloned into the projects dir (security review F2). An existing
+        # settings.json that says "on" keeps it: defaults fill only unset keys.
         self.assertEqual(
-            state.DEFAULT_SETTINGS["server"]["venv_auto_activate"], "on"
+            state.DEFAULT_SETTINGS["server"]["venv_auto_activate"], "off"
         )
+
+    def test_a_saved_on_survives_the_new_default(self):
+        merged = state._deep_merge(
+            state.DEFAULT_SETTINGS, {"server": {"venv_auto_activate": "on"}}
+        )
+        self.assertEqual(merged["server"]["venv_auto_activate"], "on")
+
+    def test_silent_without_pyvenv_cfg(self):
+        # `env/` is a common non-venv directory name. A bin/activate with no
+        # pyvenv.cfg beside it is a script somebody shipped, not a venv.
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            project.mkdir()
+            _make_venv(project, "env", pyvenv_cfg=False)
+            result, recorder = _activate_recorded(project)
+            self.assertIsNone(result)
+            self.assertEqual(recorder.log, [])
+            # Still detected, so the badge stays honest.
+            self.assertEqual(tmux_shared.detect_venv(project), "env")
+
+    def test_silent_when_git_tracks_the_venv(self):
+        # A venv committed to the repo arrived with the clone: its activate
+        # script is the repo author's code, not something this user built.
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            project.mkdir()
+            _make_venv(project)
+            _git(project, "init", "-q")
+            _git(project, "add", "-f", ".venv")
+            result, recorder = _activate_recorded(project)
+            self.assertIsNone(result)
+            self.assertEqual(recorder.log, [])
+
+    def test_activates_an_untracked_venv_inside_a_git_repo(self):
+        # The ordinary case: a project checkout with its own ignored .venv.
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            project.mkdir()
+            _make_venv(project)
+            _git(project, "init", "-q")
+            (project / "README").write_text("x\n")
+            _git(project, "add", "README")
+            result, recorder = _activate_recorded(project)
+            self.assertEqual(result, ".venv")
+            self.assertTrue(recorder.texts)
 
     def test_sends_absolute_quoted_source_then_enter(self):
         with tempfile.TemporaryDirectory() as tmp:
