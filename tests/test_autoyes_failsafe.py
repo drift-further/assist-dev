@@ -20,7 +20,11 @@ Run: .venv/bin/python3 -m unittest tests.test_autoyes_failsafe
 
 import copy
 import json
+import os
+import shutil
 import subprocess
+import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -188,12 +192,20 @@ class CancelStaysCancelledTests(_ScannerCase):
         self.tick(CLAUDE_YNA, now=102.0)
         self.assertEqual(self.countdown()["deadline"], 107.0)
 
-    def test_a_different_prompt_still_gets_its_own_countdown(self):
+    def test_a_cancel_holds_for_the_pane_until_it_shows_no_prompt(self):
+        """Judge2 #1: the cancel is per pane, not per identity, so nothing that
+        changes an identity mid-prompt can revive it. A different prompt that
+        replaces the cancelled one without a gap is left to the human too."""
         self.tick(CLAUDE_YNA, now=100.0)
         autoyes.cancel_countdown(self.TARGET)
         self.tick(OTHER_YNA, now=101.0)
-        self.assertEqual(self.countdown()["deadline"], 106.0)
-        self.tick(OTHER_YNA, now=106.0).assert_called_once()
+        self.assertIsNone(self.countdown())
+        self.tick(OTHER_YNA, now=200.0).assert_not_called()
+        # Once the pane has shown no prompt, the next one is armed as usual.
+        self.tick(IDLE, now=201.0)
+        self.tick(OTHER_YNA, now=202.0)
+        self.assertEqual(self.countdown()["deadline"], 207.0)
+        self.tick(OTHER_YNA, now=207.0).assert_called_once()
 
     def test_a_failed_probe_skips_the_tick_and_keeps_the_countdown(self):
         self.tick(CLAUDE_YNA, now=100.0)
@@ -220,6 +232,170 @@ class CancelStaysCancelledTests(_ScannerCase):
         self.assertTrue(autoyes.autoyes_will_consider(self.TARGET, True, "global", "claude", "claude"))
         autoyes.cancel_countdown(self.TARGET)
         self.assertFalse(autoyes.autoyes_will_consider(self.TARGET, True, "global", "claude", "claude"))
+
+
+@unittest.skipUnless(shutil.which("tmux"), "needs a tmux binary")
+class RealCaptureIdentityTests(unittest.TestCase):
+    """Judge2 #1 on real captures: a pane that scrolls or resizes under an
+    unchanged approval. The scanner runs its own tmux argv against a throwaway
+    server (never the ambient one); only process identity, the park's pane
+    probe and the final keystroke delivery are stubbed.
+    """
+
+    SESSION = "cdx"
+    TARGET = "cdx:0.0"
+
+    def setUp(self):
+        for name in ("autoyes_sessions", "autoyes_countdowns", "autoyes_answered",
+                     "autoyes_delays", "autoyes_cancelled", "autoyes_effective"):
+            p = patch.dict(getattr(state, name), clear=True)
+            p.start()
+            self.addCleanup(p.stop)
+        state.autoyes_sessions[self.SESSION] = True
+        self.tmpdir = tempfile.mkdtemp(prefix="assist-ayid-", dir="/tmp")
+        self.addCleanup(shutil.rmtree, self.tmpdir, ignore_errors=True)
+        env = patch.dict(os.environ, {"TMUX_TMPDIR": self.tmpdir})
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("TMUX", None)  # else bare tmux calls reach the real server
+        directory = Path(self.tmpdir) / f"tmux-{os.getuid()}"
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.socket = str((directory / "default").resolve())
+        self.assertNotEqual(self.socket, str(Path(f"/tmp/tmux-{os.getuid()}/default").resolve()))
+        self.addCleanup(subprocess.run, ["tmux", "-S", self.socket, "kill-server"],
+                        check=False, capture_output=True, timeout=5)
+
+    def tmux(self, *args):
+        return subprocess.run(["tmux", "-S", self.socket, *args], check=True,
+                              capture_output=True, text=True, timeout=5).stdout
+
+    def start(self, dialog, kind):
+        """The reviewer's pane: 160x24, 200 rows of history, a dialog, a status
+        row, then `cat` with echo off so rows can be appended below it."""
+        self.kind = kind
+        body = Path(self.tmpdir) / "pane.txt"
+        body.write_text("\n".join(f"old history {i:03d}" for i in range(200)) + "\n"
+                        + dialog + "\n  Working (3s)")
+        self.tmux("new-session", "-d", "-s", self.SESSION, "-x", "160", "-y", "24",
+                  f"sh -c 'cat {body}; stty -echo; exec cat'")
+        self.pane_id = self.tmux("display-message", "-p", "-t", self.SESSION, "#{pane_id}").strip()
+        self.settle("Working (3s)")
+
+    def settle(self, text):
+        for _ in range(50):
+            if text in self.tmux("capture-pane", "-p", "-t", self.SESSION):
+                return
+            time.sleep(0.05)
+        self.fail(f"pane never showed {text!r}")
+
+    def append_row(self, text):
+        self.tmux("send-keys", "-t", self.SESSION, "-l", "\n" + text)
+        self.tmux("send-keys", "-t", self.SESSION, "Enter")
+        self.settle(text)
+
+    def resize(self, rows):
+        self.tmux("resize-window", "-t", self.SESSION, "-y", str(rows))
+        for _ in range(50):
+            if self.tmux("display-message", "-p", "-t", self.SESSION, "#{pane_height}").strip() == str(rows):
+                return
+            time.sleep(0.05)
+        self.fail("pane never resized")
+
+    def settings(self, section, key, *args, **kwargs):
+        if (section, key) == ("autoyes", "all_sessions"):
+            return "off"
+        if (section, key) == ("autoyes", "detection_depth"):
+            return 8
+        return state.DEFAULT_SETTINGS[section][key]
+
+    def tick(self, now):
+        identity = SimpleNamespace(as_dict=lambda: {"pane_id": self.pane_id})
+        with patch("routes.autoyes.time.time", return_value=now), patch(
+            "routes.autoyes.resolve_process", return_value=self.kind
+        ), patch("routes.autoyes.refine_with_content", return_value=self.kind), patch(
+            "routes.autoyes.state.autoyes_enabled_for", return_value=(True, "explicit")
+        ), patch("routes.autoyes.state.get_setting", side_effect=self.settings), patch(
+            "routes.autoyes.state.get_project_setting", side_effect=lambda *_a: 5
+        ), patch("routes.autoyes.expected_target_identity", return_value=identity), patch(
+            "routes.autoyes.broadcast_autoyes_event"
+        ), patch(
+            "routes.autoyes.generation_bound_delivery", return_value=DeliveryResult("delivered")
+        ) as deliver:
+            autoyes._autoyes_scan_tick()
+        return deliver
+
+    def countdown(self):
+        return state.autoyes_countdowns.get(self.TARGET)
+
+    CLAUDE_DIALOG = "\n".join([
+        "● Bash(git status)",
+        "─" * 100,
+        " Bash command",
+        "",
+        "   git status",
+        "   Show working tree status",
+        "",
+        " Do you want to proceed?",
+        " ❯ 1. Yes",
+        "   2. Yes, and don't ask again for git status commands",
+        "   3. No, and tell Claude what to do differently (esc)",
+        "",
+        " Esc to cancel · Tab to amend",
+    ])
+
+    def changes(self):
+        return {
+            "a row appended below the footer": lambda: self.append_row("  Working (4s)"),
+            "a resize from 24 to 25 rows": lambda: self.resize(25),
+        }
+
+    def test_the_captures_really_move_while_the_dialog_does_not(self):
+        """The reviewer's observation, reproduced: the capture's first row moves."""
+        for name, change in self.changes().items():
+            with self.subTest(name):
+                self.tearDown_pane()
+                self.start(CODEX, "codex")
+                argv = ["tmux", "capture-pane", "-p", "-t", self.TARGET,
+                        "-S", f"-{autoyes.detection_window_lines(8)}"]
+                before = subprocess.run(argv, capture_output=True, text=True).stdout
+                change()
+                after = subprocess.run(argv, capture_output=True, text=True).stdout
+                self.assertNotEqual(before.split("\n")[0], after.split("\n")[0])
+                self.assertIn(CODEX.strip(), before)
+                self.assertIn(CODEX.strip(), after)
+
+    def tearDown_pane(self):
+        """A fresh pane and fresh Auto-Yes state for the next subtest."""
+        subprocess.run(["tmux", "-S", self.socket, "kill-session", "-t", self.SESSION],
+                       capture_output=True, timeout=5)
+        for name in ("autoyes_countdowns", "autoyes_answered", "autoyes_cancelled"):
+            getattr(state, name).clear()
+
+    def test_an_unchanged_approval_fires_on_its_original_deadline(self):
+        for dialog, kind in ((CODEX, "codex"), (self.CLAUDE_DIALOG, "claude")):
+            for name, change in self.changes().items():
+                with self.subTest(kind=kind, change=name):
+                    self.tearDown_pane()
+                    self.start(dialog, kind)
+                    self.tick(100.0).assert_not_called()
+                    self.assertEqual(self.countdown()["deadline"], 105.0)
+                    change()
+                    self.tick(102.0).assert_not_called()
+                    self.assertEqual(self.countdown()["deadline"], 105.0)
+                    self.tick(105.0).assert_called_once()
+
+    def test_a_cancelled_approval_stays_cancelled(self):
+        for name, change in self.changes().items():
+            with self.subTest(change=name):
+                self.tearDown_pane()
+                self.start(CODEX, "codex")
+                self.tick(100.0)
+                with patch("routes.autoyes.broadcast_autoyes_event"):
+                    self.assertTrue(autoyes.cancel_countdown(self.TARGET))
+                change()
+                for now in (101.0, 106.0, 200.0):
+                    self.tick(now).assert_not_called()
+                self.assertIsNone(self.countdown())
 
 
 class RecheckBeforeSendTests(_ScannerCase):
@@ -267,13 +443,34 @@ class RecheckBeforeSendTests(_ScannerCase):
         self.tick(LONG_PRODUCTION, now=105.0, kind="codex").assert_not_called()
         self.tick(LONG_PRODUCTION, now=108.0, kind="codex").assert_called_once()
 
-    def test_cancelling_a_long_approval_does_not_cancel_its_replacement(self):
+    def test_cancelling_a_long_approval_withholds_its_replacement_too(self):
+        # Was "does not cancel its replacement". A cancel now holds for the
+        # pane until no prompt is seen (judge2 #1): withholding is the safe way
+        # to be wrong, and the human is already at this pane.
         self.tick(LONG_STAGING, now=100.0, kind="codex")
         autoyes.cancel_countdown(self.TARGET)
-        self.tick(LONG_STAGING, now=101.0, kind="codex")
-        self.assertIsNone(self.countdown())
         self.tick(LONG_PRODUCTION, now=102.0, kind="codex")
-        self.assertEqual(self.countdown()["deadline"], 107.0)
+        self.assertIsNone(self.countdown())
+        self.tick(LONG_PRODUCTION, now=200.0, kind="codex").assert_not_called()
+
+    def test_the_request_identity_covers_the_command_and_stops_at_the_footer(self):
+        self.assertNotEqual(autoyes._prompt_identity(LONG_STAGING, "numbered-yes", "codex"),
+                            autoyes._prompt_identity(LONG_PRODUCTION, "numbered-yes", "codex"))
+        history = "\n".join(f"old history {i:03d}" for i in range(40))
+        self.assertEqual(
+            autoyes._prompt_identity(history + "\n" + LONG_STAGING + "\n  Working (3s)",
+                                     "numbered-yes", "codex"),
+            autoyes._prompt_identity("\n".join(history.split("\n")[7:]) + "\n" + LONG_STAGING
+                                     + "\n  Working (9s)\n  Working (10s)", "numbered-yes", "codex"),
+        )
+
+    def test_a_request_whose_top_is_out_of_view_is_withheld(self):
+        # The header scrolled out of the window: the command cannot be read.
+        headless = LONG_STAGING.split("\n", 1)[1]
+        self.assertIsNone(autoyes._prompt_identity(headless, "numbered-yes", "codex"))
+        self.tick(headless, now=100.0, kind="codex")
+        self.assertIsNone(self.countdown())
+        self.tick(headless, now=200.0, kind="codex").assert_not_called()
 
     def test_an_unchanged_long_approval_still_fires(self):
         self.tick(LONG_STAGING, now=100.0, kind="codex")
@@ -286,7 +483,8 @@ class RecheckBeforeSendTests(_ScannerCase):
         deliver.assert_called_once()
 
     def test_a_request_that_cannot_be_established_is_withheld(self):
-        self.assertIsNone(autoyes._prompt_identity("no prompt terminator on this screen"))
+        self.assertIsNone(autoyes._prompt_identity("no prompt terminator on this screen",
+                                                   "confirm-yn", "shell"))
         with patch("routes.autoyes._prompt_identity", return_value=None):
             self.tick(LONG_STAGING, now=100.0, kind="codex")
             self.assertIsNone(self.countdown())

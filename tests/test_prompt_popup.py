@@ -473,13 +473,16 @@ class AutoYesCountdownIdentityTests(unittest.TestCase):
         self.assertEqual(countdown["prompt_type"], "ssh-host-key")
         self.assertEqual(countdown["deadline"], 110.0)
 
-    def test_a_cancelled_old_prompt_does_not_suppress_the_new_one(self):
+    def test_a_cancelled_old_prompt_holds_the_pane_until_no_prompt_is_seen(self):
+        # Was "does not suppress the new one". A cancel now holds for the pane
+        # until detection sees no prompt (judge2 #1), so the new prompt waits
+        # for the human rather than inheriting or escaping the cancel.
         self.tick(CLAUDE_YNA, now=100.0)
         with patch("routes.autoyes.broadcast_autoyes_event"):
             self.assertTrue(autoyes.cancel_countdown(self.TARGET))
         self.tick(SSH_AFTER_YNA, now=101.0).assert_not_called()
-        countdown = state.autoyes_countdowns[self.TARGET]
-        self.assertEqual(countdown["prompt_type"], "ssh-host-key")
+        self.assertNotIn(self.TARGET, state.autoyes_countdowns)
+        self.tick(SSH_AFTER_YNA, now=200.0).assert_not_called()
 
     def test_the_same_prompt_still_fires_at_its_deadline(self):
         self.tick(CLAUDE_YNA, now=100.0).assert_not_called()

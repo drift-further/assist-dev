@@ -741,8 +741,8 @@ autoyes_lock = threading.Lock()
 autoyes_countdowns = (
     {}
 )  # target -> { "prompt_hash", "deadline", "delay", "prompt_type", ... }
-# target -> {(prompt_hash, prompt_type), ...}: prompts the human cancelled, by
-# routes/autoyes.py:_prompt_identity of the whole request. Kept
+# target -> {(prompt identity, prompt_type), ...}: a pane whose countdown the
+# human cancelled. Any entry holds the WHOLE pane unanswered. Kept
 # apart from the countdown, which a tick can drop, and cleared only when the
 # scanner sees no prompt on that pane.
 autoyes_cancelled = {}
