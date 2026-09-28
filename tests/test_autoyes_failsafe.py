@@ -19,6 +19,7 @@ Run: .venv/bin/python3 -m unittest tests.test_autoyes_failsafe
 """
 
 import copy
+import json
 import subprocess
 import unittest
 from pathlib import Path
@@ -342,6 +343,53 @@ class AbsoluteSetTests(unittest.TestCase):
         body = monitor[monitor.index("async function loadProjectSettings"):
                        monitor.index("function renderProjectSettings")]
         self.assertNotIn("AutoYes(", body)
+
+
+_CANCEL_HARNESS = r"""
+const fs = require('fs');
+const vm = require('vm');
+globalThis.SETTINGS = {autoyes: {default_delay: 5}};
+globalThis.flashes = [];
+globalThis.showFlash = (kind, text) => flashes.push([kind, text]);
+globalThis.document = {getElementById: () => null};
+const [status, body] = JSON.parse(process.argv[1]);
+globalThis.fetch = async () => ({ok: status === 200, json: async () => body});
+vm.runInThisContext(fs.readFileSync('js/actions.js', 'utf8'), {filename: 'js/actions.js'});
+vm.runInThisContext("_autoyesCountdown = {target: 'fs:0.0', remaining: 3, delay: 5}");
+(async () => {
+    await cancelAutoYesCountdown();
+    console.log(JSON.stringify({kept: vm.runInThisContext('_autoyesCountdown') !== null, flashes}));
+})();
+"""
+
+
+def _cancel_in_browser(status, body):
+    result = subprocess.run(
+        ["node", "-e", _CANCEL_HARNESS, json.dumps([status, body])],
+        cwd=ROOT, text=True, capture_output=True, check=False,
+    )
+    if result.returncode:
+        raise AssertionError(result.stdout + result.stderr)
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+class StopIsHonestTests(unittest.TestCase):
+    """Found on a live run: a refused /autoyes/cancel (403) hid the bar and
+    flashed "Cancelled" while the scanner went on to answer."""
+
+    def test_a_refused_cancel_keeps_the_bar_and_says_so(self):
+        got = _cancel_in_browser(403, {"ok": False})
+        self.assertTrue(got["kept"])
+        self.assertEqual(got["flashes"][0][0], "error")
+
+    def test_a_confirmed_cancel_clears_the_bar(self):
+        got = _cancel_in_browser(200, {"ok": True, "cancelled": True})
+        self.assertFalse(got["kept"])
+        self.assertEqual(got["flashes"], [["sent", "Cancelled"]])
+
+    def test_a_cancel_that_came_too_late_says_so(self):
+        got = _cancel_in_browser(200, {"ok": True, "cancelled": False})
+        self.assertEqual(got["flashes"][0][0], "error")
 
 
 class StopTargetTests(unittest.TestCase):

@@ -200,16 +200,27 @@ async function syncAutoYesState() {
 
 async function cancelAutoYesCountdown() {
     if (!_autoyesCountdown) return;
+    // Only a cancel the server confirms clears the bar. This used to clear it
+    // and say "Cancelled" whatever came back, so a refused request (a 403, a
+    // dropped connection) looked like a stop while the answer still went out.
     try {
-        await fetch('/autoyes/cancel', {
+        const resp = await fetch('/autoyes/cancel', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ target: _autoyesCountdown.target }),
         });
+        const data = resp.ok ? await resp.json() : null;
+        if (!data || !data.ok) {
+            showFlash('error', 'Stop failed — answer the prompt by hand');
+            return;
+        }
         _autoyesCountdown = null;
         _renderAutoYesCountdown();
-        showFlash('sent', 'Cancelled');
-    } catch(e) {}
+        // cancelled:false means it had already fired or gone.
+        showFlash(data.cancelled ? 'sent' : 'error', data.cancelled ? 'Cancelled' : 'Too late — already answered');
+    } catch(e) {
+        showFlash('error', 'Stop failed — answer the prompt by hand');
+    }
 }
 
 // Handle autoyes WS messages from server
