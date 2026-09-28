@@ -149,6 +149,22 @@ def _check_command(name: str, command: str, required: bool = False) -> bool:
     return True
 
 
+def _print_origins(port: int) -> None:
+    """Show the origins the server will accept, from the same code it uses."""
+    from shared import security
+
+    security.configure(port)
+    loopback = {f"http://localhost:{port}", f"http://127.0.0.1:{port}"}
+    for origin in sorted(security.ALLOWED_ORIGINS):
+        print(f"  {MARK_OK} origin {origin}")
+    if set(security.ALLOWED_ORIGINS) <= loopback:
+        print(
+            f"  {MARK_WARN} only loopback origins — a phone's sign-in will be "
+            "refused. Add its address to ASSIST_ALLOWED_ORIGINS in .env "
+            "(e.g. http://<lan-ip>:" + str(port) + "), then `assist restart`"
+        )
+
+
 def doctor(resolved: Config) -> int:
     ok_all = True
 
@@ -208,6 +224,10 @@ def doctor(resolved: Config) -> int:
     else:
         print(f"  {MARK_FAIL} data directory NOT writable ({resolved.home})")
         ok_all = False
+
+    print()
+    print("Access:")
+    _print_origins(resolved.port)
 
     print()
     print("Server:")

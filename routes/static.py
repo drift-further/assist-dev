@@ -172,6 +172,31 @@ _LOGIN_PAGE = """<!DOCTYPE html>
 </form></body></html>"""
 
 
+def _login_request_ui():
+    ip = client_ip(request)
+    if ip_in_scope(ip):
+        return _REQUEST_UI
+    return (
+        '<div class="req-sep">or</div>'
+        '<div class="req-state">Approval requests aren\'t available from '
+        "your network (" + html.escape(ip or "unknown") + ").</div>"
+    )
+
+
+def login_origin_refused(origin):
+    """The sign-in page, saying why a POST from this origin was refused.
+
+    Called by the Origin guard (shared/security.py) in place of its JSON 403,
+    which a phone shows as a bare error page that looks like a bad token.
+    """
+    error = (
+        "This address (<code>" + html.escape(origin or "") + "</code>) isn't in "
+        "<code>ASSIST_ALLOWED_ORIGINS</code>. Add it to <code>.env</code> on the "
+        "host, then run <code>assist restart</code>."
+    )
+    return _LOGIN_PAGE.format(error=error, request_ui=_login_request_ui()), 403
+
+
 @static_bp.route("/login", methods=["GET", "POST"])
 def login():
     """Exchange the shared secret for a long-lived cookie."""
@@ -184,15 +209,7 @@ def login():
     # deploy, and the one fact needed to tell them apart — which IP arrived —
     # is only visible here. The address is the visitor's own, so naming it
     # discloses nothing they do not already know.
-    ip = client_ip(request)
-    if ip_in_scope(ip):
-        request_ui = _REQUEST_UI
-    else:
-        request_ui = (
-            '<div class="req-sep">or</div>'
-            '<div class="req-state">Approval requests aren\'t available from '
-            "your network (" + html.escape(ip or "unknown") + ").</div>"
-        )
+    request_ui = _login_request_ui()
     if request.method == "GET":
         return _LOGIN_PAGE.format(error="", request_ui=request_ui)
     if not token_matches(request.form.get("token")):
