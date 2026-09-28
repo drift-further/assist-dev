@@ -16,6 +16,7 @@ from flask import Blueprint, jsonify, request
 
 from routes.poll import _find_project_dir
 from shared import state
+from shared.tmux import tmux_exact_target
 from shared.studio_client import client
 
 studio_bp = Blueprint("studio", __name__)
@@ -243,7 +244,7 @@ def _pane_cwd(target):
         return None
     try:
         proc = subprocess.run(
-            ["tmux", "display-message", "-t", target, "-p", "#{pane_current_path}"],
+            ["tmux", "display-message", "-t", tmux_exact_target(target), "-p", "#{pane_current_path}"],
             capture_output=True, text=True, timeout=3,
         )
         if proc.returncode == 0 and proc.stdout.strip():

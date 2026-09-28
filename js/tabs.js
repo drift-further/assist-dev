@@ -5,6 +5,22 @@ const _TAB_LONG_PRESS_MS = 500;
 let _tabLongPressTimer = null;
 let _tabContextTarget = null;
 
+// Move the view onto a session's new name. Through selectTab, so the stream
+// re-subscribes and /terminal/target is re-posted; a bare _termTarget write left
+// the view frozen on the dead name. Marked as chosen and created, so a /poll
+// already in flight (listing the old name) cannot drop us on the first tab.
+// _termTarget moves first: it is the same tab, so the composer and its draft stay
+// put rather than being flushed to a name that no longer exists.
+function _followRenamedSession(oldSession, newSession) {
+    const oldPrefix = oldSession + ':';
+    if (!_termTarget || !_termTarget.startsWith(oldPrefix)) return;
+    const target = newSession + ':' + _termTarget.slice(oldPrefix.length);
+    _termTarget = target;
+    _lastTabTapTime = 0;   // not a tap: never read as a double-tap clear
+    noteTargetChosen(target, true);
+    selectTab(target, true);
+}
+
 // A tab button now holds a second line (.tab-model) plus its badges, so its raw
 // textContent is no longer the label. Everything that wants the label goes here.
 function _tabLabelText(tab) {
@@ -182,17 +198,10 @@ function _createContextMenu(tab, x, y) {
             body: JSON.stringify({session: session, name: newName.trim()}),
         }).then(r => r.json()).then(data => {
             if (data.ok) {
-                // Pin/order/snooze refs are rewritten server-side (see
-                // routes/terminal.py: terminal_rename), so every device gets the
-                // fix-up; the poll below brings the new doc down.
-                const oldPrefix = session + ':';
-                const newPrefix = data.new + ':';
-                // Update active target
-                if (_termTarget && _termTarget.startsWith(oldPrefix)) {
-                    _termTarget = newPrefix + _termTarget.slice(oldPrefix.length);
-                    try { localStorage.setItem('term_target', _termTarget); } catch(e) {}
-                    updateTmuxIndicator();
-                }
+                // Pin/order/snooze, drafts and Auto-Yes are re-keyed server-side
+                // (routes/terminal.py: on_session_renamed), so every device gets
+                // the fix-up; the poll below brings the new doc down.
+                _followRenamedSession(session, data.new);
                 showFlash('sent', 'Renamed to ' + data.new);
                 consolidatedPoll();
             } else {

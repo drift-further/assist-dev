@@ -313,6 +313,22 @@ def _save_project_settings_locked():
         pass
 
 
+def rename_project_settings(old, new):
+    """Move a session's overrides to its new name (routes/terminal.py:on_session_renamed).
+
+    Keyed by session name, so a rename used to strand them: an Auto-Yes opt-out
+    stayed behind under the old name while the global switch armed the new one.
+    Moved, not copied, so a later session reusing the old name starts clean.
+    """
+    if not old or not new or old == new:
+        return
+    with _project_settings_lock:
+        if old not in _project_settings:
+            return
+        _project_settings[new] = _project_settings.pop(old)
+        _save_project_settings_locked()
+
+
 def get_project_settings(project):
     """Return merged defaults + project overrides (deep copy)."""
     with _project_settings_lock:

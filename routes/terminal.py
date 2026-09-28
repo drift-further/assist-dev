@@ -22,6 +22,7 @@ from shared.tmux import (
     create_tmux_session,
     detect_venv,
     expected_target_identity,
+    pane_tab_target,
     prettify_command,
     record_tmux_adoption,
     tmux_exact_target,
@@ -29,6 +30,8 @@ from shared.tmux import (
     tmux_send_text,
     tmux_target_exists,
 )
+from routes.autoyes import rename_autoyes_session
+from routes.commands import rename_command_pane
 
 terminal_bp = Blueprint("terminal_bp", __name__)
 KILL_AUDIT_FILE = state.DATA_DIR / "kill-audit.log"
@@ -161,15 +164,17 @@ def terminal_launch():
 
 
 def _existing_terminal_effect(session_name):
+    # The session's active pane, by exact name: `name:0.0` does not exist
+    # under base-index 1, and adoption then failed with target_absent.
     adoption = record_tmux_adoption(
-        f"{session_name}:0.0",
+        tmux_exact_target(session_name),
         surface="existing_terminal",
-        diagnostic_alias=f"{session_name}:0.0",
+        diagnostic_alias=f"{session_name}:",
     )
     if not adoption.ok:
         return jsonify({"ok": False, "error": adoption.status}), 409
-    state.tmux_target = f"{session_name}:0.0"
     identity = adoption.identity
+    state.tmux_target = pane_tab_target(identity.pane_id)
     return jsonify(
         {
             "ok": True,
@@ -190,7 +195,7 @@ def _terminal_launch_effect(project_path, session_name, cols, rows, init_cmd):
         cols=cols,
         rows=rows,
         surface="fresh_terminal",
-        diagnostic_alias=f"{session_name}:0.0",
+        diagnostic_alias=f"{session_name}:",
     )
     if not created.ok:
         return (
@@ -204,7 +209,7 @@ def _terminal_launch_effect(project_path, session_name, cols, rows, init_cmd):
             "tmux",
             "set-option",
             "-t",
-            session_name,
+            identity.session_id,
             "history-limit",
             str(state.get_setting("terminal", "tmux_history_limit")),
         ],
@@ -214,21 +219,23 @@ def _terminal_launch_effect(project_path, session_name, cols, rows, init_cmd):
 
     for var in state.CLAUDE_ENV_VARS:
         subprocess.run(
-            ["tmux", "set-environment", "-t", session_name, "-r", var],
+            ["tmux", "set-environment", "-t", identity.session_id, "-r", var],
             capture_output=True,
             timeout=5,
         )
 
     venv = detect_venv(project_path)
+    # Delivered to the created pane's id, never `name:0.0`: under base-index 1
+    # there is no window 0, and the venv and init command silently went nowhere.
     # Activation goes BEFORE the init command, so the init command runs inside
     # the venv -- that ordering is the whole point of activating at all.
-    activated = activate_venv(f"{session_name}:0.0", project_path)
+    activated = activate_venv(identity.pane_id, project_path)
     if init_cmd:
-        tmux_send_text(f"{session_name}:0.0", init_cmd)
-        tmux_send_keys(f"{session_name}:0.0", "Enter")
+        tmux_send_text(identity.pane_id, init_cmd)
+        tmux_send_keys(identity.pane_id, "Enter")
         time.sleep(0.3)
 
-    state.tmux_target = f"{session_name}:0.0"
+    state.tmux_target = pane_tab_target(identity.pane_id)
     return jsonify(
         {
             "ok": True,
@@ -616,6 +623,27 @@ def terminal_clear():
     return jsonify({"ok": True, "target": target})
 
 
+def on_session_renamed(old, new):
+    """Carry everything keyed by a session's name across a rename.
+
+    Server-side, so every connected device sees the fix-up, not just the one
+    that issued the rename. Covers the active target, pin/order/snooze, composer
+    drafts, the saved-command split, and Auto-Yes (runtime maps and persisted
+    project settings). Auto-Yes was the one left behind: an opted-out session
+    renamed under the all-sessions switch was auto-answered again. A rename done
+    in a shell (`prefix $`) does not pass through here.
+    """
+    if not old or not new or old == new:
+        return
+    if state.tmux_target and state.tmux_target.startswith(f"{old}:"):
+        state.tmux_target = new + state.tmux_target[len(old) :]
+    tab_state.rename_session(old, new)
+    drafts.rename_session(old, new)
+    rename_command_pane(old, new)
+    state.rename_project_settings(old, new)
+    rename_autoyes_session(old, new)
+
+
 @terminal_bp.route("/terminal/rename", methods=["POST"])
 def terminal_rename():
     """Rename a tmux session."""
@@ -641,16 +669,7 @@ def terminal_rename():
             500,
         )
 
-    # Update active target if it pointed to the old session
-    if state.tmux_target and state.tmux_target.startswith(f"{old_name}:"):
-        suffix = state.tmux_target[len(old_name) :]
-        state.tmux_target = new_name + suffix
-
-    # Carry pin/order/snooze and any composer drafts across the rename.
-    # Server-side, so every connected device sees the fix-up, not just the one
-    # that issued the rename.
-    tab_state.rename_session(old_name, new_name)
-    drafts.rename_session(old_name, new_name)
+    on_session_renamed(old_name, new_name)
 
     return jsonify(
         {"ok": True, "old": old_name, "new": new_name, "target": state.tmux_target}
@@ -766,7 +785,7 @@ def _terminal_duplicate_effect(new_name, cwd, cols, rows, init_cmd):
         cols=cols,
         rows=rows,
         surface="duplicate",
-        diagnostic_alias=f"{new_name}:0.0",
+        diagnostic_alias=f"{new_name}:",
     )
     if not created.ok:
         return (
@@ -780,7 +799,7 @@ def _terminal_duplicate_effect(new_name, cwd, cols, rows, init_cmd):
             "tmux",
             "set-option",
             "-t",
-            new_name,
+            identity.session_id,
             "history-limit",
             str(state.get_setting("terminal", "tmux_history_limit")),
         ],
@@ -791,22 +810,22 @@ def _terminal_duplicate_effect(new_name, cwd, cols, rows, init_cmd):
     # Strip Claude environment variables (same as terminal_launch)
     for var in state.CLAUDE_ENV_VARS:
         subprocess.run(
-            ["tmux", "set-environment", "-t", new_name, "-r", var],
+            ["tmux", "set-environment", "-t", identity.session_id, "-r", var],
             capture_output=True,
             timeout=5,
         )
 
     project_path = Path(cwd)
     venv = detect_venv(project_path) if project_path.is_dir() else None
-    activated = activate_venv(f"{new_name}:0.0", project_path)
+    activated = activate_venv(identity.pane_id, project_path)
 
     # Run the configured session initialization command.
     if init_cmd:
-        tmux_send_text(f"{new_name}:0.0", init_cmd)
-        tmux_send_keys(f"{new_name}:0.0", "Enter")
+        tmux_send_text(identity.pane_id, init_cmd)
+        tmux_send_keys(identity.pane_id, "Enter")
         time.sleep(0.3)
 
-    target = f"{new_name}:0.0"
+    target = pane_tab_target(identity.pane_id)
     state.tmux_target = target
 
     return jsonify(
@@ -860,10 +879,11 @@ def _terminal_run_init_effect(session, init_cmd):
 
     # Exact-match the session here too — it could die between the has-session
     # check above and the sends, and a bare name would prefix-match another
-    # live session.
-    target = f"={session}:0.0"
-    tmux_send_text(target, init_cmd)
-    tmux_send_keys(target, "Enter")
+    # live session. `=name:` is its active pane; `:0.0` does not exist under
+    # base-index 1.
+    target = tmux_exact_target(session)
+    if not (tmux_send_text(target, init_cmd) and tmux_send_keys(target, "Enter")):
+        return jsonify({"ok": False, "error": "Could not send the init command"}), 500
 
     return jsonify({"ok": True, "init_cmd": init_cmd})
 

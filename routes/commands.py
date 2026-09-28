@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import threading
 import time
 
 from flask import Blueprint, jsonify, request
@@ -11,6 +12,8 @@ from shared import execution_park as park
 from shared.tmux import (
     activate_venv,
     create_tmux_split,
+    pane_tab_target,
+    tmux_exact_target,
     tmux_send_keys,
     tmux_send_text,
 )
@@ -121,6 +124,52 @@ def run_command():
     return result
 
 
+# session name -> pane id of the split /api/commands/run created there. Stop,
+# rerun and the alive check act on this pane only. It used to be `session:0.1`,
+# which is the MAIN pane under pane-base-index 1, a split the user made
+# themselves at tmux's defaults, and nothing at all under base-index 1. In
+# memory: after a restart there is no command pane to kill, which is the safe
+# way to forget one.
+_command_panes = {}
+_command_panes_lock = threading.Lock()
+
+
+def rename_command_pane(old, new):
+    """Carry a session's command pane across a rename (see on_session_renamed)."""
+    with _command_panes_lock:
+        if old in _command_panes:
+            _command_panes[new] = _command_panes.pop(old)
+
+
+def _pane_in_session(pane_id, session):
+    """True when `pane_id` is alive and still belongs to `session`."""
+    proc = subprocess.run(
+        ["tmux", "display-message", "-p", "-t", pane_id,
+         "#{pane_id}\t#{session_name}"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    # display-message exits 0 with empty fields for a missing pane, so check
+    # the id came back rather than trusting the return code.
+    return proc.returncode == 0 and proc.stdout.rstrip("\n") == f"{pane_id}\t{session}"
+
+
+def _kill_command_pane(session):
+    """Kill the split this route created in `session`, and nothing else."""
+    with _command_panes_lock:
+        pane_id = _command_panes.pop(session, None)
+    if not pane_id or not _pane_in_session(pane_id, session):
+        return True, ""
+    proc = subprocess.run(
+        ["tmux", "kill-pane", "-t", pane_id],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    return proc.returncode == 0, proc.stderr
+
+
 def _run_command_effect():
     """Complete saved/request command unit under the decision lock."""
     data = request.get_json(silent=True) or {}
@@ -131,20 +180,14 @@ def _run_command_effect():
     if not session or not cmd:
         return jsonify({"ok": False, "error": "session and cmd required"}), 400
 
-    target_pane = f"{session}:0.1"
-
-    subprocess.run(
-        ["tmux", "kill-pane", "-t", target_pane],
-        capture_output=True,
-        timeout=5,
-    )
+    _kill_command_pane(session)
     time.sleep(0.1)
 
     created = create_tmux_split(
-        target=f"{session}:0.0",
+        target=tmux_exact_target(session),
         height="30%",
         surface="saved_command_split",
-        diagnostic_alias=target_pane,
+        diagnostic_alias=f"{session}:",
     )
     if not created.ok:
         return (
@@ -152,6 +195,8 @@ def _run_command_effect():
             500,
         )
     delivery_target = created.identity.pane_id
+    with _command_panes_lock:
+        _command_panes[session] = delivery_target
 
     if project:
         project_path = state.PROJECTS_DIR / project
@@ -161,12 +206,18 @@ def _run_command_effect():
     tmux_send_text(delivery_target, cmd)
     tmux_send_keys(delivery_target, "Enter")
 
-    return jsonify({"ok": True, "target": target_pane})
+    return jsonify(
+        {
+            "ok": True,
+            "target": pane_tab_target(delivery_target),
+            "pane_id": delivery_target,
+        }
+    )
 
 
 @commands_bp.route("/api/commands/stop", methods=["POST"])
 def stop_command():
-    """Kill the split pane (pane 1) of a session."""
+    """Kill the split pane /api/commands/run created in a session."""
     return park.perform(park.Intent.STOP, _stop_command_effect)
 
 
@@ -177,16 +228,10 @@ def _stop_command_effect():
     if not session:
         return jsonify({"ok": False, "error": "session required"}), 400
 
-    target_pane = f"{session}:0.1"
-    proc = subprocess.run(
-        ["tmux", "kill-pane", "-t", target_pane],
-        capture_output=True,
-        text=True,
-        timeout=5,
-    )
-    if proc.returncode != 0:
+    ok, stderr = _kill_command_pane(session)
+    if not ok:
         return (
-            jsonify({"ok": False, "error": f"kill-pane failed: {proc.stderr}"}),
+            jsonify({"ok": False, "error": f"kill-pane failed: {stderr}"}),
             500,
         )
     return jsonify({"ok": True})
@@ -194,20 +239,9 @@ def _stop_command_effect():
 
 @commands_bp.route("/api/commands/pane/<session>")
 def check_split_pane(session):
-    """Check if split pane (pane 1) exists for a session."""
-    target_pane = f"{session}:0.1"
-    proc = subprocess.run(
-        [
-            "tmux",
-            "display-message",
-            "-t",
-            target_pane,
-            "-p",
-            "#{pane_id}",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=5,
-    )
-    exists = proc.returncode == 0 and bool(proc.stdout.strip())
-    return jsonify({"ok": True, "exists": exists, "target": target_pane})
+    """Check whether the command split /api/commands/run created still exists."""
+    with _command_panes_lock:
+        pane_id = _command_panes.get(session)
+    exists = bool(pane_id) and _pane_in_session(pane_id, session)
+    target = pane_tab_target(pane_id) if exists else None
+    return jsonify({"ok": True, "exists": exists, "target": target})

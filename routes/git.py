@@ -11,7 +11,13 @@ from pathlib import Path
 from flask import Blueprint, jsonify, request
 
 from shared import execution_park as park
-from shared.tmux import create_tmux_session, detect_venv, tmux_send_keys, tmux_send_text
+from shared.tmux import (
+    create_tmux_session,
+    detect_venv,
+    tmux_exact_target,
+    tmux_send_keys,
+    tmux_send_text,
+)
 from shared.utils import resolve_target
 
 git_bp = Blueprint("git_bp", __name__)
@@ -99,7 +105,7 @@ def _git_run_effect():
                 "tmux",
                 "display-message",
                 "-t",
-                target,
+                tmux_exact_target(target),
                 "-p",
                 "#{pane_current_path}",
             ],
@@ -214,7 +220,7 @@ def _venv_create_effect():
 
     try:
         proc = subprocess.run(
-            ["tmux", "display-message", "-t", target, "-p", "#{pane_current_path}"],
+            ["tmux", "display-message", "-t", tmux_exact_target(target), "-p", "#{pane_current_path}"],
             capture_output=True,
             text=True,
             timeout=5,

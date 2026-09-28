@@ -75,8 +75,8 @@ _classify(
 )
 
 _classify("intent:saved_command", "routes/commands.py:_run_command_effect")
-_classify("intent:stop", "routes/commands.py:_stop_command_effect")
-_classify("fixed:observe", "routes/commands.py:check_split_pane")
+_classify("intent:saved_command|stop", "routes/commands.py:_kill_command_pane")
+_classify("fixed:observe", "routes/commands.py:_pane_in_session")
 _classify("fixed:observe", "routes/completion.py:_session_cwd")
 
 _classify("fixed:observe", "routes/container.py:container_status")
@@ -149,6 +149,7 @@ _classify(
     "shared/tmux.py:_tty_prompt_waiters",
     "shared/tmux.py:_tty_echo_off",
     "shared/tmux.py:tmux_target_exists",
+    "shared/tmux.py:pane_tab_target",
 )
 _classify("intent:operator_interactive", "shared/tmux.py:get_clipboard")
 _classify(

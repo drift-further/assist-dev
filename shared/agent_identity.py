@@ -388,9 +388,12 @@ def declare_agent_command(target, command):
     kind = kind_from_agent_command(command)
     if not kind or not target:
         return None
+    # Imported here: shared.tmux imports this module at load.
+    from shared.tmux import tmux_exact_target
+
     try:
         proc = subprocess.run(
-            ["tmux", "display-message", "-t", target, "-p", "#{pane_pid}"],
+            ["tmux", "display-message", "-t", tmux_exact_target(target), "-p", "#{pane_pid}"],
             capture_output=True,
             text=True,
             timeout=2,

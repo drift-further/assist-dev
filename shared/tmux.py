@@ -275,7 +275,8 @@ class _TmuxControlConnection:
             # that is not %begin/%end/%error -- so nothing is lost by it.
             [
                 "tmux", "-C", "-S", self.socket_path,
-                "attach-session", "-f", "no-output", "-t", target,
+                "attach-session", "-f", "no-output",
+                "-t", tmux_exact_target(target),
             ],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -356,7 +357,7 @@ class _TmuxControlConnection:
 
     def target_fields(self, target):
         responses = self._submit(
-            [["display-message", "-p", "-t", target, self._FORMAT]]
+            [["display-message", "-p", "-t", tmux_exact_target(target), self._FORMAT]]
         )
         if not responses or not responses[0]:
             return None
@@ -632,7 +633,7 @@ def create_tmux_session(
     return _create_tmux_resource(
         command,
         surface=surface,
-        diagnostic_alias=diagnostic_alias or f"{session_name}:0.0",
+        diagnostic_alias=diagnostic_alias or f"{session_name}:",
         creation_kind="session",
     )
 
@@ -652,7 +653,7 @@ def create_tmux_split(
         "-l",
         str(height),
         "-t",
-        str(target),
+        tmux_exact_target(str(target)),
     ]
     if cwd is not None:
         command.extend(["-c", str(cwd)])
@@ -809,7 +810,7 @@ def get_clipboard():
 def tmux_send_keys(target, *keys):
     """Send key(s) to a tmux pane."""
     proc = subprocess.run(
-        ["tmux", "send-keys", "-t", target] + list(keys),
+        ["tmux", "send-keys", "-t", tmux_exact_target(target)] + list(keys),
         timeout=5,
         capture_output=True,
         text=True,
@@ -836,7 +837,7 @@ def tmux_send_text(target, text):
             # starting with a dash is read as flags and the send fails outright
             # (a password beginning with `-` returned "send-keys failed", never
             # reaching the pane). Verified on tmux 3.4: `--` is consumed, not sent.
-            ["tmux", "send-keys", "-t", target, "-l", "--", text],
+            ["tmux", "send-keys", "-t", tmux_exact_target(target), "-l", "--", text],
             timeout=5,
             capture_output=True,
             text=True,
@@ -860,7 +861,7 @@ def tmux_send_text(target, text):
         return False
 
     paste = subprocess.run(
-        ["tmux", "paste-buffer", "-b", buf_name, "-t", target, "-p", "-d"],
+        ["tmux", "paste-buffer", "-b", buf_name, "-t", tmux_exact_target(target), "-p", "-d"],
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -877,13 +878,41 @@ def tmux_send_text(target, text):
 
 
 def tmux_target_exists(target):
-    """Check if a tmux target (session:window.pane) exists."""
+    """Check if a tmux target (session:window.pane) exists, by exact name."""
     proc = subprocess.run(
-        ["tmux", "has-session", "-t", target.split(":")[0]],
+        ["tmux", "has-session", "-t", tmux_exact_target(target)],
         timeout=5,
         capture_output=True,
     )
     return proc.returncode == 0
+
+
+def pane_tab_target(pane_id):
+    """The tab-list form (`session:window.pane`) of a pane Assist addresses by id.
+
+    Launch, duplicate and the saved-command split deliver to the created pane's
+    id and hand the browser this form, which is what /poll lists. Built from
+    tmux's own indexes rather than assumed to be `:0.0`, which does not exist
+    under `base-index 1` / `pane-base-index 1`. Falls back to the id itself.
+    """
+    try:
+        proc = subprocess.run(
+            ["tmux", "display-message", "-p", "-t", tmux_exact_target(pane_id),
+             "#{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return pane_id
+    parts = proc.stdout.rstrip("\n").split("\t")
+    if (
+        proc.returncode != 0
+        or len(parts) != 4
+        or parts[0] != pane_id
+        or not parts[2].isdigit()
+        or not parts[3].isdigit()
+    ):
+        return pane_id
+    return f"{parts[1]}:{parts[2]}.{parts[3]}"
 
 
 def detect_venv(project_path):
@@ -955,7 +984,7 @@ def capture_pane(target, lines=2000, tui=None):
             "tmux",
             "display-message",
             "-t",
-            target,
+            tmux_exact_target(target),
             "-p",
             "#{pane_current_command}\t#{pane_width}\t#{pane_height}\t#{cursor_y}\t#{alternate_on}\t#{pane_pid}\t#{session_attached}",
         ],
@@ -1006,7 +1035,7 @@ def capture_pane(target, lines=2000, tui=None):
     # diff renderer leaves stale cells that SIGWINCH redraws can't clear.
     info["is_native_tui"] = (not alternate_on) and process_kind == "claude"
 
-    capture_args = ["tmux", "capture-pane", "-e", "-p", "-t", target]
+    capture_args = ["tmux", "capture-pane", "-e", "-p", "-t", tmux_exact_target(target)]
     # Claude writes its transcript into tmux scrollback even while on the
     # alternate screen (unlike a true TUI such as opencode), so keep full
     # scrollback for it — mirrors the frontend's never-TUI exemption.
@@ -1061,8 +1090,11 @@ def tmux_exact_target(target):
     through untouched. `=` names a session, so `=%3:` resolves to nothing: the
     /type password check, which addresses the pane by id, silently got False
     for every pane until this passed ids through.
+
+    An already-exact `=name:...` also goes through untouched, so the helpers
+    below can apply this themselves whatever form a caller hands them.
     """
-    if _TMUX_ID_RE.fullmatch(target):
+    if _TMUX_ID_RE.fullmatch(target) or target.startswith("="):
         return target
     name, _sep, rest = target.partition(":")
     return f"={name}:{rest}"

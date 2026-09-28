@@ -40,6 +40,7 @@ def completed(code=0, stdout=""):
 
 class _FakeIdentity:
     pane_id = "%510"
+    session_id = "$510"
 
     def as_dict(self):
         return {"pane_id": self.pane_id}
