@@ -61,13 +61,21 @@ def _spawn(case, argv, executable=None, env=None):
     return _wait_for_exec(proc, str(argv[-1]))
 
 
-def _spawn_server(case, script, *args):
+def _spawn_server(case, script, *args, python=None):
     """A process that really RUNS `script` the way assist-ctl does: <python> <script> ..."""
     script = Path(script)
     if not script.exists():
         script.parent.mkdir(parents=True, exist_ok=True)
         script.write_text(_SLEEP_SCRIPT)
-    return _spawn(case, [sys.executable, script, *args] if args else [sys.executable, script])
+    return _spawn(case, [python or sys.executable, script, *args])
+
+
+def _venv_python(home):
+    """<home>/.venv/bin/python as a symlink to a real interpreter, like a real venv."""
+    python = Path(home) / ".venv" / "bin" / "python"
+    python.parent.mkdir(parents=True, exist_ok=True)
+    python.symlink_to(os.path.realpath(sys.executable))
+    return python
 
 
 def _free_port():
@@ -423,7 +431,10 @@ class InvocationIdentityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             checkout = _Checkout(Path(raw))
             (checkout.home / "serve.py").write_text(_SLEEP_SCRIPT)
-            proc = _spawn_server(self, checkout.home / "serve.py", "--port", "8089")
+            proc = _spawn_server(
+                self, checkout.home / "serve.py", "--port", "8089",
+                python=_venv_python(checkout.home),
+            )
             self._each_branch(checkout, proc.pid, "ours")
 
     def test_a_reader_of_the_script_is_not_ours(self):
@@ -455,6 +466,41 @@ class InvocationIdentityTests(unittest.TestCase):
             )
             self._each_branch(checkout, carrier.pid, "stale")
 
+    def test_a_reader_of_the_interpreter_and_the_script_is_not_ours(self):
+        # judge3's probe: `tail -f <dir>/python <dir>/serve.py`. Flattened by
+        # ps, its text ENDS with "<python> <serve.py>"; only an exact match
+        # from the start counts. Here with this checkout's own two paths.
+        tail = shutil.which("tail")
+        if tail is None:
+            self.skipTest("no tail")
+        with tempfile.TemporaryDirectory() as raw:
+            checkout = _Checkout(Path(raw), name="My Assist")
+            python = _venv_python(checkout.home)
+            reader = _spawn(self, [tail, "-f", python, checkout.home / "serve.py"])
+            self._each_branch(checkout, reader.pid, "stale")
+
+    def test_the_resolved_venv_interpreter_is_ours_through_ps(self):
+        # A launcher that resolved the venv symlink before exec.
+        with tempfile.TemporaryDirectory() as raw:
+            checkout = _Checkout(Path(raw), name="My Assist")
+            (checkout.home / "serve.py").write_text(_SLEEP_SCRIPT)
+            real = os.path.realpath(_venv_python(checkout.home))
+            proc = _spawn_server(self, checkout.home / "serve.py", "--port", "1", python=real)
+            self._each_branch(checkout, proc.pid, "ours")
+
+    def test_an_interpreter_that_is_not_this_checkouts_is_not_ours_through_ps(self):
+        # ps text cannot prove which interpreter ran; only known paths count.
+        with tempfile.TemporaryDirectory() as raw:
+            checkout = _Checkout(Path(raw))
+            (checkout.home / "serve.py").write_text(_SLEEP_SCRIPT)
+            elsewhere = Path(raw) / "elsewhere" / "python"
+            elsewhere.parent.mkdir()
+            elsewhere.symlink_to(os.path.realpath(sys.executable))
+            proc = _spawn_server(self, checkout.home / "serve.py", python=elsewhere)
+            self.assertEqual(
+                self._both(checkout, proc.pid, "/nonexistent-proc"), ("stale", "stale")
+            )
+
     def test_a_checkout_reached_through_a_symlink(self):
         with tempfile.TemporaryDirectory() as raw:
             checkout = _Checkout(Path(raw))
@@ -468,7 +514,9 @@ class InvocationIdentityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             mine = _Checkout(Path(raw), name="My Assist")
             (mine.home / "serve.py").write_text(_SLEEP_SCRIPT)
-            owner = _spawn_server(self, mine.home / "serve.py", "--port", "1")
+            owner = _spawn_server(
+                self, mine.home / "serve.py", "--port", "1", python=_venv_python(mine.home)
+            )
             other = _spawn_server(self, Path(raw) / "Other Assist" / "serve.py", "--port", "1")
             self._each_branch(mine, owner.pid, "ours")
             self._each_branch(mine, other.pid, "foreign")
@@ -476,7 +524,10 @@ class InvocationIdentityTests(unittest.TestCase):
     def test_legacy_adoption_with_spaces_through_the_ps_fallback(self):
         with tempfile.TemporaryDirectory() as raw:
             checkout = _Checkout(Path(raw), [f"ASSIST_PORT={_free_port()}"], name="My Assist")
-            proc = _spawn_server(self, checkout.home / "serve.py", "--port", str(_free_port()))
+            proc = _spawn_server(
+                self, checkout.home / "serve.py", "--port", str(_free_port()),
+                python=_venv_python(checkout.home),
+            )
             checkout.legacy_pid.write_text(f"{proc.pid}\n")
             with mock.patch.object(cli_config, "PROC_ROOT", Path("/nonexistent-proc")), \
                     mock.patch.object(cli_config, "LEGACY_PID_FILE", checkout.legacy_pid):

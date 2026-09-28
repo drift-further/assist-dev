@@ -263,19 +263,36 @@ def server_owner(pid: int, home: Path) -> str:
             if argv[1].endswith("/serve.py"):
                 return "foreign"
         return "stale"
-    # No /proc: every space in the joined text is a candidate boundary, since
-    # either path may contain spaces.
-    command = _process_command(pid)
-    scripts = (str(home / "serve.py"), str(home.resolve() / "serve.py"))
-    for index, character in enumerate(command):
-        if character != " " or not _is_python(command[:index]):
-            continue
-        tail = command[index + 1 :]
-        if any(tail == script or tail.startswith(script + " ") for script in scripts):
+    return _owner_from_command(_process_command(pid), home)
+
+
+def expected_invocations(home: Path) -> set[str]:
+    """The exact `<interpreter> <serve.py>` texts this checkout's server runs as.
+
+    Built from known paths, never inferred from `ps` text: the venv python (as
+    given, resolved, and under the physical checkout path) or the python3 that
+    assist-ctl falls back to without a venv, then this serve.py as given or
+    physical. Same set as assist-ctl's owner_from_command.
+    """
+    venv_python = home / ".venv" / "bin" / "python"
+    interpreters = {
+        str(venv_python),
+        os.path.realpath(venv_python),
+        str(home.resolve() / ".venv" / "bin" / "python"),
+        "python3",
+    }
+    scripts = {str(home / "serve.py"), str(home.resolve() / "serve.py")}
+    return {f"{interpreter} {script}" for interpreter in interpreters for script in scripts}
+
+
+def _owner_from_command(command: str, home: Path) -> str:
+    """The non-/proc rule: `ps` text EQUALS an expected invocation, or continues with a server flag."""
+    for expected in expected_invocations(home):
+        if command == expected or command.startswith(
+            (f"{expected} --port ", f"{expected} --park-handoff-fd ")
+        ):
             return "ours"
-        if re.match(r"(/.*?/serve\.py)( |$)", tail):  # absolute path in the script slot
-            return "foreign"
-    return "stale"
+    return "foreign" if "/serve.py --port " in command else "stale"
 
 
 def runs_checkout(pid: int, home: Path) -> bool:
