@@ -46,13 +46,41 @@ setInterval(function() {
     }
 }, 150);
 
-// Git commit input — Enter key submits
+// Git commit input — Enter never submits. The button stages everything, commits
+// and pushes, so it runs only from an explicit tap and a confirm that names the
+// branch, the remote and how many files go with it. Enter just closes the keyboard.
 document.getElementById('git-commit-msg').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') {
         e.preventDefault();
-        gitCommitPush();
+        e.target.blur();
     }
 });
+
+async function gitCommitPushConfirm() {
+    const msg = document.getElementById('git-commit-msg').value.trim();
+    if (!msg) { showFlash('error', 'Enter a message'); return; }
+    let info;
+    try {
+        const resp = await fetch('/api/git/preview?target=' + encodeURIComponent(getInputTarget()));
+        if (authLost(resp)) return;
+        info = await resp.json();
+    } catch (e) {
+        showFlash('error', 'Offline');
+        return;
+    }
+    if (!info.ok) { showFlash('error', info.error || 'Git preview failed'); return; }
+    const files = info.changed + ' changed file' + (info.changed === 1 ? '' : 's');
+    const dest = info.upstream
+        ? info.upstream + (info.remote_url ? ' (' + info.remote_url + ')' : '')
+        : 'no upstream set, so the push will fail';
+    const text = 'Commit & push?\n\n'
+        + 'Branch: ' + info.branch + '\n'
+        + 'Push to: ' + dest + '\n'
+        + files + ', all staged with git add -A\n\n'
+        + 'Message: ' + msg;
+    if (!confirm(text)) return;
+    gitCommitPush();
+}
 
 // The ◇ button is the whole doorway: connected, it deep-links the active
 // pane's project; anything else, it opens the connect sheet. The server
@@ -93,6 +121,7 @@ async function consolidatedPoll() {
     const requestedAt = Date.now();
     try {
         const resp = await fetch('/poll', {signal: AbortSignal.timeout(8000)});
+        if (authLost(resp)) return;
         const data = await resp.json();
 
         // Health

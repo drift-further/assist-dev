@@ -990,6 +990,7 @@ function connectTerminalWs() {
         return;
     }
     _termWs = ws;
+    let opened = false;
     // Handlers fire asynchronously — disconnect/reconnect (stopPolling →
     // startPolling) can replace _termWs before this socket's onclose runs.
     // Each handler bails unless it still owns the global, so a superseded
@@ -998,6 +999,7 @@ function connectTerminalWs() {
     // close event lands, which makes intentional closes stale here too.
     ws.onopen = function() {
         if (ws !== _termWs) return;
+        opened = true;
         _termWsConnected = true;
         _wsReconnectDelay = _WS_RECONNECT_MIN;  // reset backoff on success
         updateConnIndicator();
@@ -1029,6 +1031,10 @@ function connectTerminalWs() {
         if (_wsInactivityTimer) { clearTimeout(_wsInactivityTimer); _wsInactivityTimer = null; }
         if (_wsPingTimer) { clearTimeout(_wsPingTimer); _wsPingTimer = null; }
         updateConnIndicator();
+        // A handshake refused for want of a cookie never opens, and the browser
+        // reports only 1006. Ask once over HTTP: on a 401, authLost() moves to
+        // /login and the reconnect below is cancelled rather than retried.
+        if (!opened) _wsCheckAuth();
         // Auto-reconnect with exponential backoff if terminal is still open
         if (_termOpen && _termTarget) {
             const jitter = 1 + (Math.random() * 2 - 1) * _WS_RECONNECT_JITTER;
@@ -1045,6 +1051,14 @@ function connectTerminalWs() {
     ws.onerror = function() {
         // onclose will fire after this
     };
+}
+
+function _wsCheckAuth() {
+    fetch('/api/settings', {cache: 'no-store'}).then(function(resp) {
+        if (!authLost(resp)) return;
+        if (_termWsReconnectTimer) { clearTimeout(_termWsReconnectTimer); _termWsReconnectTimer = null; }
+        if (_termPollTimer) { clearInterval(_termPollTimer); _termPollTimer = null; }
+    }).catch(function() {});
 }
 
 function _sendWsPing() {
